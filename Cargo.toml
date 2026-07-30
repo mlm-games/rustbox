@@ -1,0 +1,137 @@
+[package]
+name = "my-ecosystem-bevy"
+version = "0.2.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Clone of my Godot template for bevy (port of my-ecosystem-template) with Repose UI"
+repository = "https://github.com/mlm-games/my-ecosystem-template-bevy"
+readme = "README.md"
+keywords = ["bevy", "gamedev", "template", "2d", "repose"]
+categories = ["game-development"]
+rust-version = "1.96"
+default-run = "my-ecosystem-bevy-desktop"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "my-ecosystem-bevy-desktop"
+path = "src/main.rs"
+
+[features]
+default = ["dev_native"]
+dev = []
+dev_native = ["dev"]
+physics = ["dep:avian2d"]
+# Big-game optional crates (check note below)
+# Keep commented until compatible to avoid breakage.
+# input_manager = ["dep:leafwing-input-manager"]
+# hanabi = ["dep:bevy_hanabi"]
+# pkv = ["dep:bevy_pkv"]
+# asset_loader = ["dep:bevy_asset_loader"]
+# inspector = ["dep:bevy-inspector-egui"]
+# kira_audio = ["dep:bevy_kira_audio"]
+
+[dependencies]
+bevy = { git = "https://github.com/bevyengine/bevy", rev = "fb89a8649d9b359e53ffb6e5492ebb7c059ac8af", default-features = false, features = [
+    "bevy_asset",
+    "bevy_audio",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_render",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_camera",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_animation",
+    "bevy_image",
+    "bevy_window",
+    "bevy_winit",
+    "x11",
+    "wayland",
+    "png",
+    "vorbis",
+    "multi_threaded",
+    "default_font",
+    "bevy_log",
+    "async_executor",
+    "reflect_auto_register",
+    "bevy_clipboard",
+    "custom_cursor",
+    "webgl2",
+    "android-native-activity",
+] }
+repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", default-features = false, features = [
+    "shared-device",
+] }
+wgpu = { version = "30", features = ["webgpu", "webgl"] }
+repose-core = "0.25"
+repose-ui = "0.25"
+repose-material = "0.25"
+repose-render-wgpu = "0.25"
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+directories = "6"
+unic-langid = "0.9"
+fluent-bundle = "0.16"
+avian2d = { git = "https://github.com/avianphysics/avian", optional = true, default-features = false, features = [
+    "2d",
+    "parry-f32",
+    "parallel",
+] }
+# Optional big-game crates (pull in bevy-0.19)
+# leafwing-input-manager = { version = "0.14", optional = true, default-features = false, features = [] }
+# bevy_hanabi = { version = "0.14", optional = true, default-features = false, features = ["2d"] }
+# bevy_pkv = { version = "0.13", optional = true }
+# bevy_asset_loader = { version = "0.22", optional = true, default-features = false, features = ["standard"] }
+# bevy-inspector-egui = { version = "0.28", optional = true }
+# bevy_kira_audio = { version = "0.18", optional = true }
+
+[target.'cfg(all(target_family = "wasm", any(target_os = "unknown", target_os = "none")))'.dependencies]
+wasm-bindgen = "0.2"
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom_03 = { version = "0.3", features = [
+    "wasm_js",
+], package = "getrandom" }
+getrandom_02 = { version = "0.2", features = ["js"], package = "getrandom" }
+
+[package.metadata.android]
+features = ["bevy/android-native-activity"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.wgpu-types]
+debug-assertions = false
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+strip = "debuginfo"
+
+# [patch.crates-io]
+# repose-core = { path = "../../../Repos/repose/crates/repose-core" }
+# repose-ui = { path = "../../../Repos/repose/crates/repose-ui" }
+# repose-material = { path = "../../../Repos/repose/crates/repose-material" }
+# repose-render-wgpu = { path = "../../../Repos/repose/crates/repose-render-wgpu" }

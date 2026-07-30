@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    uses: mlm-games/ci/.github/workflows/rust-app-ci.yml@main
+    with:
+      system-deps-linux: libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+      run-clippy: false
+      run-fmt: true
+      run-test: true
+      extra-checks: |
+        --target wasm32-unknown-unknown --no-default-features
+        --features physics
+      include-android: true
+      upload-artifacts: true
+      app-slug: my-ecosystem-bevy
