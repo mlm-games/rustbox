@@ -2,14 +2,20 @@ use bevy::prelude::*;
 
 use super::block::BlockKind;
 use super::commands::CommandHistory;
+use super::entity_data::EntityKind;
 use super::level::LevelDocument;
-use super::mode::{InputCapture, MakerMode, MakerStats, SelectedBlockKind};
-use super::storage::{self, LevelStorage, AUTOSAVE_KEY};
+use super::mode::{
+    BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
+};
+use super::storage::{self, AUTOSAVE_KEY, LevelStorage};
 
 #[derive(Clone, Debug)]
 pub enum UiCommand {
     SelectBlock(BlockKind),
     SetMode(MakerMode),
+    ToggleBrush,
+    SelectEntity(EntityKind),
+    Rotate,
     Undo,
     Redo,
     Save,
@@ -25,6 +31,8 @@ pub enum UiCommand {
 pub struct MakerUi {
     pub mode: MakerMode,
     pub selected: BlockKind,
+    pub brush_entities: bool,
+    pub selected_entity: u8,
     pub blocks_placed: u32,
     pub can_undo: bool,
     pub can_redo: bool,
@@ -56,12 +64,21 @@ pub fn push_ui_state(
     time: Res<Time>,
     mode: Res<MakerMode>,
     selected: Res<SelectedBlockKind>,
+    tab: Res<BrushTab>,
+    sel_e: Res<SelectedEntityKind>,
     stats: Res<MakerStats>,
     history: Res<CommandHistory>,
     mut ui: ResMut<MakerUi>,
 ) {
     ui.mode = *mode;
     ui.selected = selected.0;
+    ui.brush_entities = *tab == BrushTab::Entities;
+    ui.selected_entity = match sel_e.0 {
+        EntityKind::Glimmer => 0,
+        EntityKind::LaunchPad => 1,
+        EntityKind::Seal => 2,
+        EntityKind::DriftPlate => 3,
+    };
     ui.blocks_placed = stats.blocks_placed;
     ui.can_undo = !history.undo.is_empty();
     ui.can_redo = !history.redo.is_empty();
@@ -77,6 +94,9 @@ pub fn drain_ui_commands(
     mut ui: ResMut<MakerUi>,
     mut mode: ResMut<MakerMode>,
     mut selected: ResMut<SelectedBlockKind>,
+    mut tab: ResMut<BrushTab>,
+    mut sel_e: ResMut<SelectedEntityKind>,
+    mut place_yaw: ResMut<PlaceYaw>,
     mut level: ResMut<LevelDocument>,
     mut history: ResMut<CommandHistory>,
     storage: Res<LevelStorage>,
@@ -86,6 +106,14 @@ pub fn drain_ui_commands(
         match cmd {
             UiCommand::SelectBlock(kind) => selected.0 = kind,
             UiCommand::SetMode(m) => *mode = m,
+            UiCommand::ToggleBrush => {
+                *tab = match *tab {
+                    BrushTab::Blocks => BrushTab::Entities,
+                    BrushTab::Entities => BrushTab::Blocks,
+                };
+            }
+            UiCommand::SelectEntity(kind) => sel_e.0 = kind,
+            UiCommand::Rotate => place_yaw.0 = (place_yaw.0 + 45.0) % 360.0,
             UiCommand::Undo => history.undo(&mut level),
             UiCommand::Redo => history.redo(&mut level),
             UiCommand::Save => match storage::save_level(&storage, &mut level, AUTOSAVE_KEY) {
@@ -105,15 +133,13 @@ pub fn drain_ui_commands(
                 history.redo.clear();
                 ui.set_status("New level");
             }
-            UiCommand::SaveAs(name) => {
-                match storage::save_level(&storage, &mut level, &name) {
-                    Ok(()) => {
-                        level.data.name = name.clone();
-                        ui.set_status(format!("Saved '{name}'"));
-                    }
-                    Err(e) => ui.set_status(format!("Save failed: {e}")),
+            UiCommand::SaveAs(name) => match storage::save_level(&storage, &mut level, &name) {
+                Ok(()) => {
+                    level.data.name = name.clone();
+                    ui.set_status(format!("Saved '{name}'"));
                 }
-            }
+                Err(e) => ui.set_status(format!("Save failed: {e}")),
+            },
             UiCommand::LoadSlot(name) => {
                 match storage::load_level(&storage, &mut level, &mut history, &name) {
                     Ok(true) => ui.set_status(format!("Loaded '{name}'")),
@@ -138,13 +164,21 @@ pub fn drain_ui_commands(
 pub fn update_input_capture(
     ui: Res<MakerUi>,
     paused: Res<crate::app::Paused>,
-    transition: Res<crate::ecosystem::transitions::Transition>,
+    transition: Res<game_utils_bevy::transitions::Transition<crate::app::AppState>>,
     overlay: Res<crate::app::OverlayMenu>,
+    bridge: Res<crate::menus::UiBridge>,
     mut capture: ResMut<InputCapture>,
 ) {
-    let modal_open = paused.0
-        || transition.block_input
-        || !matches!(*overlay, crate::app::OverlayMenu::None);
-    capture.ui_wants_pointer = ui.pointer_over_ui || modal_open;
+    let modal_open =
+        paused.0 || transition.block_input || !matches!(*overlay, crate::app::OverlayMenu::None);
+    let pending_ui_touch = bridge
+        .actions
+        .lock()
+        .map(|q| {
+            q.iter()
+                .any(|a| matches!(a, crate::menus::UiAction::SetPointerOverUi(true)))
+        })
+        .unwrap_or(false);
+    capture.ui_wants_pointer = ui.pointer_over_ui || pending_ui_touch || modal_open;
     capture.ui_wants_keyboard = ui.keyboard_captured || modal_open;
 }

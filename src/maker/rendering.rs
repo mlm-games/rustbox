@@ -4,11 +4,11 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
+use super::MakerCleanup;
 use super::block::BlockKind;
 use super::chunk::CHUNK_SIZE;
 use super::level::LevelDocument;
 use super::player;
-use super::MakerCleanup;
 
 #[derive(Resource)]
 pub struct MakerAssets {
@@ -79,7 +79,10 @@ fn build_chunk_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
         return None;
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
@@ -163,7 +166,7 @@ pub fn spawn_place_ghost(
             MakerCleanup,
         ))
         .id();
-    crate::ecosystem::juice::Juice::pop_in(commands, e, 0.18);
+    game_utils_bevy::juice::Juice::pop_in(commands, e, 0.18);
 }
 
 pub fn tick_ghosts(
@@ -206,7 +209,10 @@ pub fn setup_world(
         BlockKind::Goal,
         BlockKind::Spawn,
     ] {
-        ghost_mats.insert(kind, materials.add(StandardMaterial::from_color(kind.color())));
+        ghost_mats.insert(
+            kind,
+            materials.add(StandardMaterial::from_color(kind.color())),
+        );
     }
 
     let assets = MakerAssets {

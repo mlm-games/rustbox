@@ -5,22 +5,22 @@ pub mod collision;
 pub mod commands;
 pub mod cursor;
 pub mod editor;
-pub mod entity_data;
 pub mod entities_runtime;
+pub mod entity_data;
 pub mod level;
 pub mod mode;
 pub mod player;
-pub mod rendering;
-pub mod storage;
 #[cfg(feature = "physics")]
 pub mod rapier;
+pub mod rendering;
+pub mod storage;
 pub mod ui_bridge;
 pub mod win;
 
 use bevy::prelude::*;
 
 use crate::app::{AppState, Paused};
-use crate::ecosystem::transitions::Transition;
+use game_utils_bevy::transitions::Transition;
 
 pub use mode::MakerStats;
 
@@ -43,7 +43,7 @@ fn in_play(mode: Res<MakerMode>) -> bool {
 fn not_paused(p: Res<Paused>) -> bool {
     !p.0
 }
-fn not_blocked(t: Res<Transition>) -> bool {
+fn not_blocked(t: Res<Transition<AppState>>) -> bool {
     !t.block_input
 }
 

@@ -9,16 +9,88 @@ use repose_ui::overlay::OverlayHandle;
 
 use crate::dev_tools::DevToolsPlugin;
 use crate::maker::MakerPlugin;
-use crate::ecosystem::{
-    EcosystemPlugin,
-    audio::AudioChannels,
-    i18n::{self, LocaleResources},
-    post_process::{ScreenEffectSettings, sync_post_process_settings},
-    transitions::Transition,
-};
 use crate::menus::{self, UiAction, UiBridge};
+use crate::save::SaveData;
 use crate::screens::ScreensPlugin;
 use crate::theme::ThemePlugin;
+use game_utils_bevy::{
+    EcosystemPlugin,
+    audio::AudioChannels,
+    i18n::{self, I18nPlugin, LocaleResources},
+    post_process::{ScreenEffectSettings, sync_post_process_settings},
+    save::{SaveManager, SavePlugin},
+    screen_effects::{CameraBase, FlashWhite},
+    transitions::Transition,
+};
+
+const TRANSLATION_KEYS: &[&str] = &[
+    "app-title",
+    "start-game",
+    "settings",
+    "credits",
+    "quit",
+    "paused",
+    "resume",
+    "quit-to-title",
+    "save",
+    "back",
+    "master-volume",
+    "sfx-volume",
+    "music-volume",
+    "language",
+    "score",
+    "best",
+    "controls-hint",
+    "loading",
+    // Maker toolbar
+    "toolbar-play",
+    "toolbar-edit",
+    "toolbar-blocks",
+    "toolbar-entities",
+    "toolbar-grass",
+    "toolbar-stone",
+    "toolbar-hazard",
+    "toolbar-goal",
+    "toolbar-spawn",
+    "toolbar-rotate",
+    "toolbar-level-untitled",
+    "toolbar-block-brush",
+    "toolbar-entity-brush",
+    "maker-undo",
+    "maker-redo",
+    "maker-save",
+    "maker-load",
+    "maker-new",
+    "maker-mode-edit",
+    "maker-mode-play",
+    "maker-blocks-count",
+    "maker-glimmers-count",
+    "maker-time",
+    "maker-deaths",
+    "maker-current",
+    "maker-btn-edit",
+    "maker-retry",
+    "maker-hint-block",
+    "maker-hint-play",
+    "maker-hint-entity",
+    "maker-clear-title",
+    "maker-load-title",
+    "maker-load-empty",
+    "maker-ent-glimmer",
+    "maker-ent-pad",
+    "maker-ent-seal",
+    "maker-ent-drift",
+];
+
+const LOCALES: &[(&str, &str)] = &[
+    ("en", include_str!("../assets/locales/en/main.ftl")),
+    ("es", include_str!("../assets/locales/es/main.ftl")),
+    ("fr", include_str!("../assets/locales/fr/main.ftl")),
+    ("de", include_str!("../assets/locales/de/main.ftl")),
+    ("ja", include_str!("../assets/locales/ja/main.ftl")),
+    ("zh", include_str!("../assets/locales/zh/main.ftl")),
+    ("pt", include_str!("../assets/locales/pt/main.ftl")),
+];
 
 #[derive(States, Default, Clone, Eq, PartialEq, Debug, Hash)]
 pub enum AppState {
@@ -76,6 +148,11 @@ pub struct SharedUi {
     // Named slots
     pub level_slots: Vec<String>,
     pub level_name: String,
+    // Entity brush + glimmer progress
+    pub brush_entities: bool,
+    pub selected_entity: u8,
+    pub glimmers_collected: u32,
+    pub glimmers_total: u32,
 }
 
 impl Default for SharedUi {
@@ -106,6 +183,10 @@ impl Default for SharedUi {
             clear_deaths: 0,
             level_slots: vec![],
             level_name: "Untitled Level".to_string(),
+            brush_entities: false,
+            selected_entity: 0,
+            glimmers_collected: 0,
+            glimmers_total: 0,
         }
     }
 }
@@ -145,7 +226,14 @@ impl Plugin for AppPlugin {
             ))
             .add_plugins((
                 ThemePlugin,
-                EcosystemPlugin,
+                EcosystemPlugin::<AppState>::new(I18nPlugin::new(TRANSLATION_KEYS, LOCALES)),
+                SavePlugin::<SaveData>::new(SaveManager::new(
+                    "com",
+                    "mlm-games",
+                    "my-ecosystem-bevy",
+                    "save.ron",
+                    1,
+                )),
                 ScreensPlugin,
                 MakerPlugin,
                 DevToolsPlugin,
@@ -155,7 +243,7 @@ impl Plugin for AppPlugin {
                 Update,
                 (
                     sync_shared_ui,
-                    sync_post_process_settings,
+                    sync_post_process_settings::<AppState>,
                     process_ui_actions,
                     handle_pause_input,
                     tick_pending_unpause,
@@ -177,7 +265,7 @@ fn setup_camera(mut commands: Commands) {
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, 1000.0),
-        crate::ecosystem::screen_effects::CameraBase {
+        CameraBase {
             translation: Vec3::new(0.0, 0.0, 1000.0),
             rotation: 0.0,
         },
@@ -190,22 +278,26 @@ fn sync_shared_ui(
     paused: Res<Paused>,
     overlay: Res<OverlayMenu>,
     bridge: Res<UiBridge>,
-    save: Res<crate::ecosystem::save::SaveData>,
-    transition: Res<Transition>,
-    flash: Res<crate::ecosystem::screen_effects::FlashWhite>,
+    save: Res<SaveData>,
+    transition: Res<Transition<AppState>>,
+    flash: Res<FlashWhite>,
     locale: Res<LocaleResources>,
     mut channels: ResMut<AudioChannels>,
-    maker_ui: Option<Res<crate::maker::ui_bridge::MakerUi>>,
+    maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
     level: Option<Res<crate::maker::level::LevelDocument>>,
 ) {
     let Ok(mut ui) = bridge.shared.lock() else {
         return;
     };
-    ui.phase = state.get().clone();
-    ui.paused = paused.0;
-    ui.overlay = *overlay;
-    ui.high_score = save.high_score;
-    if let Some(m) = maker_ui {
+    // Pointer ownership is per-click: reset each frame, then SetPointerOverUi
+    // actions (pushed by UI clicks) re-assert it when processed below.
+    ui.pointer_over_ui = false;
+    if let Some(mut m) = maker_ui {
+        m.pointer_over_ui = false;
+        ui.phase = state.get().clone();
+        ui.paused = paused.0;
+        ui.overlay = *overlay;
+        ui.high_score = save.high_score;
         ui.blocks_placed = m.blocks_placed;
         ui.score = m.blocks_placed;
         ui.maker_mode_edit = m.mode == crate::maker::mode::MakerMode::Edit;
@@ -216,6 +308,15 @@ fn sync_shared_ui(
         ui.clear_time_secs = m.clear_time_secs;
         ui.clear_deaths = m.clear_deaths;
         ui.level_slots = m.level_slots.clone();
+        ui.brush_entities = m.brush_entities;
+        ui.selected_entity = m.selected_entity;
+        ui.glimmers_collected = m.glimmers_collected;
+        ui.glimmers_total = m.glimmers_total;
+    } else {
+        ui.phase = state.get().clone();
+        ui.paused = paused.0;
+        ui.overlay = *overlay;
+        ui.high_score = save.high_score;
     }
     if let Some(l) = level {
         ui.level_name = l.data.name.clone();
@@ -261,15 +362,17 @@ fn process_ui_actions(
     bridge: Res<UiBridge>,
     mut paused: ResMut<Paused>,
     mut overlay: ResMut<OverlayMenu>,
-    mut save: ResMut<crate::ecosystem::save::SaveData>,
+    mut save: ResMut<SaveData>,
     mut exit: MessageWriter<AppExit>,
-    mut transition: ResMut<crate::ecosystem::transitions::Transition>,
+    mut transition: ResMut<Transition<AppState>>,
+    manager: Res<SaveManager>,
     mut virtual_time: ResMut<Time<Virtual>>,
     mut pending_unpause: ResMut<PendingUnpause>,
     mut locale: ResMut<LocaleResources>,
     mut maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
 ) {
     use crate::maker::block::BlockKind;
+    use crate::maker::entity_data::EntityKind;
     use crate::maker::mode::MakerMode;
     use crate::maker::ui_bridge::UiCommand;
 
@@ -342,7 +445,7 @@ fn process_ui_actions(
                     save.settings.music_volume = ui.music_vol;
                     save.settings.language = locale.current.clone();
                 }
-                let _ = crate::ecosystem::save::SaveManager::save(&save);
+                let _ = manager.save(&*save);
                 if let Ok(mut ui) = bridge.shared.lock() {
                     ui.saved_language = locale.current.clone();
                 }
@@ -369,7 +472,11 @@ fn process_ui_actions(
             // Maker actions
             UiAction::MakerToggleMode => {
                 if let Some(ref mut m) = maker_ui {
-                    let next = if m.mode == MakerMode::Edit { MakerMode::Play } else { MakerMode::Edit };
+                    let next = if m.mode == MakerMode::Edit {
+                        MakerMode::Play
+                    } else {
+                        MakerMode::Edit
+                    };
                     m.commands.push(UiCommand::SetMode(next));
                 }
             }
@@ -383,6 +490,27 @@ fn process_ui_actions(
                         _ => BlockKind::Grass,
                     };
                     m.commands.push(UiCommand::SelectBlock(kind));
+                }
+            }
+            UiAction::MakerToggleBrush => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::ToggleBrush);
+                }
+            }
+            UiAction::MakerSelectEntity(i) => {
+                if let Some(ref mut m) = maker_ui {
+                    let kind = match i {
+                        1 => EntityKind::LaunchPad,
+                        2 => EntityKind::Seal,
+                        3 => EntityKind::DriftPlate,
+                        _ => EntityKind::Glimmer,
+                    };
+                    m.commands.push(UiCommand::SelectEntity(kind));
+                }
+            }
+            UiAction::MakerRotateBrush => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::Rotate);
                 }
             }
             UiAction::MakerUndo => {
@@ -444,6 +572,9 @@ fn process_ui_actions(
                 if let Ok(mut ui) = bridge.shared.lock() {
                     ui.pointer_over_ui = v;
                 }
+                if let Some(ref mut m) = maker_ui {
+                    m.pointer_over_ui = v;
+                }
             }
         }
     }
@@ -456,7 +587,7 @@ fn handle_pause_input(
     mut overlay: ResMut<OverlayMenu>,
     mut virtual_time: ResMut<Time<Virtual>>,
     mut pending_unpause: ResMut<PendingUnpause>,
-    transition: Res<Transition>,
+    transition: Res<Transition<AppState>>,
 ) {
     if *state.get() != AppState::InGame {
         return;

@@ -45,7 +45,13 @@ mod native {
         fn path(&self, key: &str) -> PathBuf {
             let safe: String = key
                 .chars()
-                .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '_' || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             self.dir.join(format!("{safe}.ron"))
         }
@@ -172,7 +178,10 @@ pub fn serialize_level(level: &LevelData) -> anyhow::Result<String> {
         version: FORMAT_VERSION,
         level: level.clone(),
     };
-    Ok(ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default())?)
+    Ok(ron::ser::to_string_pretty(
+        &file,
+        ron::ser::PrettyConfig::default(),
+    )?)
 }
 
 pub fn deserialize_level(text: &str) -> anyhow::Result<LevelData> {
@@ -209,14 +218,7 @@ pub fn load_level(
         level.map.insert(IVec3::from_array(*position), *kind);
     }
     level.data = data;
-    level.next_entity_id = level
-        .data
-        .entities
-        .iter()
-        .map(|e| e.id)
-        .max()
-        .unwrap_or(0)
-        + 1;
+    level.next_entity_id = level.data.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
     level.rebuild_blocks_vec();
     level.mark_all_dirty();
     level.entities_dirty = true;

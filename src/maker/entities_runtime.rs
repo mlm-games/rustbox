@@ -2,15 +2,15 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
-use crate::ecosystem::juice::Juice;
-use crate::ecosystem::screen_effects::{ScreenEffects, Trauma};
+use game_utils_bevy::juice::Juice;
+use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
+use super::MakerCleanup;
 use super::entity_data::{EntityKind, LevelEntityId};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::Player;
 use super::ui_bridge::MakerUi;
-use super::MakerCleanup;
 #[cfg(feature = "physics")]
 use bevy_rapier3d::prelude::{Collider, RigidBody, Sensor, Velocity};
 
@@ -133,8 +133,7 @@ pub fn reconcile_entities(
             EntityKind::DriftPlate => (assets.drift.clone(), 0.15, Vec3::ONE),
         };
 
-        let tf = Transform::from_translation(world + Vec3::Y * y_off)
-            .with_rotation(rot);
+        let tf = Transform::from_translation(world + Vec3::Y * y_off).with_rotation(rot);
 
         let eid = commands
             .spawn((
@@ -236,10 +235,7 @@ pub fn bob_glimmers(time: Res<Time>, mut q: Query<&mut Transform, With<GlimmerTa
     }
 }
 
-pub fn tick_launch_pads_cooldown(
-    time: Res<Time>,
-    mut pads: Query<&mut LaunchPad>,
-) {
+pub fn tick_launch_pads_cooldown(time: Res<Time>, mut pads: Query<&mut LaunchPad>) {
     let dt = time.delta_secs();
     for mut pad in &mut pads {
         pad.cooldown = (pad.cooldown - dt).max(0.0);
@@ -328,10 +324,14 @@ pub fn rebuild_runtime_solids(
     solids.boxes.clear();
     for (tf, seal) in &seals {
         if !seal.open {
-            solids.boxes.push((tf.translation, Vec3::new(0.5, 1.0, 0.15)));
+            solids
+                .boxes
+                .push((tf.translation, Vec3::new(0.5, 1.0, 0.15)));
         }
     }
     for tf in &drifts {
-        solids.boxes.push((tf.translation, Vec3::new(0.7, 0.12, 0.7)));
+        solids
+            .boxes
+            .push((tf.translation, Vec3::new(0.7, 0.12, 0.7)));
     }
 }

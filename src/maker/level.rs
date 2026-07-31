@@ -81,15 +81,24 @@ impl LevelDocument {
         self.data.entities.clear();
         self.next_entity_id = 1;
 
-        let e1 = EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(2, 1, 2), self.alloc_id());
-        let e2 = EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(-2, 1, 2), self.alloc_id());
-        let e3 = EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(0, 2, -2), self.alloc_id());
-        let mut e4 = EntityData::defaults_for(EntityKind::Seal, IVec3::new(0, 1, -4), self.alloc_id());
+        let e1 =
+            EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(2, 1, 2), self.alloc_id());
+        let e2 =
+            EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(-2, 1, 2), self.alloc_id());
+        let e3 =
+            EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(0, 2, -2), self.alloc_id());
+        let mut e4 =
+            EntityData::defaults_for(EntityKind::Seal, IVec3::new(0, 1, -4), self.alloc_id());
         e4.param = 3.0;
-        let mut e5 = EntityData::defaults_for(EntityKind::LaunchPad, IVec3::new(3, 1, -3), self.alloc_id());
+        let mut e5 =
+            EntityData::defaults_for(EntityKind::LaunchPad, IVec3::new(3, 1, -3), self.alloc_id());
         e5.yaw_deg = 180.0;
         e5.param = 16.0;
-        let mut e6 = EntityData::defaults_for(EntityKind::DriftPlate, IVec3::new(-4, 2, -2), self.alloc_id());
+        let mut e6 = EntityData::defaults_for(
+            EntityKind::DriftPlate,
+            IVec3::new(-4, 2, -2),
+            self.alloc_id(),
+        );
         e6.cell_b = Some([-4, 2, -6]);
         e6.param = 2.5;
         for e in [e1, e2, e3, e4, e5, e6] {
@@ -121,8 +130,12 @@ impl LevelDocument {
     }
 
     pub fn mark_all_dirty(&mut self) {
-        let chunks: HashSet<IVec3> =
-            self.map.keys().copied().map(super::chunk::chunk_of).collect();
+        let chunks: HashSet<IVec3> = self
+            .map
+            .keys()
+            .copied()
+            .map(super::chunk::chunk_of)
+            .collect();
         self.dirty_chunks.extend(chunks);
     }
 

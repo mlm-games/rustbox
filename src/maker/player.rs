@@ -1,15 +1,15 @@
 use bevy::prelude::*;
 
+use super::MakerCleanup;
 use super::camera::CameraRig;
 use super::collision::{move_and_collide, overlaps_kind};
 use super::entities_runtime::{DriftPlate, LaunchPad, RuntimeSolids};
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
 use super::rendering::MakerAssets;
-use super::MakerCleanup;
 
-use crate::ecosystem::juice::Juice;
-use crate::ecosystem::screen_effects::{ScreenEffects, Trauma};
+use game_utils_bevy::juice::Juice;
+use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 const GRAVITY: f32 = -25.0;
 const MOVE_SPEED: f32 = 6.0;
@@ -203,7 +203,12 @@ pub fn play_hazard_goal(
 ) {
     for (mut transform, mut player) in &mut q {
         let he = player.half_extents;
-        let hit_hazard = overlaps_kind(transform.translation, he, &level, super::block::BlockKind::Hazard);
+        let hit_hazard = overlaps_kind(
+            transform.translation,
+            he,
+            &level,
+            super::block::BlockKind::Hazard,
+        );
         let fell_off = transform.translation.y < -20.0;
         let manual_reset = keys.just_pressed(KeyCode::KeyR);
 

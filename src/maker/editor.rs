@@ -10,7 +10,7 @@ use super::level::LevelDocument;
 use super::mode::{
     BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
 };
-use super::rendering::{spawn_place_ghost, MakerAssets, PlacementPreview};
+use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 
 pub fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<MakerMode>) {
     if keys.just_pressed(KeyCode::Tab) {
@@ -135,7 +135,8 @@ pub fn update_preview_and_edit(
         return;
     };
 
-    let Some((hit_cell, normal)) = raycast_present(&level, ray.origin, *ray.direction, 200.0) else {
+    let Some((hit_cell, normal)) = raycast_present(&level, ray.origin, *ray.direction, 200.0)
+    else {
         hide(&mut preview_q);
         return;
     };
@@ -176,8 +177,7 @@ pub fn update_preview_and_edit(
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
                     if data.kind == EntityKind::DriftPlate {
-                        let forward =
-                            Quat::from_rotation_y(place_yaw.0.to_radians()) * Vec3::NEG_Z;
+                        let forward = Quat::from_rotation_y(place_yaw.0.to_radians()) * Vec3::NEG_Z;
                         let end = place_cell
                             + IVec3::new(
                                 (forward.x.round() as i32) * 4,

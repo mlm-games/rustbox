@@ -2616,6 +2616,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "game-utils"
+version = "0.1.2"
+source = "git+https://github.com/mlm-games/game-utils#b5c762cef8a575742e89299d38ae6633564dd522"
+dependencies = [
+ "directories",
+ "fluent-bundle",
+ "glam 0.33.2",
+ "ron",
+ "serde",
+ "unic-langid",
+]
+
+[[package]]
+name = "game-utils-bevy"
+version = "0.1.2"
+source = "git+https://github.com/mlm-games/game-utils#b5c762cef8a575742e89299d38ae6633564dd522"
+dependencies = [
+ "bevy",
+ "game-utils",
+ "rand",
+ "serde",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3414,7 +3438,8 @@ dependencies = [
  "bevy",
  "bevy_rapier3d",
  "directories",
- "fluent-bundle",
+ "game-utils",
+ "game-utils-bevy",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
@@ -3426,7 +3451,6 @@ dependencies = [
  "repose-ui",
  "ron",
  "serde",
- "unic-langid",
  "wasm-bindgen",
  "web-sys",
  "wgpu",

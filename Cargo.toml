@@ -82,9 +82,9 @@ rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
 directories = "6"
-unic-langid = "0.9"
-fluent-bundle = "0.16"
 anyhow = "1"
+game-utils = { git = "https://github.com/mlm-games/game-utils" }
+game-utils-bevy = { git = "https://github.com/mlm-games/game-utils" }
 bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d", optional = true, default-features = false, features = [
     "dim3",
     "parallel",

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::app::{OverlayMenu, Paused};
-use crate::ecosystem::screen_effects::{FlashWhite, ScreenEffects, Trauma};
+use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::block::BlockKind;
 use super::collision::overlaps_kind;

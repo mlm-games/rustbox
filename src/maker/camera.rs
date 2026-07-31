@@ -1,11 +1,11 @@
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 
+use super::MakerCleanup;
 use super::mode::InputCapture;
 use super::player::Player;
-use super::MakerCleanup;
 
-use crate::ecosystem::screen_effects::CameraBase3d;
+use game_utils_bevy::screen_effects::CameraBase3d;
 
 #[derive(Component)]
 pub struct WorldCamera;
