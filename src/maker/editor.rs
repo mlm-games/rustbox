@@ -11,6 +11,7 @@ use super::mode::{
     BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
+use super::track::{ActiveTrack, TrackData, TrackMode};
 
 pub fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<MakerMode>) {
     if keys.just_pressed(KeyCode::Tab) {
@@ -55,7 +56,8 @@ pub fn entity_palette_hotkeys(
     if keys.just_pressed(KeyCode::KeyQ) {
         *tab = match *tab {
             BrushTab::Blocks => BrushTab::Entities,
-            BrushTab::Entities => BrushTab::Blocks,
+            BrushTab::Entities => BrushTab::Tracks,
+            BrushTab::Tracks => BrushTab::Blocks,
         };
     }
     if keys.just_pressed(KeyCode::KeyF) {
@@ -76,6 +78,67 @@ pub fn entity_palette_hotkeys(
     if keys.just_pressed(KeyCode::Digit4) {
         sel_e.0 = EntityKind::DriftPlate;
     }
+}
+
+pub fn track_tool_hotkeys(
+    keys: Res<ButtonInput<KeyCode>>,
+    tab: Res<BrushTab>,
+    mut active: ResMut<ActiveTrack>,
+    mut history: ResMut<CommandHistory>,
+    mut level: ResMut<LevelDocument>,
+) {
+    if *tab != BrushTab::Tracks {
+        return;
+    }
+    let Some(id) = active.0 else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Escape) {
+        active.0 = None;
+        return;
+    }
+    let (mode, speed) = level
+        .track(id)
+        .map(|t| (t.mode, t.speed))
+        .unwrap_or((TrackMode::PingPong, default_speed()));
+    if keys.just_pressed(KeyCode::KeyM) {
+        let new = match mode {
+            TrackMode::PingPong => TrackMode::Loop,
+            TrackMode::Loop => TrackMode::PingPong,
+        };
+        history.apply(
+            &mut level,
+            EditCommand::SetTrackMode {
+                track_id: id,
+                old: mode,
+                new,
+            },
+        );
+    }
+    if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
+        history.apply(
+            &mut level,
+            EditCommand::SetTrackSpeed {
+                track_id: id,
+                old: speed,
+                new: (speed + 0.5).min(10.0),
+            },
+        );
+    }
+    if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
+        history.apply(
+            &mut level,
+            EditCommand::SetTrackSpeed {
+                track_id: id,
+                old: speed,
+                new: (speed - 0.5).max(0.5),
+            },
+        );
+    }
+}
+
+fn default_speed() -> f32 {
+    2.0
 }
 
 pub fn undo_redo_hotkeys(
@@ -102,6 +165,7 @@ pub fn update_preview_and_edit(
     sel_e: Res<SelectedEntityKind>,
     tab: Res<BrushTab>,
     place_yaw: Res<PlaceYaw>,
+    mut active: ResMut<ActiveTrack>,
     mut level: ResMut<LevelDocument>,
     mut history: ResMut<CommandHistory>,
     mut stats: ResMut<MakerStats>,
@@ -148,9 +212,11 @@ pub fn update_preview_and_edit(
         place_cell.z as f32 + 0.5,
     );
 
-    if let Ok((mut tr, mut vis)) = preview_q.single_mut() {
-        tr.translation = center;
-        *vis = Visibility::Visible;
+    if *tab != BrushTab::Tracks {
+        if let Ok((mut tr, mut vis)) = preview_q.single_mut() {
+            tr.translation = center;
+            *vis = Visibility::Visible;
+        }
     }
 
     if buttons.just_pressed(MouseButton::Left) {
@@ -177,21 +243,83 @@ pub fn update_preview_and_edit(
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
                     if data.kind == EntityKind::DriftPlate {
-                        let forward = Quat::from_rotation_y(place_yaw.0.to_radians()) * Vec3::NEG_Z;
-                        let end = place_cell
-                            + IVec3::new(
-                                (forward.x.round() as i32) * 4,
-                                0,
-                                (forward.z.round() as i32) * 4,
-                            );
-                        data.cell_b = Some(end.to_array());
+                        let world = place_cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+                        data.track = level.track_near(world, 1.5);
                     }
                     history.apply(&mut level, EditCommand::PlaceEntity { entity: data });
                 }
             }
+            BrushTab::Tracks => {
+                if let Some(id) = level.track_at_cell(place_cell) {
+                    active.0 = Some(id);
+                } else if let Some(id) = active.0 {
+                    let last = level.track(id).and_then(|t| t.points.last().copied());
+                    if last != Some(place_cell.to_array()) {
+                        let index = level.track(id).map(|t| t.points.len()).unwrap_or(0);
+                        history.apply(
+                            &mut level,
+                            EditCommand::AddTrackPoint {
+                                track_id: id,
+                                index,
+                                cell: place_cell.to_array(),
+                            },
+                        );
+                    }
+                } else {
+                    let id = level.alloc_track_id();
+                    let track = TrackData {
+                        id,
+                        points: vec![place_cell.to_array()],
+                        mode: TrackMode::default(),
+                        speed: default_speed(),
+                    };
+                    history.apply(&mut level, EditCommand::CreateTrack { track });
+                    active.0 = Some(id);
+                }
+            }
         }
     } else if buttons.just_pressed(MouseButton::Right) {
-        if let Some(prev) = level.get_block(hit_cell) {
+        if *tab == BrushTab::Tracks {
+            if let Some(id) = active.0 {
+                let on_waypoint = level.track_at_cell(place_cell) == Some(id);
+                let (index, len) = if on_waypoint {
+                    match level.track(id) {
+                        Some(t) => match t
+                            .points
+                            .iter()
+                            .position(|p| IVec3::from_array(*p) == place_cell)
+                        {
+                            Some(i) => (i, t.points.len()),
+                            None => (0, 0),
+                        },
+                        None => (0, 0),
+                    }
+                } else {
+                    let len = level.track(id).map(|t| t.points.len()).unwrap_or(0);
+                    if len > 0 { (len - 1, len) } else { (0, 0) }
+                };
+                if len > 0 {
+                    if len <= 1 {
+                        if let Some(track) = level.track(id).cloned() {
+                            history.apply(&mut level, EditCommand::DeleteTrack { track });
+                        }
+                        active.0 = None;
+                    } else {
+                        let cell = level.track(id).map(|t| t.points[index]).unwrap();
+                        history.apply(
+                            &mut level,
+                            EditCommand::RemoveTrackPoint {
+                                track_id: id,
+                                index,
+                                cell,
+                            },
+                        );
+                    }
+                }
+            } else if let Some(id) = level.track_at_cell(place_cell) {
+                active.0 = Some(id);
+            }
+        } else if let Some(prev) = level.get_block(hit_cell) {
             history.apply(
                 &mut level,
                 EditCommand::Remove {

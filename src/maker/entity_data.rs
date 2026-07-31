@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::track::TrackId;
+
 pub type LevelEntityId = u32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -43,6 +45,8 @@ pub struct EntityData {
     pub param: f32,
     #[serde(default)]
     pub cell_b: Option<[i32; 3]>,
+    #[serde(default)]
+    pub track: Option<TrackId>,
 }
 
 fn default_param() -> f32 {
@@ -59,11 +63,13 @@ impl EntityData {
     }
 
     pub fn defaults_for(kind: EntityKind, cell: IVec3, id: LevelEntityId) -> Self {
+        // cell_b is the legacy ping-pong path, kept only for migration of old
+        // saves; new plates get their motion from a track.
         let (param, cell_b) = match kind {
             EntityKind::Glimmer => (1.0, None),
             EntityKind::LaunchPad => (14.0, None),
             EntityKind::Seal => (3.0, None),
-            EntityKind::DriftPlate => (3.0, Some([cell.x + 4, cell.y, cell.z])),
+            EntityKind::DriftPlate => (3.0, None),
         };
         Self {
             id,
@@ -72,6 +78,7 @@ impl EntityData {
             yaw_deg: 0.0,
             param,
             cell_b,
+            track: None,
         }
     }
 }

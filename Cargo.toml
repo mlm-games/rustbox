@@ -68,6 +68,8 @@ bevy = { git = "https://github.com/bevyengine/bevy", rev = "fb89a8649d9b359e53ff
     "android-native-activity",
     "bevy_pbr",
     "bevy_scene",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
     "debug",
 ] }
 repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", default-features = false, features = [

@@ -219,6 +219,7 @@ pub fn load_level(
     }
     level.data = data;
     level.next_entity_id = level.data.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+    level.next_track_id = level.data.tracks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
     level.rebuild_blocks_vec();
     level.mark_all_dirty();
     level.entities_dirty = true;

@@ -10,6 +10,7 @@ use super::entity_data::{EntityKind, LevelEntityId};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::Player;
+use super::track::TrackId;
 use super::ui_bridge::MakerUi;
 #[cfg(feature = "physics")]
 use bevy_rapier3d::prelude::{Collider, RigidBody, Sensor, Velocity};
@@ -46,6 +47,13 @@ pub struct DriftPlate {
     pub period: f32,
     pub t: f32,
     pub carry: Vec3,
+}
+
+#[derive(Component)]
+pub struct TrackFollower {
+    pub track_id: TrackId,
+    pub distance: f32,
+    pub carry_player: bool,
 }
 
 #[derive(Component)]
@@ -133,7 +141,19 @@ pub fn reconcile_entities(
             EntityKind::DriftPlate => (assets.drift.clone(), 0.15, Vec3::ONE),
         };
 
-        let tf = Transform::from_translation(world + Vec3::Y * y_off).with_rotation(rot);
+        let mut tf = Transform::from_translation(world + Vec3::Y * y_off).with_rotation(rot);
+        let mut drift_distance = 0.0;
+        if data.kind == EntityKind::DriftPlate
+            && let Some(track_id) = data.track
+        {
+            if let Some((d, nearest, _)) = level
+                .track(track_id)
+                .and_then(|t| t.nearest(world + Vec3::Y * y_off))
+            {
+                drift_distance = d;
+                tf.translation = nearest;
+            }
+        }
 
         let eid = commands
             .spawn((
@@ -195,6 +215,13 @@ pub fn reconcile_entities(
                     t: 0.0,
                     carry: Vec3::ZERO,
                 });
+                if let Some(track_id) = data.track {
+                    ecmds.insert(TrackFollower {
+                        track_id,
+                        distance: drift_distance,
+                        carry_player: true,
+                    });
+                }
                 #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert((
@@ -208,6 +235,7 @@ pub fn reconcile_entities(
 
         if !playing
             && data.kind == EntityKind::DriftPlate
+            && data.track.is_none()
             && let Some(b) = data.cell_b_i()
         {
             let b = b.as_vec3() + Vec3::new(0.5, 0.15, 0.5);
@@ -300,7 +328,7 @@ pub fn update_seals(
 pub fn tick_drift_plates(
     time: Res<Time>,
     _mode: Res<MakerMode>,
-    mut plates: Query<(&mut Transform, &mut DriftPlate)>,
+    mut plates: Query<(&mut Transform, &mut DriftPlate), Without<TrackFollower>>,
 ) {
     let dt = time.delta_secs();
     for (mut tf, mut drift) in &mut plates {
@@ -314,6 +342,30 @@ pub fn tick_drift_plates(
         let s = phase * phase * (3.0 - 2.0 * phase);
         tf.translation = drift.a.lerp(drift.b, s);
         drift.carry = tf.translation - prev;
+    }
+}
+
+pub fn tick_track_followers(
+    time: Res<Time>,
+    level: Res<LevelDocument>,
+    _mode: Res<MakerMode>,
+    mut followers: Query<(&mut Transform, &mut DriftPlate, &mut TrackFollower)>,
+) {
+    let dt = time.delta_secs();
+    for (mut tf, mut drift, mut follow) in &mut followers {
+        let Some(track) = level.track(follow.track_id) else {
+            continue;
+        };
+        let prev = tf.translation;
+        follow.distance += dt * track.speed.max(0.0);
+        tf.translation = track.sample(follow.distance);
+        // player.rs gates on proximity; carry_player only matters for non-player
+        // uses (e.g. hazard prowlers), where carry must not push the player.
+        drift.carry = if follow.carry_player {
+            tf.translation - prev
+        } else {
+            Vec3::ZERO
+        };
     }
 }
 

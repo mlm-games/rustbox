@@ -47,6 +47,11 @@ const TRANSLATION_KEYS: &[&str] = &[
     "toolbar-edit",
     "toolbar-blocks",
     "toolbar-entities",
+    "toolbar-tracks",
+    "toolbar-track-brush",
+    "maker-track-hint-idle",
+    "maker-track-hint-track",
+    "maker-hint-track",
     "toolbar-grass",
     "toolbar-stone",
     "toolbar-hazard",
@@ -151,6 +156,8 @@ pub struct SharedUi {
     // Entity brush + glimmer progress
     pub brush_entities: bool,
     pub selected_entity: u8,
+    pub brush_tab: u8,
+    pub active_track_label: String,
     pub glimmers_collected: u32,
     pub glimmers_total: u32,
 }
@@ -185,6 +192,8 @@ impl Default for SharedUi {
             level_name: "Untitled Level".to_string(),
             brush_entities: false,
             selected_entity: 0,
+            brush_tab: 0,
+            active_track_label: String::new(),
             glimmers_collected: 0,
             glimmers_total: 0,
         }
@@ -310,6 +319,8 @@ fn sync_shared_ui(
         ui.level_slots = m.level_slots.clone();
         ui.brush_entities = m.brush_entities;
         ui.selected_entity = m.selected_entity;
+        ui.brush_tab = m.brush_tab;
+        ui.active_track_label = m.active_track_label.clone();
         ui.glimmers_collected = m.glimmers_collected;
         ui.glimmers_total = m.glimmers_total;
     } else {
@@ -373,7 +384,7 @@ fn process_ui_actions(
 ) {
     use crate::maker::block::BlockKind;
     use crate::maker::entity_data::EntityKind;
-    use crate::maker::mode::MakerMode;
+    use crate::maker::mode::{BrushTab, MakerMode};
     use crate::maker::ui_bridge::UiCommand;
 
     let Ok(mut q) = bridge.actions.lock() else {
@@ -492,9 +503,14 @@ fn process_ui_actions(
                     m.commands.push(UiCommand::SelectBlock(kind));
                 }
             }
-            UiAction::MakerToggleBrush => {
+            UiAction::MakerBrushTab(n) => {
                 if let Some(ref mut m) = maker_ui {
-                    m.commands.push(UiCommand::ToggleBrush);
+                    let tab = match n {
+                        1 => BrushTab::Entities,
+                        2 => BrushTab::Tracks,
+                        _ => BrushTab::Blocks,
+                    };
+                    m.commands.push(UiCommand::SetBrushTab(tab));
                 }
             }
             UiAction::MakerSelectEntity(i) => {

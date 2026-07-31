@@ -7,6 +7,7 @@ use super::chunk::affected_chunks;
 
 use super::block::BlockKind;
 use super::entity_data::{EntityData, EntityKind, LevelEntityId};
+use super::track::{TrackData, TrackId, TrackMode};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockData {
@@ -25,6 +26,8 @@ pub struct LevelData {
     pub blocks: Vec<BlockData>,
     #[serde(default)]
     pub entities: Vec<EntityData>,
+    #[serde(default)]
+    pub tracks: Vec<TrackData>,
     #[serde(default = "level_format_entities")]
     pub entities_version: u32,
 }
@@ -35,6 +38,7 @@ pub struct LevelDocument {
     pub map: HashMap<IVec3, BlockKind>,
     pub dirty_chunks: HashSet<IVec3>,
     pub next_entity_id: LevelEntityId,
+    pub next_track_id: TrackId,
     pub entities_dirty: bool,
 }
 
@@ -46,11 +50,13 @@ impl Default for LevelDocument {
                 spawn: [0, 2, 0],
                 blocks: vec![],
                 entities: vec![],
+                tracks: vec![],
                 entities_version: 1,
             },
             map: HashMap::new(),
             dirty_chunks: HashSet::new(),
             next_entity_id: 1,
+            next_track_id: 1,
             entities_dirty: true,
         };
         doc.seed_default();
@@ -79,7 +85,9 @@ impl LevelDocument {
         self.set_block(IVec3::new(0, 3, -5), Some(BlockKind::Goal));
 
         self.data.entities.clear();
+        self.data.tracks.clear();
         self.next_entity_id = 1;
+        self.next_track_id = 1;
 
         let e1 =
             EntityData::defaults_for(EntityKind::Glimmer, IVec3::new(2, 1, 2), self.alloc_id());
@@ -94,12 +102,20 @@ impl LevelDocument {
             EntityData::defaults_for(EntityKind::LaunchPad, IVec3::new(3, 1, -3), self.alloc_id());
         e5.yaw_deg = 180.0;
         e5.param = 16.0;
+        let track_id = self.alloc_track_id();
+        self.data.tracks.push(TrackData {
+            id: track_id,
+            points: vec![[-4, 2, -2], [-2, 2, -4], [-4, 2, -6]],
+            mode: TrackMode::PingPong,
+            speed: 2.5,
+        });
         let mut e6 = EntityData::defaults_for(
             EntityKind::DriftPlate,
             IVec3::new(-4, 2, -2),
             self.alloc_id(),
         );
-        e6.cell_b = Some([-4, 2, -6]);
+        e6.track = Some(track_id);
+        e6.cell_b = None;
         e6.param = 2.5;
         for e in [e1, e2, e3, e4, e5, e6] {
             self.add_entity(e);
@@ -163,6 +179,59 @@ impl LevelDocument {
 
     pub fn entity_at_cell(&self, cell: IVec3) -> Option<&EntityData> {
         self.data.entities.iter().find(|e| e.cell_i() == cell)
+    }
+
+    pub fn alloc_track_id(&mut self) -> TrackId {
+        let id = self.next_track_id;
+        self.next_track_id += 1;
+        id
+    }
+
+    pub fn track(&self, id: TrackId) -> Option<&TrackData> {
+        self.data.tracks.iter().find(|t| t.id == id)
+    }
+
+    pub fn track_mut(&mut self, id: TrackId) -> Option<&mut TrackData> {
+        self.entities_dirty = true;
+        self.data.tracks.iter_mut().find(|t| t.id == id)
+    }
+
+    pub fn add_track(&mut self, track: TrackData) {
+        self.next_track_id = self.next_track_id.max(track.id + 1);
+        self.data.tracks.push(track);
+        self.entities_dirty = true;
+    }
+
+    pub fn remove_track(&mut self, id: TrackId) -> Option<TrackData> {
+        if let Some(i) = self.data.tracks.iter().position(|t| t.id == id) {
+            let t = self.data.tracks.remove(i);
+            self.entities_dirty = true;
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    /// Track whose nearest waypoint is at `cell`, if any.
+    pub fn track_at_cell(&self, cell: IVec3) -> Option<TrackId> {
+        self.data
+            .tracks
+            .iter()
+            .find(|t| t.points.iter().any(|p| IVec3::from_array(*p) == cell))
+            .map(|t| t.id)
+    }
+
+    /// Closest track to world point `p` within `radius` (geometric snap).
+    pub fn track_near(&self, p: Vec3, radius: f32) -> Option<TrackId> {
+        let mut best: Option<(f32, TrackId)> = None;
+        for t in &self.data.tracks {
+            if let Some((_, _, d)) = t.nearest(p) {
+                if d <= radius && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, t.id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
     }
 
     pub fn rebuild_blocks_vec(&mut self) {

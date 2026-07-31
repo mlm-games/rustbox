@@ -24,6 +24,7 @@ pub enum BrushTab {
     #[default]
     Blocks,
     Entities,
+    Tracks,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]

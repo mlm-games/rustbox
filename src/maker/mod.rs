@@ -14,6 +14,7 @@ pub mod player;
 pub mod rapier;
 pub mod rendering;
 pub mod storage;
+pub mod track;
 pub mod ui_bridge;
 pub mod win;
 
@@ -30,6 +31,7 @@ use entities_runtime::{EntityEntities, RuntimeSolids};
 use level::LevelDocument;
 use mode::{BrushTab, InputCapture, MakerMode, PlaceYaw, SelectedBlockKind, SelectedEntityKind};
 use rendering::ChunkEntities;
+use track::ActiveTrack;
 
 #[derive(Component)]
 pub struct MakerCleanup;
@@ -62,6 +64,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<CommandHistory>()
             .init_resource::<LevelDocument>()
             .init_resource::<MakerStats>()
+            .init_resource::<ActiveTrack>()
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
             .init_resource::<EntityEntities>()
@@ -85,6 +88,7 @@ impl Plugin for MakerPlugin {
                     editor::toggle_mode,
                     editor::block_palette_hotkeys.run_if(in_edit),
                     editor::entity_palette_hotkeys.run_if(in_edit),
+                    editor::track_tool_hotkeys.run_if(in_edit),
                     editor::undo_redo_hotkeys.run_if(in_edit),
                     editor::update_preview_and_edit.run_if(in_edit),
                     rendering::rebuild_dirty_chunks,
@@ -92,6 +96,7 @@ impl Plugin for MakerPlugin {
                     entities_runtime::reconcile_entities,
                     entities_runtime::bob_glimmers,
                     entities_runtime::tick_launch_pads_cooldown,
+                    entities_runtime::tick_track_followers.before(player::player_controller),
                     entities_runtime::tick_drift_plates,
                     entities_runtime::rebuild_runtime_solids,
                     player::sync_mode,
@@ -99,6 +104,15 @@ impl Plugin for MakerPlugin {
                     player::play_hazard_goal.run_if(in_play),
                     entities_runtime::collect_glimmers.run_if(in_play),
                     entities_runtime::update_seals.run_if(in_play),
+                )
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
+            )
+            .add_systems(
+                Update,
+                (
+                    track::draw_track_gizmos.run_if(in_edit),
                     camera::edit_camera_control.run_if(in_edit),
                     camera::play_camera_follow.run_if(in_play),
                 )

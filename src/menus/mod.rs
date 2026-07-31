@@ -45,7 +45,7 @@ pub enum UiAction {
     // Maker toolbar
     MakerToggleMode,
     MakerSelectBlock(u8),
-    MakerToggleBrush,
+    MakerBrushTab(u8),
     MakerSelectEntity(u8),
     MakerRotateBrush,
     MakerUndo,
@@ -477,7 +477,9 @@ fn maker_toolbar_top(
     actions: Arc<Mutex<Vec<UiAction>>>,
 ) -> View {
     let a_mode = actions.clone();
-    let a_brush = actions.clone();
+    let a_tab0 = actions.clone();
+    let a_tab1 = actions.clone();
+    let a_tab2 = actions.clone();
     let a_undo = actions.clone();
     let a_redo = actions.clone();
     let a_save = actions.clone();
@@ -493,6 +495,27 @@ fn maker_toolbar_top(
     )
     .child((
         Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
+            mk_select_button(
+                t(tr, "toolbar-blocks", "Blocks"),
+                col(90, 90, 120),
+                st.brush_tab == 0,
+                move || push_ui(&a_tab0, UiAction::MakerBrushTab(0)),
+            ),
+            mk_select_button(
+                t(tr, "toolbar-entities", "Entities"),
+                col(90, 90, 120),
+                st.brush_tab == 1,
+                move || push_ui(&a_tab1, UiAction::MakerBrushTab(1)),
+            ),
+            mk_select_button(
+                t(tr, "toolbar-tracks", "Tracks"),
+                col(160, 100, 60),
+                st.brush_tab == 2,
+                move || push_ui(&a_tab2, UiAction::MakerBrushTab(2)),
+            ),
+        )),
+        spacer(6.0),
+        Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
             mk_tool_button(
                 if st.maker_mode_edit {
                     t(tr, "toolbar-play", "Play")
@@ -505,15 +528,6 @@ fn maker_toolbar_top(
                     col(60, 120, 200)
                 },
                 move || push_ui(&a_mode, UiAction::MakerToggleMode),
-            ),
-            mk_tool_button(
-                if st.brush_entities {
-                    t(tr, "toolbar-entities", "Entities")
-                } else {
-                    t(tr, "toolbar-blocks", "Blocks")
-                },
-                col(90, 90, 120),
-                move || push_ui(&a_brush, UiAction::MakerToggleBrush),
             ),
             mk_tool_button(
                 t(tr, "maker-undo", "Undo"),
@@ -561,7 +575,7 @@ fn maker_toolbar_palette(
     tr: &HashMap<String, String>,
     actions: Arc<Mutex<Vec<UiAction>>>,
 ) -> View {
-    if !st.brush_entities {
+    if st.brush_tab == 0 {
         let a0 = actions.clone();
         let a1 = actions.clone();
         let a2 = actions.clone();
@@ -612,7 +626,7 @@ fn maker_toolbar_palette(
                 ),
             )),
         ))
-    } else {
+    } else if st.brush_tab == 1 {
         let a0 = actions.clone();
         let a1 = actions.clone();
         let a2 = actions.clone();
@@ -662,6 +676,35 @@ fn maker_toolbar_palette(
                 ),
             )),
         ))
+    } else {
+        Column(
+            Modifier::new()
+                .padding(10.0)
+                .background(RColor::from_rgba(20, 20, 28, 220))
+                .clip_rounded(10.0)
+                .align_items(AlignItems::FLEX_START),
+        )
+        .child((
+            RText(t(tr, "toolbar-track-brush", "Track Brush"))
+                .size(14.0)
+                .color(col(220, 220, 230)),
+            spacer(6.0),
+            RText(if st.active_track_label.is_empty() {
+                t(tr, "maker-track-hint-idle", "Click a cell to start a track")
+            } else {
+                st.active_track_label.clone()
+            })
+            .size(15.0)
+            .color(col(255, 220, 120)),
+            spacer(6.0),
+            RText(t(
+                tr,
+                "maker-track-hint-track",
+                "LMB add point · RMB remove · Enter finish · M mode · +/- speed",
+            ))
+            .size(13.0)
+            .color(col(170, 170, 180)),
+        ))
     }
 }
 
@@ -701,11 +744,17 @@ fn maker_stats_panel(st: &SharedUi, tr: &HashMap<String, String>) -> View {
         RText(if !st.maker_status.is_empty() {
             st.maker_status.clone()
         } else if st.maker_mode_edit {
-            if st.brush_entities {
+            if st.brush_tab == 1 {
                 t(
                     tr,
                     "maker-hint-entity",
                     "Q brush · F yaw · LMB place · RMB erase",
+                )
+            } else if st.brush_tab == 2 {
+                t(
+                    tr,
+                    "maker-hint-track",
+                    "Q brush · LMB add · RMB remove · M mode · +/- speed",
                 )
             } else {
                 t(

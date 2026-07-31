@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use super::entities_runtime::{DriftPlate, LaunchPad, Seal};
+use super::entities_runtime::{DriftPlate, LaunchPad, Seal, TrackFollower};
 use super::mode::MakerMode;
 
 pub fn rapier_plugin(app: &mut App) {
@@ -15,7 +15,7 @@ pub fn rapier_plugin(app: &mut App) {
 /// Make DriftPlate a kinematic body that follows the lerp path.
 fn sync_drift_plates(
     mode: Res<MakerMode>,
-    mut q: Query<(&mut Transform, &mut Velocity, &DriftPlate)>,
+    mut q: Query<(&mut Transform, &mut Velocity, &DriftPlate), Without<TrackFollower>>,
 ) {
     if *mode != MakerMode::Play {
         return;

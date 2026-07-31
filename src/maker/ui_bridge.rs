@@ -8,12 +8,13 @@ use super::mode::{
     BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
 };
 use super::storage::{self, AUTOSAVE_KEY, LevelStorage};
+use super::track::{ActiveTrack, TrackId, TrackMode};
 
 #[derive(Clone, Debug)]
 pub enum UiCommand {
     SelectBlock(BlockKind),
     SetMode(MakerMode),
-    ToggleBrush,
+    SetBrushTab(BrushTab),
     SelectEntity(EntityKind),
     Rotate,
     Undo,
@@ -33,6 +34,9 @@ pub struct MakerUi {
     pub selected: BlockKind,
     pub brush_entities: bool,
     pub selected_entity: u8,
+    pub brush_tab: u8,
+    pub active_track: Option<TrackId>,
+    pub active_track_label: String,
     pub blocks_placed: u32,
     pub can_undo: bool,
     pub can_redo: bool,
@@ -68,6 +72,8 @@ pub fn push_ui_state(
     sel_e: Res<SelectedEntityKind>,
     stats: Res<MakerStats>,
     history: Res<CommandHistory>,
+    active: Res<ActiveTrack>,
+    level: Res<LevelDocument>,
     mut ui: ResMut<MakerUi>,
 ) {
     ui.mode = *mode;
@@ -79,6 +85,23 @@ pub fn push_ui_state(
         EntityKind::Seal => 2,
         EntityKind::DriftPlate => 3,
     };
+    ui.brush_tab = match *tab {
+        BrushTab::Blocks => 0,
+        BrushTab::Entities => 1,
+        BrushTab::Tracks => 2,
+    };
+    ui.active_track = active.0;
+    ui.active_track_label = active
+        .0
+        .and_then(|id| level.track(id).map(|t| (id, t)))
+        .map(|(id, t)| {
+            let mode = match t.mode {
+                TrackMode::Loop => "Loop",
+                TrackMode::PingPong => "PingPong",
+            };
+            format!("Track #{id} · {mode} · {:.1} u/s", t.speed)
+        })
+        .unwrap_or_default();
     ui.blocks_placed = stats.blocks_placed;
     ui.can_undo = !history.undo.is_empty();
     ui.can_redo = !history.redo.is_empty();
@@ -106,12 +129,7 @@ pub fn drain_ui_commands(
         match cmd {
             UiCommand::SelectBlock(kind) => selected.0 = kind,
             UiCommand::SetMode(m) => *mode = m,
-            UiCommand::ToggleBrush => {
-                *tab = match *tab {
-                    BrushTab::Blocks => BrushTab::Entities,
-                    BrushTab::Entities => BrushTab::Blocks,
-                };
-            }
+            UiCommand::SetBrushTab(t) => *tab = t,
             UiCommand::SelectEntity(kind) => sel_e.0 = kind,
             UiCommand::Rotate => place_yaw.0 = (place_yaw.0 + 45.0) % 360.0,
             UiCommand::Undo => history.undo(&mut level),
