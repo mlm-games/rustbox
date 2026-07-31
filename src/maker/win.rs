@@ -64,6 +64,7 @@ pub fn on_mode_changed(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut level: ResMut<LevelDocument>,
+    mut link: ResMut<super::entities_runtime::LinkState>,
 ) {
     if !mode.is_changed() {
         return;
@@ -74,6 +75,8 @@ pub fn on_mode_changed(
         ui.glimmers_collected = 0;
         ui.score = 0;
         level.entities_dirty = true;
+        link.pulses.clear();
+        link.clock = 0.0;
         ui.glimmers_total = level
             .data
             .entities

@@ -119,6 +119,13 @@ const TRANSLATION_KEYS: &[&str] = &[
     "inspector-reverse",
     "inspector-hint",
     "inspector-mirror",
+    "toolbar-trigger",
+    "toolbar-gate",
+    "maker-link-channel",
+    "maker-channel-triggered",
+    "inspector-channel",
+    "inspector-cooldown",
+    "inspector-duration",
 ];
 
 const LOCALES: &[(&str, &str)] = &[
@@ -208,6 +215,7 @@ pub struct SharedUi {
     pub active_track_data: Option<TrackData>,
     pub track_ids: Vec<u32>,
     pub mirror: u8,
+    pub link_channel: u32,
 }
 
 impl Default for SharedUi {
@@ -254,6 +262,7 @@ impl Default for SharedUi {
             active_track_data: None,
             track_ids: Vec::new(),
             mirror: 0,
+            link_channel: 1,
         }
     }
 }
@@ -389,6 +398,7 @@ fn sync_shared_ui(
         ui.active_track_data = m.active_track_data.clone();
         ui.track_ids = m.track_ids.clone();
         ui.mirror = m.mirror;
+        ui.link_channel = m.link_channel;
         ui.play_time_secs = m.play_timer;
         ui.deaths = m.deaths;
     } else {
@@ -589,9 +599,16 @@ fn process_ui_actions(
                         2 => EntityKind::Seal,
                         3 => EntityKind::DriftPlate,
                         4 => EntityKind::Prowler,
+                        5 => EntityKind::TriggerOrb,
+                        6 => EntityKind::RelayGate,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));
+                }
+            }
+            UiAction::MakerCycleLinkChannel => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::CycleLinkChannel);
                 }
             }
             UiAction::MakerRotateBrush => {
@@ -646,6 +663,13 @@ fn process_ui_actions(
                     && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
                 {
                     m.commands.push(UiCommand::DeltaEntityYaw(id, delta));
+                }
+            }
+            UiAction::MakerInspLinkDelta(delta) => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::DeltaEntityLink(id, delta));
                 }
             }
             UiAction::MakerInspTrackCycle => {

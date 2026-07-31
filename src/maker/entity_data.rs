@@ -13,6 +13,8 @@ pub enum EntityKind {
     Seal,
     DriftPlate,
     Prowler,
+    TriggerOrb,
+    RelayGate,
 }
 
 impl EntityKind {
@@ -23,6 +25,8 @@ impl EntityKind {
             Self::Seal => "Seal",
             Self::DriftPlate => "Drift Plate",
             Self::Prowler => "Prowler",
+            Self::TriggerOrb => "Trigger Orb",
+            Self::RelayGate => "Relay Gate",
         }
     }
 
@@ -33,7 +37,25 @@ impl EntityKind {
             Self::Seal => Color::srgb(0.75, 0.35, 0.9),
             Self::DriftPlate => Color::srgb(0.95, 0.55, 0.25),
             Self::Prowler => Color::srgb(0.85, 0.2, 0.35),
+            Self::TriggerOrb => Color::srgb(0.3, 0.9, 0.75),
+            Self::RelayGate => Color::srgb(0.45, 0.85, 0.45),
         }
+    }
+}
+
+/// Link channel color (1-9). Channel 0 (unlinked) = grey.
+pub fn link_color(channel: u32) -> Color {
+    match channel {
+        1 => Color::srgb(0.95, 0.35, 0.35),
+        2 => Color::srgb(0.35, 0.65, 0.95),
+        3 => Color::srgb(0.95, 0.85, 0.35),
+        4 => Color::srgb(0.45, 0.9, 0.45),
+        5 => Color::srgb(0.85, 0.45, 0.95),
+        6 => Color::srgb(0.95, 0.6, 0.3),
+        7 => Color::srgb(0.4, 0.9, 0.9),
+        8 => Color::srgb(0.95, 0.5, 0.75),
+        9 => Color::srgb(0.8, 0.8, 0.8),
+        _ => Color::srgb(0.5, 0.5, 0.5),
     }
 }
 
@@ -50,6 +72,9 @@ pub struct EntityData {
     pub cell_b: Option<[i32; 3]>,
     #[serde(default)]
     pub track: Option<TrackId>,
+    /// Link channel (1-9). 0 = unlinked.
+    #[serde(default)]
+    pub link: u32,
 }
 
 fn default_param() -> f32 {
@@ -74,6 +99,8 @@ impl EntityData {
             EntityKind::Seal => (3.0, None),
             EntityKind::DriftPlate => (3.0, None),
             EntityKind::Prowler => (2.5, None),
+            EntityKind::TriggerOrb => (1.0, None),
+            EntityKind::RelayGate => (3.0, None),
         };
         Self {
             id,
@@ -83,6 +110,7 @@ impl EntityData {
             param,
             cell_b,
             track: None,
+            link: 0,
         }
     }
 }

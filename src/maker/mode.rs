@@ -63,6 +63,16 @@ pub struct MirrorMode(pub u8);
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct BoxFillStart(pub Option<IVec3>);
 
+/// Active link channel stamped onto newly placed orbs/gates (1-9).
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct ActiveLinkChannel(pub u32);
+
+impl Default for ActiveLinkChannel {
+    fn default() -> Self {
+        Self(1)
+    }
+}
+
 /// Cell the edit cursor is currently aiming at (Edit mode only).
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct EditorCursor {

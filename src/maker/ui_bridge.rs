@@ -9,8 +9,8 @@ use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
 use super::mode::{
-    BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntity,
-    SelectedEntityKind,
+    ActiveLinkChannel, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind,
+    SelectedEntity, SelectedEntityKind,
 };
 use super::storage::{self, AUTOSAVE_KEY, LevelStorage, apply_level_data};
 use super::track::{ActiveTrack, TrackData, TrackId, TrackMode};
@@ -37,6 +37,8 @@ pub enum UiCommand {
     CopyCode,
     DeltaEntityParam(u32, f32),
     DeltaEntityYaw(u32, f32),
+    DeltaEntityLink(u32, i32),
+    CycleLinkChannel,
     CycleEntityTrack(u32),
     DeleteEntity(u32),
     ToggleTrackMode(u32),
@@ -81,6 +83,7 @@ pub struct MakerUi {
     pub active_track_data: Option<TrackData>,
     pub track_ids: Vec<TrackId>,
     pub mirror: u8,
+    pub link_channel: u32,
 }
 
 impl MakerUi {
@@ -101,6 +104,7 @@ pub fn push_ui_state(
     active: Res<ActiveTrack>,
     sel_ent: Res<SelectedEntity>,
     mirror: Res<super::mode::MirrorMode>,
+    channel: Res<ActiveLinkChannel>,
     level: Res<LevelDocument>,
     mut ui: ResMut<MakerUi>,
 ) {
@@ -113,6 +117,8 @@ pub fn push_ui_state(
         EntityKind::Seal => 2,
         EntityKind::DriftPlate => 3,
         EntityKind::Prowler => 4,
+        EntityKind::TriggerOrb => 5,
+        EntityKind::RelayGate => 6,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,
@@ -124,6 +130,7 @@ pub fn push_ui_state(
     ui.active_track_data = active.0.and_then(|id| level.track(id)).cloned();
     ui.track_ids = level.data.tracks.iter().map(|t| t.id).collect();
     ui.mirror = mirror.0;
+    ui.link_channel = channel.0;
     ui.active_track_label = active
         .0
         .and_then(|id| level.track(id).map(|t| (id, t)))
@@ -160,6 +167,7 @@ pub fn drain_ui_commands(
     mut overlay: ResMut<OverlayMenu>,
     mut sel_ent: ResMut<SelectedEntity>,
     mut active: ResMut<ActiveTrack>,
+    mut channel: ResMut<ActiveLinkChannel>,
     mut clipboard: ResMut<bevy::clipboard::Clipboard>,
 ) {
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
@@ -284,6 +292,19 @@ pub fn drain_ui_commands(
                         history.apply(&mut level, EditCommand::SetEntityYaw { id, old, new });
                     }
                 }
+            }
+            UiCommand::DeltaEntityLink(id, delta) => {
+                if let Some(e) = level.entity_by_id(id) {
+                    let old = e.link;
+                    let new = (old as i32 + delta).clamp(1, 9) as u32;
+                    if new != old {
+                        history.apply(&mut level, EditCommand::SetEntityLink { id, old, new });
+                    }
+                }
+            }
+            UiCommand::CycleLinkChannel => {
+                channel.0 = channel.0 % 9 + 1;
+                ui.set_status(format!("Link channel: {}", channel.0));
             }
             UiCommand::CycleEntityTrack(id) => {
                 let Some(e) = level.entity_by_id(id) else {

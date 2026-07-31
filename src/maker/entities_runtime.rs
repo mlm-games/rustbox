@@ -7,7 +7,7 @@ use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::MakerCleanup;
 use super::collision::is_solid;
-use super::entity_data::{EntityKind, LevelEntityId};
+use super::entity_data::{EntityKind, LevelEntityId, link_color};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::{JUMP_SPEED, Player, spawn_center};
@@ -69,6 +69,32 @@ pub struct Prowler {
 #[derive(Component)]
 pub struct SealSolid;
 
+#[derive(Component)]
+pub struct TriggerOrb {
+    pub channel: u32,
+    pub cooldown: f32,
+    pub timer: f32,
+}
+
+#[derive(Component)]
+pub struct RelayGate {
+    pub channel: u32,
+    pub duration: f32,
+    pub open: bool,
+    pub want_close: bool,
+}
+
+/// Non-Rapier solid marker for a closed gate.
+#[derive(Component)]
+pub struct GateSolid;
+
+/// Last pulse time per channel, in seconds of play-session time.
+#[derive(Resource, Default)]
+pub struct LinkState {
+    pub pulses: std::collections::HashMap<u32, f32>,
+    pub clock: f32,
+}
+
 #[derive(Resource, Default)]
 pub struct RuntimeSolids {
     pub boxes: Vec<(Vec3, Vec3)>,
@@ -81,7 +107,10 @@ pub struct EntityAssets {
     pub seal: Handle<Mesh>,
     pub drift: Handle<Mesh>,
     pub prowler: Handle<Mesh>,
+    pub orb: Handle<Mesh>,
+    pub gate: Handle<Mesh>,
     pub mats: HashMap<EntityKind, Handle<StandardMaterial>>,
+    pub link_mats: HashMap<u32, Handle<StandardMaterial>>,
 }
 
 pub fn setup_entity_assets(
@@ -106,11 +135,22 @@ pub fn setup_entity_assets(
         mats.insert(kind, materials.add(m));
     }
 
+    let mut link_mats = HashMap::new();
+    for ch in 0..=9 {
+        let mut m = StandardMaterial::from_color(link_color(ch));
+        m.perceptual_roughness = 0.5;
+        m.metallic = 0.1;
+        m.emissive = LinearRgba::from(link_color(ch)) * 3.0;
+        link_mats.insert(ch, materials.add(m));
+    }
+
     let glimmer = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
     let pad = meshes.add(Cylinder::new(0.45, 0.15));
     let seal = meshes.add(Cuboid::new(1.0, 2.0, 0.25));
     let drift = meshes.add(Cuboid::new(1.4, 0.25, 1.4));
     let prowler = meshes.add(Cuboid::new(0.7, 0.7, 0.7));
+    let orb = meshes.add(Sphere::new(0.35).mesh().ico(3).unwrap());
+    let gate = meshes.add(Cuboid::new(1.0, 2.0, 0.4));
 
     commands.insert_resource(EntityAssets {
         glimmer,
@@ -118,7 +158,10 @@ pub fn setup_entity_assets(
         seal,
         drift,
         prowler,
+        orb,
+        gate,
         mats,
+        link_mats,
     });
 }
 
@@ -154,6 +197,13 @@ pub fn reconcile_entities(
             EntityKind::Seal => (assets.seal.clone(), 1.0, Vec3::ONE),
             EntityKind::DriftPlate => (assets.drift.clone(), 0.15, Vec3::ONE),
             EntityKind::Prowler => (assets.prowler.clone(), 0.4, Vec3::ONE),
+            EntityKind::TriggerOrb => (assets.orb.clone(), 1.0, Vec3::ONE),
+            EntityKind::RelayGate => (assets.gate.clone(), 1.0, Vec3::ONE),
+        };
+        let mat = if matches!(data.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
+            assets.link_mats[&data.link.min(9)].clone()
+        } else {
+            assets.mats[&data.kind].clone()
         };
 
         let mut tf = Transform::from_translation(world + Vec3::Y * y_off).with_rotation(rot);
@@ -168,7 +218,7 @@ pub fn reconcile_entities(
         let eid = commands
             .spawn((
                 Mesh3d(mesh),
-                MeshMaterial3d(assets.mats[&data.kind].clone()),
+                MeshMaterial3d(mat),
                 tf,
                 LevelEnt {
                     id: data.id,
@@ -249,6 +299,28 @@ pub fn reconcile_entities(
                     prev: tf.translation,
                     on_track: data.track.is_some(),
                 });
+            }
+            EntityKind::TriggerOrb => {
+                ecmds.insert(TriggerOrb {
+                    channel: data.link,
+                    cooldown: data.param.max(0.2),
+                    timer: 0.0,
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::RelayGate => {
+                ecmds.insert(RelayGate {
+                    channel: data.link,
+                    duration: data.param.max(0.5),
+                    open: false,
+                    want_close: false,
+                });
+                ecmds.insert(GateSolid);
+                #[cfg(feature = "physics")]
+                if playing {
+                    ecmds.insert((RigidBody::Fixed, Collider::cuboid(0.5, 1.0, 0.2)));
+                }
             }
         }
 
@@ -348,6 +420,116 @@ pub fn update_seals(
             if solid.is_some() {
                 commands.entity(e).remove::<SealSolid>();
             }
+        }
+    }
+}
+
+/// Player touches an orb → pulse its channel.
+pub fn trigger_orbs(
+    time: Res<Time>,
+    mode: Res<MakerMode>,
+    mut link: ResMut<LinkState>,
+    mut ui: ResMut<MakerUi>,
+    mut trauma: ResMut<Trauma>,
+    mut commands: Commands,
+    player_q: Query<&Transform, With<Player>>,
+    mut orbs: Query<(Entity, &Transform, &mut TriggerOrb)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    link.clock += time.delta_secs();
+    let Ok(pt) = player_q.single() else {
+        return;
+    };
+
+    for (e, ot, mut orb) in &mut orbs {
+        orb.timer = (orb.timer - time.delta_secs()).max(0.0);
+        if orb.channel == 0 || orb.timer > 0.0 {
+            continue;
+        }
+        if pt.translation.distance(ot.translation) < 1.0 {
+            orb.timer = orb.cooldown;
+            let t = link.clock;
+            link.pulses.insert(orb.channel, t);
+            Juice::pop_in(&mut commands, e, 0.15);
+            ScreenEffects::add_trauma(&mut trauma, 0.1);
+            ui.set_status(format!("Channel {} triggered!", orb.channel));
+        }
+    }
+}
+
+/// Gates open while (clock - last_pulse) < duration; close crush-safe.
+pub fn update_relay_gates(
+    mode: Res<MakerMode>,
+    link: Res<LinkState>,
+    mut commands: Commands,
+    player_q: Query<(&Transform, &Player)>,
+    mut gates: Query<(Entity, &Transform, &mut RelayGate, &mut Visibility)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let player = player_q.single().ok();
+
+    for (e, gt, mut gate, mut vis) in &mut gates {
+        let powered = gate.channel != 0
+            && link
+                .pulses
+                .get(&gate.channel)
+                .is_some_and(|t| link.clock - t < gate.duration);
+
+        if powered && !gate.open {
+            gate.open = true;
+            gate.want_close = false;
+            *vis = Visibility::Hidden;
+            commands.entity(e).remove::<GateSolid>();
+            #[cfg(feature = "physics")]
+            commands.entity(e).remove::<Collider>();
+        } else if !powered && gate.open {
+            // Crush-safe close: wait until the player isn't in the doorway.
+            let blocked = player.is_some_and(|(pt, p)| {
+                let d = (pt.translation - gt.translation).abs();
+                d.x < p.half_extents.x + 0.5
+                    && d.y < p.half_extents.y + 1.0
+                    && d.z < p.half_extents.z + 0.2
+            });
+            if blocked {
+                gate.want_close = true;
+            } else {
+                gate.open = false;
+                gate.want_close = false;
+                *vis = Visibility::Visible;
+                commands.entity(e).insert(GateSolid);
+                #[cfg(feature = "physics")]
+                commands.entity(e).insert(Collider::cuboid(0.5, 1.0, 0.2));
+            }
+        }
+    }
+}
+
+/// Edit-mode gizmos: dashed lines between same-channel orbs and gates.
+pub fn draw_link_gizmos(mode: Res<MakerMode>, level: Res<LevelDocument>, mut gizmos: Gizmos) {
+    if *mode != MakerMode::Edit {
+        return;
+    }
+    let orbs: Vec<_> = level
+        .data
+        .entities
+        .iter()
+        .filter(|e| e.kind == EntityKind::TriggerOrb && e.link != 0)
+        .collect();
+    let gates: Vec<_> = level
+        .data
+        .entities
+        .iter()
+        .filter(|e| e.kind == EntityKind::RelayGate && e.link != 0)
+        .collect();
+    for orb in &orbs {
+        for gate in gates.iter().filter(|g| g.link == orb.link) {
+            let a = orb.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
+            let b = gate.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
+            gizmos.line(a, b, link_color(orb.link));
         }
     }
 }
@@ -504,6 +686,7 @@ pub fn prowler_touch(
 pub fn rebuild_runtime_solids(
     mut solids: ResMut<RuntimeSolids>,
     seals: Query<(&Transform, &Seal), With<SealSolid>>,
+    gates: Query<(&Transform, &RelayGate), With<GateSolid>>,
 ) {
     solids.boxes.clear();
     for (tf, seal) in &seals {
@@ -511,6 +694,13 @@ pub fn rebuild_runtime_solids(
             solids
                 .boxes
                 .push((tf.translation, Vec3::new(0.5, 1.0, 0.15)));
+        }
+    }
+    for (tf, gate) in &gates {
+        if !gate.open {
+            solids
+                .boxes
+                .push((tf.translation, Vec3::new(0.5, 1.0, 0.2)));
         }
     }
 }

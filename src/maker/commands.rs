@@ -63,6 +63,11 @@ pub enum EditCommand {
         old: Option<TrackId>,
         new: Option<TrackId>,
     },
+    SetEntityLink {
+        id: LevelEntityId,
+        old: u32,
+        new: u32,
+    },
     ReverseTrackPoints {
         track_id: TrackId,
     },
@@ -174,6 +179,11 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
                 e.track = *new;
             }
         }
+        EditCommand::SetEntityLink { id, new, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.link = *new;
+            }
+        }
         EditCommand::ReverseTrackPoints { track_id } => {
             if let Some(t) = level.track_mut(*track_id) {
                 t.points.reverse();
@@ -257,6 +267,11 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::SetEntityTrack { id, old, .. } => {
             if let Some(e) = level.entity_mut(*id) {
                 e.track = *old;
+            }
+        }
+        EditCommand::SetEntityLink { id, old, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.link = *old;
             }
         }
         EditCommand::ReverseTrackPoints { track_id } => {

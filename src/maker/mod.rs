@@ -69,6 +69,8 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::MirrorMode>()
             .init_resource::<mode::BoxFillStart>()
             .init_resource::<mode::EditorCursor>()
+            .init_resource::<mode::ActiveLinkChannel>()
+            .init_resource::<entities_runtime::LinkState>()
             .add_message::<mode::BlockPlaced>()
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
@@ -121,10 +123,16 @@ impl Plugin for MakerPlugin {
                     track::draw_track_gizmos.run_if(in_edit),
                     editor::delete_selected_entity.run_if(in_edit),
                     editor::draw_selected_entity_gizmo.run_if(in_edit),
+                    editor::update_placement_preview.run_if(in_edit),
+                    entities_runtime::draw_link_gizmos.run_if(in_edit),
                     entities_runtime::move_prowlers.after(entities_runtime::tick_track_followers),
                     entities_runtime::prowler_touch
                         .after(player::player_controller)
                         .after(entities_runtime::move_prowlers)
+                        .run_if(in_play),
+                    entities_runtime::trigger_orbs.run_if(in_play),
+                    entities_runtime::update_relay_gates
+                        .after(entities_runtime::trigger_orbs)
                         .run_if(in_play),
                     camera::edit_camera_control.run_if(in_edit),
                     camera::play_camera_follow.run_if(in_play),

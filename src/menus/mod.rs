@@ -50,6 +50,7 @@ pub enum UiAction {
     MakerToggleBrushTab,
     MakerSelectEntity(u8),
     MakerRotateBrush,
+    MakerCycleLinkChannel,
     MakerUndo,
     MakerRedo,
     MakerSave,
@@ -66,6 +67,7 @@ pub enum UiAction {
     MakerCopyCode,
     MakerInspParamDelta(f32),
     MakerInspYawDelta(f32),
+    MakerInspLinkDelta(i32),
     MakerInspTrackCycle,
     MakerInspDeleteEntity,
     MakerInspTrackModeToggle,
@@ -627,12 +629,14 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 5] = [
+    let items: [(u8, RColor); 7] = [
         (0, col(255, 215, 70)),
         (1, col(90, 190, 255)),
         (2, col(190, 90, 230)),
         (3, col(240, 140, 65)),
         (4, col(215, 55, 90)),
+        (5, col(75, 230, 190)),
+        (6, col(110, 215, 110)),
     ];
     let a_rot = actions.clone();
     let mut row = Row(Modifier::new().gap(6.0));
@@ -648,6 +652,18 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     row = row.child(mk_pill_button("⟳ F".into(), move || {
         push_ui(&a_rot, UiAction::MakerRotateBrush)
     }));
+    if st.selected_entity >= 5 {
+        let a_ch = actions.clone();
+        let label = if st.selected_entity == 5 {
+            t(&st.translations, "toolbar-trigger", "Trigger Orb")
+        } else {
+            t(&st.translations, "toolbar-gate", "Relay Gate")
+        };
+        row = row.child(mk_pill_button(
+            format!("⛓ {label} · Ch {} [L]", st.link_channel),
+            move || push_ui(&a_ch, UiAction::MakerCycleLinkChannel),
+        ));
+    }
     row
 }
 
@@ -701,6 +717,8 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::DriftPlate => ("maker-ent-drift", "Drift Plate"),
             EntityKind::Prowler => ("toolbar-prowler", "Prowler"),
             EntityKind::Glimmer => ("maker-ent-glimmer", "Glimmer"),
+            EntityKind::TriggerOrb => ("toolbar-trigger", "Trigger Orb"),
+            EntityKind::RelayGate => ("toolbar-gate", "Relay Gate"),
         };
         body.push(
             RText(t(tr, label_key, label_fb))
@@ -726,6 +744,8 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::Seal => ("inspector-glimmers", "Glimmers", 1.0),
             EntityKind::DriftPlate => ("inspector-period", "Period", 0.5),
             EntityKind::Prowler => ("inspector-speed", "Speed", 0.5),
+            EntityKind::TriggerOrb => ("inspector-cooldown", "Cooldown", 0.5),
+            EntityKind::RelayGate => ("inspector-duration", "Duration", 0.5),
         };
         let a_minus = actions.clone();
         let a_plus = actions.clone();
@@ -735,6 +755,17 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
             move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
         ));
+
+        if matches!(e.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
+            let a_minus = actions.clone();
+            let a_plus = actions.clone();
+            body.push(stepper_row(
+                t(tr, "inspector-channel", "Channel"),
+                format!("{}", e.link),
+                move || push_ui(&a_minus, UiAction::MakerInspLinkDelta(-1)),
+                move || push_ui(&a_plus, UiAction::MakerInspLinkDelta(1)),
+            ));
+        }
 
         if matches!(e.kind, EntityKind::LaunchPad | EntityKind::Prowler) {
             let a_minus = actions.clone();

@@ -8,8 +8,8 @@ use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
 use super::mode::{
-    BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture, MakerMode, MakerStats,
-    MirrorMode, PlaceYaw, SelectedBlockKind, SelectedEntity, SelectedEntityKind,
+    ActiveLinkChannel, BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture, MakerMode,
+    MakerStats, MirrorMode, PlaceYaw, SelectedBlockKind, SelectedEntity, SelectedEntityKind,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
@@ -54,6 +54,8 @@ pub fn entity_palette_hotkeys(
     mut tab: ResMut<BrushTab>,
     mut sel_e: ResMut<SelectedEntityKind>,
     mut place_yaw: ResMut<PlaceYaw>,
+    mut channel: ResMut<ActiveLinkChannel>,
+    mut ui: ResMut<MakerUi>,
 ) {
     if keys.just_pressed(KeyCode::KeyQ) {
         *tab = match *tab {
@@ -64,6 +66,10 @@ pub fn entity_palette_hotkeys(
     }
     if keys.just_pressed(KeyCode::KeyF) {
         place_yaw.0 = (place_yaw.0 + 45.0) % 360.0;
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        channel.0 = channel.0 % 9 + 1;
+        ui.set_status(format!("Link channel: {}", channel.0));
     }
     if *tab != BrushTab::Entities {
         return;
@@ -82,6 +88,12 @@ pub fn entity_palette_hotkeys(
     }
     if keys.just_pressed(KeyCode::Digit5) {
         sel_e.0 = EntityKind::Prowler;
+    }
+    if keys.just_pressed(KeyCode::Digit6) {
+        sel_e.0 = EntityKind::TriggerOrb;
+    }
+    if keys.just_pressed(KeyCode::Digit7) {
+        sel_e.0 = EntityKind::RelayGate;
     }
 }
 
@@ -232,6 +244,31 @@ pub fn update_editor_cursor(
     }
 }
 
+/// Moves the placement ghost to the cursor's target cell (Blocks/Entities tabs).
+pub fn update_placement_preview(
+    cursor: Res<EditorCursor>,
+    tab: Res<BrushTab>,
+    mut preview_q: Query<(&mut Transform, &mut Visibility), With<PlacementPreview>>,
+) {
+    let Ok((mut tr, mut vis)) = preview_q.single_mut() else {
+        return;
+    };
+    if *tab == BrushTab::Tracks {
+        *vis = Visibility::Hidden;
+        return;
+    }
+    let Some(place_cell) = cursor.place else {
+        *vis = Visibility::Hidden;
+        return;
+    };
+    tr.translation = Vec3::new(
+        place_cell.x as f32 + 0.5,
+        place_cell.y as f32 + 0.5,
+        place_cell.z as f32 + 0.5,
+    );
+    *vis = Visibility::Visible;
+}
+
 pub fn update_preview_and_edit(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -247,35 +284,15 @@ pub fn update_preview_and_edit(
     mut history: ResMut<CommandHistory>,
     mut stats: ResMut<MakerStats>,
     mut sel_ent: ResMut<SelectedEntity>,
-    mut preview_q: Query<(&mut Transform, &mut Visibility), With<PlacementPreview>>,
+    channel: Res<ActiveLinkChannel>,
     mut placed: MessageWriter<BlockPlaced>,
 ) {
-    let hide = |q: &mut Query<(&mut Transform, &mut Visibility), With<PlacementPreview>>| {
-        if let Ok((_, mut vis)) = q.single_mut() {
-            *vis = Visibility::Hidden;
-        }
-    };
-
     let Some(hit_cell) = cursor.hit else {
-        hide(&mut preview_q);
         return;
     };
     let Some(place_cell) = cursor.place else {
-        hide(&mut preview_q);
         return;
     };
-    let center = Vec3::new(
-        place_cell.x as f32 + 0.5,
-        place_cell.y as f32 + 0.5,
-        place_cell.z as f32 + 0.5,
-    );
-
-    if *tab != BrushTab::Tracks
-        && let Ok((mut tr, mut vis)) = preview_q.single_mut()
-    {
-        tr.translation = center;
-        *vis = Visibility::Visible;
-    }
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
@@ -350,6 +367,9 @@ pub fn update_preview_and_edit(
                     let id = level.alloc_id();
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
+                    if matches!(data.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
+                        data.link = channel.0;
+                    }
                     let world = place_cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
                     data.track = level.track_near(world, 1.5);
                     history.apply(&mut level, EditCommand::PlaceEntity { entity: data });
@@ -541,6 +561,8 @@ pub fn draw_selected_entity_gizmo(
         EntityKind::Seal => Vec3::new(0.6, 1.1, 0.4),
         EntityKind::DriftPlate => Vec3::new(0.8, 0.25, 0.8),
         EntityKind::Prowler => Vec3::new(0.5, 0.5, 0.5),
+        EntityKind::TriggerOrb => Vec3::splat(0.45),
+        EntityKind::RelayGate => Vec3::new(0.6, 1.1, 0.4),
     };
     let color = Color::srgb(0.3, 0.8, 1.0);
     let min = center - half;
