@@ -148,10 +148,10 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::RemoveTrackPoint {
             track_id, index, ..
         } => {
-            if let Some(t) = level.track_mut(*track_id) {
-                if *index < t.points.len() {
-                    t.points.remove(*index);
-                }
+            if let Some(t) = level.track_mut(*track_id)
+                && *index < t.points.len()
+            {
+                t.points.remove(*index);
             }
         }
         EditCommand::SetTrackMode { track_id, new, .. } => {
@@ -228,10 +228,10 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::AddTrackPoint {
             track_id, index, ..
         } => {
-            if let Some(t) = level.track_mut(*track_id) {
-                if *index < t.points.len() {
-                    t.points.remove(*index);
-                }
+            if let Some(t) = level.track_mut(*track_id)
+                && *index < t.points.len()
+            {
+                t.points.remove(*index);
             }
         }
         EditCommand::RemoveTrackPoint {

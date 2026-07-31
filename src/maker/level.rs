@@ -246,10 +246,11 @@ impl LevelDocument {
     pub fn track_near(&self, p: Vec3, radius: f32) -> Option<TrackId> {
         let mut best: Option<(f32, TrackId)> = None;
         for t in &self.data.tracks {
-            if let Some((_, _, d)) = t.nearest(p) {
-                if d <= radius && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
-                    best = Some((d, t.id));
-                }
+            if let Some((_, _, d)) = t.nearest(p)
+                && d <= radius
+                && best.as_ref().is_none_or(|(bd, _)| d < *bd)
+            {
+                best = Some((d, t.id));
             }
         }
         best.map(|(_, id)| id)

@@ -427,10 +427,10 @@ pub fn share_text_input(
         } else if ev.key_code == KeyCode::Enter {
             let code = ui.import_code.clone();
             ui.commands.push(UiCommand::ImportCode(code));
-        } else if let Some(text) = &ev.text {
-            if text.chars().all(|c| !c.is_control()) {
-                ui.import_code.push_str(text);
-            }
+        } else if let Some(text) = &ev.text
+            && text.chars().all(|c| !c.is_control())
+        {
+            ui.import_code.push_str(text);
         }
     }
 }
