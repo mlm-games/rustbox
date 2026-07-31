@@ -36,6 +36,8 @@ const TRANSLATION_KEYS: &[&str] = &[
     "level-select-title",
     "maker-remix",
     "maker-beat-author",
+    "completed",
+    "uncleared",
     "paused",
     "resume",
     "quit-to-title",
@@ -226,7 +228,7 @@ pub struct SharedUi {
     // Campaign / bundled levels
     pub author_time: Option<f32>,
     pub is_bundled: bool,
-    pub bundled_levels: Vec<(String, String)>,
+    pub campaign_levels: Vec<crate::maker::campaign::CampaignLevelUi>,
 }
 
 impl Default for SharedUi {
@@ -276,7 +278,7 @@ impl Default for SharedUi {
             link_channel: 1,
             author_time: None,
             is_bundled: false,
-            bundled_levels: Vec::new(),
+            campaign_levels: Vec::new(),
         }
     }
 }
@@ -376,6 +378,7 @@ fn sync_shared_ui(
     maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
     level: Option<Res<crate::maker::level::LevelDocument>>,
     source: Option<Res<crate::maker::campaign::LevelSource>>,
+    progress: Option<Res<crate::maker::campaign::CampaignProgress>>,
 ) {
     let Ok(mut ui) = bridge.shared.lock() else {
         return;
@@ -430,9 +433,21 @@ fn sync_shared_ui(
         use crate::maker::campaign::LevelSource;
         ui.is_bundled = *s != LevelSource::Editor;
     }
-    ui.bundled_levels = crate::maker::campaign::BUNDLED_LEVELS
+    ui.campaign_levels = crate::maker::campaign::BUNDLED_LEVELS
         .iter()
-        .map(|b| (b.name.to_string(), b.teaches.to_string()))
+        .map(|b| {
+            let rec = progress
+                .as_deref()
+                .map(|p| p.record(b.id))
+                .unwrap_or_default();
+            crate::maker::campaign::CampaignLevelUi {
+                title: b.name.to_string(),
+                teaches: b.teaches.to_string(),
+                completed: rec.completed,
+                best_time: rec.best_time,
+                best_deaths: rec.best_deaths,
+            }
+        })
         .collect();
     if *overlay != OverlayMenu::Settings {
         ui.master_vol = save.settings.master_volume;

@@ -229,7 +229,7 @@ pub fn drain_ui_commands(
                 *mode = MakerMode::Play;
             }
             UiCommand::RefreshSlotList => {
-                ui.level_slots = storage.0.list().unwrap_or_default();
+                ui.level_slots = storage::list_slots(&storage);
             }
             UiCommand::Publish => {
                 if level.data.is_verified {
@@ -407,7 +407,7 @@ pub fn drain_ui_commands(
             }
         }
     }
-    ui.level_slots = storage.0.list().unwrap_or_default();
+    ui.level_slots = storage::list_slots(&storage);
 }
 
 pub fn share_text_input(

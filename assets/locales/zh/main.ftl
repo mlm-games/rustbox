@@ -105,3 +105,5 @@ create = 创建
 level-select-title = 选择关卡
 maker-remix = 改编此关卡
 maker-beat-author = 击败了作者时间！
+completed = 已通关
+uncleared = 未通关

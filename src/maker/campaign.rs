@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::level::LevelData;
-use super::storage::deserialize_level;
+use super::storage::{LevelStorage, deserialize_level};
 
 pub struct BundledLevel {
     pub id: &'static str,
@@ -63,6 +66,73 @@ pub enum LevelSource {
     Editor, // player's own level (starts in Edit)
     Bundled(usize), // campaign level (starts in Play, Remix available)
     Imported,       // from share code (starts in Play, Remix available)
+}
+
+/// Per-level best-run record, persisted between sessions.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CampaignRecord {
+    pub completed: bool,
+    pub best_time: Option<f32>,
+    pub best_deaths: Option<u32>,
+}
+
+/// Persisted campaign progress keyed by bundled level id.
+#[derive(Resource, Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CampaignProgress {
+    pub records: HashMap<String, CampaignRecord>,
+}
+
+impl CampaignProgress {
+    pub fn record_clear(&mut self, id: &str, time: f32, deaths: u32) {
+        let rec = self.records.entry(id.to_string()).or_default();
+        rec.completed = true;
+        let better = match rec.best_time {
+            Some(best) => time < best,
+            None => true,
+        };
+        if better {
+            rec.best_time = Some(time);
+            rec.best_deaths = Some(deaths);
+        }
+    }
+
+    pub fn record(&self, id: &str) -> CampaignRecord {
+        self.records.get(id).cloned().unwrap_or_default()
+    }
+}
+
+const CAMPAIGN_PROGRESS_KEY: &str = "__campaign_progress";
+
+pub fn load_campaign_progress(storage: Res<LevelStorage>, mut progress: ResMut<CampaignProgress>) {
+    let Ok(Some(text)) = storage.0.load(CAMPAIGN_PROGRESS_KEY) else {
+        return;
+    };
+    let Ok(p) = ron::from_str::<CampaignProgress>(&text) else {
+        return;
+    };
+    *progress = p;
+}
+
+pub fn save_campaign_progress(storage: Res<LevelStorage>, progress: Res<CampaignProgress>) {
+    if !progress.is_changed() || progress.records.is_empty() {
+        return;
+    }
+    let Ok(text) = ron::ser::to_string_pretty(&*progress, ron::ser::PrettyConfig::default()) else {
+        return;
+    };
+    if let Err(e) = storage.0.save(CAMPAIGN_PROGRESS_KEY, &text) {
+        error!("Failed to save campaign progress: {e}");
+    }
+}
+
+/// Flat, UI-ready snapshot of a bundled level plus its campaign record.
+#[derive(Clone, Debug, Default)]
+pub struct CampaignLevelUi {
+    pub title: String,
+    pub teaches: String,
+    pub completed: bool,
+    pub best_time: Option<f32>,
+    pub best_deaths: Option<u32>,
 }
 
 #[cfg(test)]

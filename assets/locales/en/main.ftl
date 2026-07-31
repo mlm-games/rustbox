@@ -106,3 +106,5 @@ create = Create
 level-select-title = Play Levels
 maker-remix = Remix This Level
 maker-beat-author = Beat the author!
+completed = Completed
+uncleared = Uncleared

@@ -100,3 +100,5 @@ create = Créer
 level-select-title = Choisir un Niveau
 maker-remix = Refaire ce Niveau
 maker-beat-author = Auteur battu !
+completed = Terminé
+uncleared = Non terminé

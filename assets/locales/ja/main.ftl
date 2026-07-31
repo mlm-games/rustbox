@@ -105,3 +105,5 @@ create = 作る
 level-select-title = レベル選択
 maker-remix = このレベルをリミックス
 maker-beat-author = 作者タイムを破った！
+completed = クリア
+uncleared = 未クリア

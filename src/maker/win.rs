@@ -4,6 +4,7 @@ use crate::app::{OverlayMenu, Paused};
 use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::block::BlockKind;
+use super::campaign::{CampaignProgress, LevelSource};
 use super::collision::overlaps_kind;
 use super::level::LevelDocument;
 use super::mode::MakerMode;
@@ -19,6 +20,8 @@ pub fn detect_goal(
     mut trauma: ResMut<Trauma>,
     mut flash: ResMut<FlashWhite>,
     mut virtual_time: ResMut<Time<Virtual>>,
+    source: Option<Res<LevelSource>>,
+    mut progress: Option<ResMut<CampaignProgress>>,
     q: Query<(&Transform, &Player)>,
 ) {
     if *mode != MakerMode::Play || ui.goal_latched {
@@ -29,6 +32,13 @@ pub fn detect_goal(
             ui.goal_latched = true;
             ui.clear_time_secs = ui.play_timer;
             ui.clear_deaths = ui.deaths;
+
+            if let (Some(s), Some(p)) = (&source, progress.as_deref_mut())
+                && let LevelSource::Bundled(i) = **s
+            {
+                let id = super::campaign::BUNDLED_LEVELS[i].id;
+                p.record_clear(id, ui.clear_time_secs, ui.clear_deaths);
+            }
 
             if !level.data.is_verified {
                 level.data.is_verified = true;

@@ -74,6 +74,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::ActiveLinkChannel>()
             .init_resource::<entities_runtime::LinkState>()
             .init_resource::<campaign::LevelSource>()
+            .init_resource::<campaign::CampaignProgress>()
             .add_message::<mode::BlockPlaced>()
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
@@ -81,6 +82,8 @@ impl Plugin for MakerPlugin {
             .init_resource::<RuntimeSolids>()
             .init_resource::<storage::LevelStorage>()
             .init_resource::<ui_bridge::MakerUi>()
+            .add_systems(Startup, campaign::load_campaign_progress)
+            .add_systems(Update, campaign::save_campaign_progress)
             .add_systems(
                 OnEnter(AppState::InGame),
                 (
@@ -168,7 +171,7 @@ impl Plugin for MakerPlugin {
             .add_systems(
                 OnEnter(AppState::InGame),
                 |mut ui: ResMut<ui_bridge::MakerUi>, storage: Res<storage::LevelStorage>| {
-                    ui.level_slots = storage.0.list().unwrap_or_default();
+                    ui.level_slots = storage::list_slots(&storage);
                 },
             );
     }

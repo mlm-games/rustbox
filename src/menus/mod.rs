@@ -253,17 +253,33 @@ fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
     let a_back = actions.clone();
 
-    let row = |i: u8, name: &str, teaches: &str| -> View {
+    let row = |i: u8, lvl: &crate::maker::campaign::CampaignLevelUi| -> View {
         let a = actions.clone();
+        let title = lvl.title.clone();
+        let teaches = lvl.teaches.clone();
+        let status = if lvl.completed {
+            match (lvl.best_time, lvl.best_deaths) {
+                (Some(best), Some(d)) => {
+                    format!("✓ {:.1}s · {} {}", best, d, t(tr, "maker-deaths", "deaths"))
+                }
+                _ => t(tr, "completed", "Completed").to_string(),
+            }
+        } else {
+            t(tr, "uncleared", "Uncleared").to_string()
+        };
+        let status_color = if lvl.completed {
+            col(220, 210, 120)
+        } else {
+            col(120, 125, 140)
+        };
         Column(Modifier::new().align_items(AlignItems::CENTER)).child((
             mk_button(
-                &format!("{}. {}", i + 1, name),
+                &format!("{}. {}", i + 1, title),
                 col(70, 90, 120),
                 move || push(&a, UiAction::PlayBundledLevel(i)),
             ),
-            RText(teaches.to_string())
-                .size(12.0)
-                .color(col(160, 165, 180)),
+            RText(teaches).size(12.0).color(col(160, 165, 180)),
+            RText(status).size(12.0).color(status_color),
             spacer(4.0),
         ))
     };
@@ -284,8 +300,8 @@ fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     ));
 
     let mut inner = inner;
-    for (i, (name, teaches)) in st.bundled_levels.iter().enumerate() {
-        inner = inner.child(row(i as u8, name, teaches));
+    for (i, lvl) in st.campaign_levels.iter().enumerate() {
+        inner = inner.child(row(i as u8, lvl));
     }
 
     inner = inner.child(spacer(12.0)).child(mk_button(

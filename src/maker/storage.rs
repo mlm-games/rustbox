@@ -7,6 +7,18 @@ use super::mode::MakerMode;
 
 pub const AUTOSAVE_KEY: &str = "level_autosave";
 
+/// Keys starting with "__" are internal (campaign progress, etc.) shouldn't
+/// show up as player level slots.
+pub fn list_slots(storage: &LevelStorage) -> Vec<String> {
+    storage
+        .0
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|k| !k.starts_with("__"))
+        .collect()
+}
+
 pub trait StorageBackend: Send + Sync + 'static {
     fn save(&self, key: &str, data: &str) -> anyhow::Result<()>;
     fn load(&self, key: &str) -> anyhow::Result<Option<String>>;

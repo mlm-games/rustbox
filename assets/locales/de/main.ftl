@@ -105,3 +105,5 @@ create = Erstellen
 level-select-title = Level wählen
 maker-remix = Level neu mixen
 maker-beat-author = Autor geschlagen!
+completed = Abgeschlossen
+uncleared = Offen
