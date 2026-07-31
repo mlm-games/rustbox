@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::commands::CommandHistory;
-use super::level::{BlockData, LevelData, LevelDocument};
+use super::level::{LevelData, LevelDocument};
 use super::mode::MakerMode;
 
 pub const AUTOSAVE_KEY: &str = "level_autosave";
@@ -227,16 +227,7 @@ pub fn save_level(
 }
 
 pub fn apply_level_data(level: &mut LevelDocument, history: &mut CommandHistory, data: LevelData) {
-    level.map.clear();
-    for BlockData { position, kind } in &data.blocks {
-        level.map.insert(IVec3::from_array(*position), *kind);
-    }
-    level.data = data;
-    level.next_entity_id = level.data.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
-    level.next_track_id = level.data.tracks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
-    level.rebuild_blocks_vec();
-    level.mark_all_dirty();
-    level.entities_dirty = true;
+    level.replace_data(data);
 
     history.undo.clear();
     history.redo.clear();

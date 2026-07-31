@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use crate::app::OverlayMenu;
 
 use super::block::BlockKind;
+use super::campaign::{self, LevelSource};
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
@@ -45,6 +46,8 @@ pub enum UiCommand {
     DeltaTrackSpeed(u32, f32),
     ReverseTrack(u32),
     DeleteTrack(u32),
+    PlayBundled(usize),
+    RemixCurrent,
 }
 
 #[derive(Resource, Default)]
@@ -169,6 +172,7 @@ pub fn drain_ui_commands(
     mut active: ResMut<ActiveTrack>,
     mut channel: ResMut<ActiveLinkChannel>,
     mut clipboard: ResMut<bevy::clipboard::Clipboard>,
+    mut source: ResMut<LevelSource>,
 ) {
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
     for cmd in commands {
@@ -261,10 +265,31 @@ pub fn drain_ui_commands(
                         ui.export_code.clear();
                         sel_ent.0 = None;
                         *overlay = OverlayMenu::None;
+                        *source = LevelSource::Imported;
+                        *mode = MakerMode::Play;
                         ui.set_status("Level imported!");
                     }
                     Err(e) => ui.set_status(format!("Bad code: {e}")),
                 }
+            }
+            UiCommand::PlayBundled(i) => {
+                if let Some(data) = campaign::load_bundled(i) {
+                    level.replace_data(data);
+                    history.undo.clear();
+                    history.redo.clear();
+                    sel_ent.0 = None;
+                    *source = LevelSource::Bundled(i);
+                    *mode = MakerMode::Play; // straight into gameplay
+                    ui.set_status(format!("Playing: {}", campaign::BUNDLED_LEVELS[i].name));
+                }
+            }
+            UiCommand::RemixCurrent => {
+                level.data.name = format!("Remix of {}", level.data.name);
+                crate::maker::commands::invalidate_verification(&mut level); // must re-beat
+                *source = LevelSource::Editor;
+                *mode = MakerMode::Edit;
+                sel_ent.0 = None;
+                ui.set_status("Remixing — level is yours now. Beat it to share!");
             }
             UiCommand::CopyCode => {
                 if ui.export_code.is_empty() {

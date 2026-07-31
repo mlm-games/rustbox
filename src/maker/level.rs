@@ -268,4 +268,19 @@ impl LevelDocument {
             .blocks
             .sort_by_key(|b| (b.position[1], b.position[0], b.position[2]));
     }
+
+    /// Replace the whole document with `data` (used by bundled levels and
+    /// imports), resetting derived state so the runtime rebuilds from scratch.
+    pub fn replace_data(&mut self, data: LevelData) {
+        self.map.clear();
+        for b in &data.blocks {
+            self.map.insert(IVec3::from_array(b.position), b.kind);
+        }
+        self.data = data;
+        self.next_entity_id = self.data.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+        self.next_track_id = self.data.tracks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        self.rebuild_blocks_vec();
+        self.mark_all_dirty();
+        self.entities_dirty = true;
+    }
 }

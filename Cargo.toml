@@ -87,7 +87,7 @@ directories = "6"
 anyhow = "1"
 game-utils = { git = "https://github.com/mlm-games/game-utils" }
 game-utils-bevy = { git = "https://github.com/mlm-games/game-utils" }
-bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d", optional = true, default-features = false, features = [
+bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", optional = true, default-features = false, features = [
     "dim3",
     "parallel",
 ] }

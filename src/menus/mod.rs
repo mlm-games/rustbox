@@ -34,6 +34,9 @@ pub enum UiAction {
     StartGame,
     OpenSettings,
     OpenCredits,
+    OpenLevelSelect,
+    PlayBundledLevel(u8),
+    MakerRemix,
     CloseOverlay,
     Resume,
     QuitToTitle,
@@ -109,6 +112,11 @@ pub fn compose_root(
         AppState::Loading => loading_ui(),
         AppState::Title => ZStack(Modifier::new().fill_max_size()).child((
             title_ui(&st, actions.clone()),
+            AnimatedVisibility(
+                st.overlay == OverlayMenu::LevelSelect,
+                level_select_ui(&st, actions.clone()),
+                popup_anim_config("level_select"),
+            ),
             AnimatedVisibility(
                 st.overlay == OverlayMenu::Settings,
                 settings_view.clone(),
@@ -202,7 +210,8 @@ fn loading_ui() -> View {
 }
 
 fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let a1 = actions.clone();
+    let a_create = actions.clone();
+    let a_levels = actions.clone();
     let a2 = actions.clone();
     let a3 = actions.clone();
     let a4 = actions.clone();
@@ -220,10 +229,13 @@ fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .size(56.0)
             .color(RColor::WHITE),
         spacer(24.0),
+        mk_button(&t(tr, "create", "Create"), col(60, 120, 200), move || {
+            push(&a_create, UiAction::StartGame)
+        }),
         mk_button(
-            &t(tr, "start-game", "Start Game"),
-            col(60, 120, 200),
-            move || push(&a1, UiAction::StartGame),
+            &t(tr, "play-levels", "Play Levels"),
+            col(80, 170, 120),
+            move || push(&a_levels, UiAction::OpenLevelSelect),
         ),
         mk_button(&t(tr, "settings", "Settings"), col(70, 70, 90), move || {
             push(&a2, UiAction::OpenSettings)
@@ -235,6 +247,61 @@ fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             push(&a4, UiAction::QuitApp)
         }),
     ))
+}
+
+fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_back = actions.clone();
+
+    let row = |i: u8, name: &str, teaches: &str| -> View {
+        let a = actions.clone();
+        Column(Modifier::new().align_items(AlignItems::CENTER)).child((
+            mk_button(
+                &format!("{}. {}", i + 1, name),
+                col(70, 90, 120),
+                move || push(&a, UiAction::PlayBundledLevel(i)),
+            ),
+            RText(teaches.to_string())
+                .size(12.0)
+                .color(col(160, 165, 180)),
+            spacer(4.0),
+        ))
+    };
+
+    let inner = Column(
+        Modifier::new()
+            .width(420.0)
+            .padding(24.0)
+            .background(col(20, 20, 28))
+            .clip_rounded(12.0)
+            .align_items(AlignItems::CENTER),
+    )
+    .child((
+        RText(t(tr, "level-select-title", "Play Levels"))
+            .size(32.0)
+            .color(RColor::WHITE),
+        spacer(12.0),
+    ));
+
+    let mut inner = inner;
+    for (i, (name, teaches)) in st.bundled_levels.iter().enumerate() {
+        inner = inner.child(row(i as u8, name, teaches));
+    }
+
+    inner = inner.child(spacer(12.0)).child(mk_button(
+        &t(tr, "back", "Back"),
+        col(70, 70, 90),
+        move || push(&a_back, UiAction::CloseOverlay),
+    ));
+
+    Column(
+        Modifier::new()
+            .fill_max_size()
+            .justify_content(JustifyContent::CENTER)
+            .align_items(AlignItems::CENTER)
+            .background(RColor::from_rgba(0, 0, 0, 180)),
+    )
+    .child(inner)
 }
 
 fn pause_overlay(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -891,7 +958,8 @@ fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
     let a_edit = actions.clone();
 
-    ZStack(Modifier::new().fill_max_size()).child((
+    let mut children: Vec<View> = Vec::new();
+    children.push(
         Column(
             Modifier::new()
                 .fill_max_size()
@@ -918,19 +986,27 @@ fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                     .color(col(255, 220, 110)),
             )),
         ),
-        Column(
-            Modifier::new()
-                .fill_max_size()
-                .align_items(AlignItems::FLEX_END)
-                .justify_content(JustifyContent::FLEX_START)
-                .padding(10.0),
-        )
-        .child(mk_pill_button(
-            format!("✏ {} [Tab]", t(tr, "toolbar-edit", "Edit")),
-            move || push_ui(&a_edit, UiAction::MakerToggleMode),
-        )),
-        toast_anchor(st),
-    ))
+    );
+    // Bundled/imported levels are read-only sources — Remix from the clear
+    // screen instead of dropping straight into the editor.
+    if !st.is_bundled {
+        children.push(
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .align_items(AlignItems::FLEX_END)
+                    .justify_content(JustifyContent::FLEX_START)
+                    .padding(10.0),
+            )
+            .child(mk_pill_button(
+                format!("✏ {} [Tab]", t(tr, "toolbar-edit", "Edit")),
+                move || push_ui(&a_edit, UiAction::MakerToggleMode),
+            )),
+        );
+    }
+    children.push(toast_anchor(st));
+
+    ZStack(Modifier::new().fill_max_size()).children(children)
 }
 
 // ---------------------------------------------------------------------------
@@ -1029,16 +1105,9 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
     let a_edit = actions.clone();
     let a_retry = actions.clone();
+    let a_remix = actions.clone();
 
-    let inner = Column(
-        Modifier::new()
-            .width(380.0)
-            .padding(24.0)
-            .background(col(20, 20, 28))
-            .clip_rounded(12.0)
-            .align_items(AlignItems::CENTER),
-    )
-    .child((
+    let mut body: Vec<View> = vec![
         RText(t(tr, "maker-clear-title", "Level Clear!"))
             .size(38.0)
             .color(RColor::WHITE),
@@ -1058,6 +1127,29 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         ))
         .size(18.0)
         .color(RColor::WHITE),
+    ];
+
+    if let Some(author) = st.author_time {
+        let beat = st.clear_time_secs <= author;
+        body.push(
+            RText(if beat {
+                format!(
+                    "★ {} ({author:.2}s)",
+                    t(tr, "maker-beat-author", "Beat the author!")
+                )
+            } else {
+                format!("Author: {author:.2}s — try again?")
+            })
+            .size(16.0)
+            .color(if beat {
+                col(120, 230, 140)
+            } else {
+                col(255, 200, 90)
+            }),
+        );
+    }
+
+    body.push(
         RText(format!(
             "{}: {}",
             t(tr, "maker-deaths", "Deaths"),
@@ -1065,6 +1157,8 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         ))
         .size(18.0)
         .color(RColor::WHITE),
+    );
+    body.push(
         RText(format!(
             "{}: {}/{}",
             t(tr, "maker-glimmers-count", "Glimmers"),
@@ -1073,6 +1167,8 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         ))
         .size(18.0)
         .color(col(255, 220, 100)),
+    );
+    body.push(
         RText(format!(
             "{}: {}",
             t(tr, "maker-blocks-count", "Blocks"),
@@ -1080,18 +1176,36 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         ))
         .size(18.0)
         .color(RColor::WHITE),
-    ))
-    .child(spacer(16.0))
-    .child(mk_button(
+    );
+
+    body.push(spacer(16.0));
+    body.push(mk_button(
         &t(tr, "maker-btn-edit", "Edit Level"),
         col(70, 110, 170),
         move || push_ui(&a_edit, UiAction::MakerDismissClear),
-    ))
-    .child(mk_button(
+    ));
+    body.push(mk_button(
         &t(tr, "maker-retry", "Retry"),
         col(60, 140, 90),
         move || push_ui(&a_retry, UiAction::MakerRetry),
     ));
+    if st.is_bundled {
+        body.push(mk_button(
+            &t(tr, "maker-remix", "Remix This Level"),
+            col(150, 100, 220),
+            move || push_ui(&a_remix, UiAction::MakerRemix),
+        ));
+    }
+
+    let inner = Column(
+        Modifier::new()
+            .width(380.0)
+            .padding(24.0)
+            .background(col(20, 20, 28))
+            .clip_rounded(12.0)
+            .align_items(AlignItems::CENTER),
+    )
+    .children(body);
 
     Column(
         Modifier::new()

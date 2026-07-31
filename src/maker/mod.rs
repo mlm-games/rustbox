@@ -1,5 +1,6 @@
 pub mod block;
 pub mod camera;
+pub mod campaign;
 pub mod chunk;
 pub mod collision;
 pub mod commands;
@@ -26,6 +27,7 @@ use game_utils_bevy::transitions::Transition;
 pub use mode::MakerStats;
 
 use camera::CameraRig;
+use campaign::LevelSource;
 use commands::CommandHistory;
 use entities_runtime::{EntityEntities, RuntimeSolids};
 use level::LevelDocument;
@@ -71,6 +73,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::EditorCursor>()
             .init_resource::<mode::ActiveLinkChannel>()
             .init_resource::<entities_runtime::LinkState>()
+            .init_resource::<campaign::LevelSource>()
             .add_message::<mode::BlockPlaced>()
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
@@ -171,8 +174,16 @@ impl Plugin for MakerPlugin {
     }
 }
 
-fn setup_maker(mut level: ResMut<LevelDocument>, mut mode: ResMut<MakerMode>) {
-    level.seed_default();
+fn setup_maker(
+    mut level: ResMut<LevelDocument>,
+    source: Res<LevelSource>,
+    mut mode: ResMut<MakerMode>,
+) {
+    if *source == LevelSource::Editor && level.data.blocks.is_empty() {
+        level.seed_default();
+    }
+    level.mark_all_dirty();
+    level.entities_dirty = true;
     *mode = MakerMode::Edit;
 }
 

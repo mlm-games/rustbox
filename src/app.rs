@@ -31,6 +31,11 @@ const TRANSLATION_KEYS: &[&str] = &[
     "settings",
     "credits",
     "quit",
+    "play-levels",
+    "create",
+    "level-select-title",
+    "maker-remix",
+    "maker-beat-author",
     "paused",
     "resume",
     "quit-to-title",
@@ -160,6 +165,7 @@ pub enum OverlayMenu {
     LevelClear,
     LoadLevel,
     Share,
+    LevelSelect,
 }
 
 #[derive(Resource, Default)]
@@ -216,6 +222,10 @@ pub struct SharedUi {
     pub track_ids: Vec<u32>,
     pub mirror: u8,
     pub link_channel: u32,
+    // Campaign / bundled levels
+    pub author_time: Option<f32>,
+    pub is_bundled: bool,
+    pub bundled_levels: Vec<(String, String)>,
 }
 
 impl Default for SharedUi {
@@ -263,6 +273,9 @@ impl Default for SharedUi {
             track_ids: Vec::new(),
             mirror: 0,
             link_channel: 1,
+            author_time: None,
+            is_bundled: false,
+            bundled_levels: Vec::new(),
         }
     }
 }
@@ -361,6 +374,7 @@ fn sync_shared_ui(
     mut channels: ResMut<AudioChannels>,
     maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
     level: Option<Res<crate::maker::level::LevelDocument>>,
+    source: Option<Res<crate::maker::campaign::LevelSource>>,
 ) {
     let Ok(mut ui) = bridge.shared.lock() else {
         return;
@@ -409,7 +423,16 @@ fn sync_shared_ui(
     }
     if let Some(l) = level {
         ui.level_name = l.data.name.clone();
+        ui.author_time = l.data.author_time;
     }
+    if let Some(s) = source {
+        use crate::maker::campaign::LevelSource;
+        ui.is_bundled = *s != LevelSource::Editor;
+    }
+    ui.bundled_levels = crate::maker::campaign::BUNDLED_LEVELS
+        .iter()
+        .map(|b| (b.name.to_string(), b.teaches.to_string()))
+        .collect();
     if *overlay != OverlayMenu::Settings {
         ui.master_vol = save.settings.master_volume;
         ui.sfx_vol = save.settings.sfx_volume;
@@ -480,6 +503,22 @@ fn process_ui_actions(
                 *overlay = OverlayMenu::Settings;
             }
             UiAction::OpenCredits => *overlay = OverlayMenu::Credits,
+            UiAction::OpenLevelSelect => *overlay = OverlayMenu::LevelSelect,
+            UiAction::PlayBundledLevel(i) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::PlayBundled(i as usize));
+                }
+                *overlay = OverlayMenu::None;
+                transition.begin_to_state(AppState::InGame);
+            }
+            UiAction::MakerRemix => {
+                *overlay = OverlayMenu::None;
+                paused.0 = false;
+                virtual_time.unpause();
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::RemixCurrent);
+                }
+            }
             UiAction::CloseOverlay => {
                 if *overlay == OverlayMenu::Settings
                     && let Ok(ui) = bridge.shared.lock()
