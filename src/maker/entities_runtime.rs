@@ -206,16 +206,17 @@ pub fn reconcile_entities(
             }
         }
 
-        if !playing && data.kind == EntityKind::DriftPlate {
-            if let Some(b) = data.cell_b_i() {
-                let b = b.as_vec3() + Vec3::new(0.5, 0.15, 0.5);
-                commands.spawn((
-                    Mesh3d(assets.glimmer.clone()),
-                    MeshMaterial3d(assets.mats[&EntityKind::DriftPlate].clone()),
-                    Transform::from_translation(b).with_scale(Vec3::splat(0.3)),
-                    MakerCleanup,
-                ));
-            }
+        if !playing
+            && data.kind == EntityKind::DriftPlate
+            && let Some(b) = data.cell_b_i()
+        {
+            let b = b.as_vec3() + Vec3::new(0.5, 0.15, 0.5);
+            commands.spawn((
+                Mesh3d(assets.glimmer.clone()),
+                MeshMaterial3d(assets.mats[&EntityKind::DriftPlate].clone()),
+                Transform::from_translation(b).with_scale(Vec3::splat(0.3)),
+                MakerCleanup,
+            ));
         }
 
         map.0.insert(data.id, eid);

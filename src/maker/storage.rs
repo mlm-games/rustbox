@@ -84,10 +84,10 @@ mod native {
             for entry in fs::read_dir(&self.dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().is_some_and(|e| e == "ron") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        out.push(stem.to_string());
-                    }
+                if path.extension().is_some_and(|e| e == "ron")
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    out.push(stem.to_string());
                 }
             }
             out.sort();
