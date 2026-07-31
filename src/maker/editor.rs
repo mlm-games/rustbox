@@ -212,11 +212,11 @@ pub fn update_preview_and_edit(
         place_cell.z as f32 + 0.5,
     );
 
-    if *tab != BrushTab::Tracks {
-        if let Ok((mut tr, mut vis)) = preview_q.single_mut() {
-            tr.translation = center;
-            *vis = Visibility::Visible;
-        }
+    if *tab != BrushTab::Tracks
+        && let Ok((mut tr, mut vis)) = preview_q.single_mut()
+    {
+        tr.translation = center;
+        *vis = Visibility::Visible;
     }
 
     if buttons.just_pressed(MouseButton::Left) {
@@ -242,10 +242,8 @@ pub fn update_preview_and_edit(
                     let id = level.alloc_id();
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
-                    if data.kind == EntityKind::DriftPlate {
-                        let world = place_cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
-                        data.track = level.track_near(world, 1.5);
-                    }
+                    let world = place_cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+                    data.track = level.track_near(world, 1.5);
                     history.apply(&mut level, EditCommand::PlaceEntity { entity: data });
                 }
             }

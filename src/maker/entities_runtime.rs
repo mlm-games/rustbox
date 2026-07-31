@@ -142,17 +142,12 @@ pub fn reconcile_entities(
         };
 
         let mut tf = Transform::from_translation(world + Vec3::Y * y_off).with_rotation(rot);
-        let mut drift_distance = 0.0;
-        if data.kind == EntityKind::DriftPlate
-            && let Some(track_id) = data.track
+        let mut track_distance = 0.0;
+        if let Some(track_id) = data.track
+            && let Some((d, nearest, _)) = level.track(track_id).and_then(|t| t.nearest(world))
         {
-            if let Some((d, nearest, _)) = level
-                .track(track_id)
-                .and_then(|t| t.nearest(world + Vec3::Y * y_off))
-            {
-                drift_distance = d;
-                tf.translation = nearest;
-            }
+            track_distance = d;
+            tf.translation = nearest;
         }
 
         let eid = commands
@@ -215,13 +210,6 @@ pub fn reconcile_entities(
                     t: 0.0,
                     carry: Vec3::ZERO,
                 });
-                if let Some(track_id) = data.track {
-                    ecmds.insert(TrackFollower {
-                        track_id,
-                        distance: drift_distance,
-                        carry_player: true,
-                    });
-                }
                 #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert((
@@ -231,6 +219,14 @@ pub fn reconcile_entities(
                     ));
                 }
             }
+        }
+
+        if let Some(track_id) = data.track {
+            ecmds.insert(TrackFollower {
+                track_id,
+                distance: track_distance,
+                carry_player: data.kind == EntityKind::DriftPlate,
+            });
         }
 
         if !playing
@@ -349,10 +345,10 @@ pub fn tick_track_followers(
     time: Res<Time>,
     level: Res<LevelDocument>,
     _mode: Res<MakerMode>,
-    mut followers: Query<(&mut Transform, &mut DriftPlate, &mut TrackFollower)>,
+    mut followers: Query<(&mut Transform, &mut TrackFollower, Option<&mut DriftPlate>)>,
 ) {
     let dt = time.delta_secs();
-    for (mut tf, mut drift, mut follow) in &mut followers {
+    for (mut tf, mut follow, drift) in &mut followers {
         let Some(track) = level.track(follow.track_id) else {
             continue;
         };
@@ -361,11 +357,13 @@ pub fn tick_track_followers(
         tf.translation = track.sample(follow.distance);
         // player.rs gates on proximity; carry_player only matters for non-player
         // uses (e.g. hazard prowlers), where carry must not push the player.
-        drift.carry = if follow.carry_player {
-            tf.translation - prev
-        } else {
-            Vec3::ZERO
-        };
+        if let Some(mut drift) = drift {
+            drift.carry = if follow.carry_player {
+                tf.translation - prev
+            } else {
+                Vec3::ZERO
+            };
+        }
     }
 }
 
