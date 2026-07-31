@@ -6,6 +6,7 @@ quit = Quit
 paused = Paused
 resume = Resume
 quit-to-title = Quit to Title
+back-to-menu = Back to Menu
 save = Save
 back = Back
 master-volume = Master

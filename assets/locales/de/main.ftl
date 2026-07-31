@@ -6,6 +6,7 @@ quit = Beenden
 paused = Pausiert
 resume = Fortsetzen
 quit-to-title = Zum Titel
+back-to-menu = Zurück zum Menü
 save = Speichern
 back = Zurück
 master-volume = Hauptlautstärke

@@ -6,6 +6,7 @@ quit = Salir
 paused = Pausado
 resume = Reanudar
 quit-to-title = Salir al Menú
+back-to-menu = Volver al Menú
 save = Guardar
 back = Volver
 master-volume = General

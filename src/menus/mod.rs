@@ -1106,6 +1106,7 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_edit = actions.clone();
     let a_retry = actions.clone();
     let a_remix = actions.clone();
+    let a_menu = actions.clone();
 
     let mut body: Vec<View> = vec![
         RText(t(tr, "maker-clear-title", "Level Clear!"))
@@ -1179,23 +1180,30 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     );
 
     body.push(spacer(16.0));
-    body.push(mk_button(
-        &t(tr, "maker-btn-edit", "Edit Level"),
-        col(70, 110, 170),
-        move || push_ui(&a_edit, UiAction::MakerDismissClear),
-    ));
-    body.push(mk_button(
-        &t(tr, "maker-retry", "Retry"),
-        col(60, 140, 90),
-        move || push_ui(&a_retry, UiAction::MakerRetry),
-    ));
+    // Bundled levels are read-only sources: Remix instead of editing in place.
     if st.is_bundled {
         body.push(mk_button(
             &t(tr, "maker-remix", "Remix This Level"),
             col(150, 100, 220),
             move || push_ui(&a_remix, UiAction::MakerRemix),
         ));
+    } else {
+        body.push(mk_button(
+            &t(tr, "maker-btn-edit", "Edit Level"),
+            col(70, 110, 170),
+            move || push_ui(&a_edit, UiAction::MakerDismissClear),
+        ));
     }
+    body.push(mk_button(
+        &t(tr, "maker-retry", "Retry"),
+        col(60, 140, 90),
+        move || push_ui(&a_retry, UiAction::MakerRetry),
+    ));
+    body.push(mk_button(
+        &t(tr, "back-to-menu", "Back to Menu"),
+        col(180, 60, 60),
+        move || push_ui(&a_menu, UiAction::QuitToTitle),
+    ));
 
     let inner = Column(
         Modifier::new()

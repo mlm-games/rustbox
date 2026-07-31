@@ -6,6 +6,7 @@ quit = 退出
 paused = 已暂停
 resume = 继续
 quit-to-title = 返回标题
+back-to-menu = 返回菜单
 save = 保存
 back = 返回
 master-volume = 主音量

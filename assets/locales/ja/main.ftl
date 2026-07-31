@@ -6,6 +6,7 @@ quit = 終了
 paused = 一時停止
 resume = 再開
 quit-to-title = タイトルに戻る
+back-to-menu = メニューに戻る
 save = 保存
 back = 戻る
 master-volume = マスター

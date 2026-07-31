@@ -39,6 +39,7 @@ const TRANSLATION_KEYS: &[&str] = &[
     "paused",
     "resume",
     "quit-to-title",
+    "back-to-menu",
     "save",
     "back",
     "master-volume",
