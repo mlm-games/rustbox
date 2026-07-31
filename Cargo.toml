@@ -91,6 +91,9 @@ bevy_rapier3d = { path = "../bevy_rapier/bevy_rapier3d", optional = true, defaul
     "dim3",
     "parallel",
 ] }
+bincode = "1.3"
+miniz_oxide = "0.8"
+base64 = "0.22"
 # Optional big-game crates (pull in bevy-0.19)
 # leafwing-input-manager = { version = "0.14", optional = true, default-features = false, features = [] }
 # bevy_hanabi = { version = "0.14", optional = true, default-features = false, features = ["2d"] }

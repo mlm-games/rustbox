@@ -56,6 +56,14 @@ pub struct CommandHistory {
     pub redo: Vec<EditCommand>,
 }
 
+/// Any edit invalidates the author clear: a change means the level may no
+/// longer be beatable exactly as previously proven.
+pub fn invalidate_verification(level: &mut LevelDocument) {
+    level.data.is_verified = false;
+    level.data.author_time = None;
+    level.data.author_deaths = 0;
+}
+
 impl CommandHistory {
     pub fn apply(&mut self, level: &mut LevelDocument, cmd: EditCommand) {
         apply_command(level, &cmd);
@@ -131,6 +139,7 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
         }
     }
     level.rebuild_blocks_vec();
+    invalidate_verification(level);
 }
 
 pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
@@ -190,6 +199,7 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         }
     }
     level.rebuild_blocks_vec();
+    invalidate_verification(level);
 }
 
 fn cmd_track_id(cmd: &EditCommand) -> TrackId {

@@ -355,6 +355,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bevy"
 version = "0.20.0-dev"
 source = "git+https://github.com/bevyengine/bevy?rev=fb89a8649d9b359e53ffb6e5492ebb7c059ac8af#fb89a8649d9b359e53ffb6e5492ebb7c059ac8af"
@@ -1690,6 +1696,15 @@ dependencies = [
  "serde",
  "thiserror 2.0.19",
  "uuid",
+]
+
+[[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -3436,14 +3451,17 @@ name = "my-ecosystem-bevy"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bevy",
  "bevy_rapier3d",
+ "bincode",
  "directories",
  "game-utils",
  "game-utils-bevy",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
+ "miniz_oxide",
  "rand",
  "repose-bevy",
  "repose-core",

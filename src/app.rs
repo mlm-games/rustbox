@@ -86,6 +86,20 @@ const TRANSLATION_KEYS: &[&str] = &[
     "maker-ent-seal",
     "maker-ent-drift",
     "toolbar-prowler",
+    "toolbar-verified",
+    "toolbar-unverified",
+    "maker-clear-verified",
+    "toolbar-publish",
+    "share-title",
+    "share-verified",
+    "share-unverified",
+    "share-export-title",
+    "share-export-empty",
+    "share-export",
+    "share-copy",
+    "share-import-title",
+    "share-import-hint",
+    "share-import",
 ];
 
 const LOCALES: &[(&str, &str)] = &[
@@ -119,6 +133,7 @@ pub enum OverlayMenu {
     Pause,
     LevelClear,
     LoadLevel,
+    Share,
 }
 
 #[derive(Resource, Default)]
@@ -164,6 +179,11 @@ pub struct SharedUi {
     // Live play stats
     pub play_time_secs: f32,
     pub deaths: u32,
+    pub level_verified: bool,
+    // Share / publish
+    pub export_code: String,
+    pub import_code: String,
+    pub export_error: Option<String>,
 }
 
 impl Default for SharedUi {
@@ -202,6 +222,10 @@ impl Default for SharedUi {
             glimmers_total: 0,
             play_time_secs: 0.0,
             deaths: 0,
+            level_verified: false,
+            export_code: String::new(),
+            import_code: String::new(),
+            export_error: None,
         }
     }
 }
@@ -329,6 +353,10 @@ fn sync_shared_ui(
         ui.active_track_label = m.active_track_label.clone();
         ui.glimmers_collected = m.glimmers_collected;
         ui.glimmers_total = m.glimmers_total;
+        ui.level_verified = m.level_verified;
+        ui.export_code = m.export_code.clone();
+        ui.import_code = m.import_code.clone();
+        ui.export_error = m.export_error.clone();
         ui.play_time_secs = m.play_timer;
         ui.deaths = m.deaths;
     } else {
@@ -552,6 +580,26 @@ fn process_ui_actions(
             UiAction::MakerSave => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::Save);
+                }
+            }
+            UiAction::MakerPublish => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::Publish);
+                }
+            }
+            UiAction::MakerExportCode => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::ExportCode);
+                }
+            }
+            UiAction::MakerImportCode(ref code) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::ImportCode(code.clone()));
+                }
+            }
+            UiAction::MakerCopyCode => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::CopyCode);
                 }
             }
             UiAction::MakerLoad => {

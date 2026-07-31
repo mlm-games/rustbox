@@ -1,4 +1,8 @@
+use bevy::input::ButtonState;
+use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
+
+use crate::app::OverlayMenu;
 
 use super::block::BlockKind;
 use super::commands::CommandHistory;
@@ -7,7 +11,7 @@ use super::level::LevelDocument;
 use super::mode::{
     BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
 };
-use super::storage::{self, AUTOSAVE_KEY, LevelStorage};
+use super::storage::{self, AUTOSAVE_KEY, LevelStorage, apply_level_data};
 use super::track::{ActiveTrack, TrackId, TrackMode};
 
 #[derive(Clone, Debug)]
@@ -26,6 +30,10 @@ pub enum UiCommand {
     LoadSlot(String),
     RetryPlay,
     RefreshSlotList,
+    Publish,
+    ExportCode,
+    ImportCode(String),
+    CopyCode,
 }
 
 #[derive(Resource, Default)]
@@ -56,6 +64,10 @@ pub struct MakerUi {
     pub glimmers_collected: u32,
     pub glimmers_total: u32,
     pub score: u32,
+    pub level_verified: bool,
+    pub export_code: String,
+    pub import_code: String,
+    pub export_error: Option<String>,
 }
 
 impl MakerUi {
@@ -107,6 +119,7 @@ pub fn push_ui_state(
     ui.blocks_placed = stats.blocks_placed;
     ui.can_undo = !history.undo.is_empty();
     ui.can_redo = !history.redo.is_empty();
+    ui.level_verified = level.data.is_verified;
     if ui.status_timer > 0.0 {
         ui.status_timer -= time.delta_secs();
         if ui.status_timer <= 0.0 {
@@ -125,6 +138,8 @@ pub fn drain_ui_commands(
     mut level: ResMut<LevelDocument>,
     mut history: ResMut<CommandHistory>,
     storage: Res<LevelStorage>,
+    mut overlay: ResMut<OverlayMenu>,
+    mut clipboard: ResMut<bevy::clipboard::Clipboard>,
 ) {
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
     for cmd in commands {
@@ -176,9 +191,81 @@ pub fn drain_ui_commands(
             UiCommand::RefreshSlotList => {
                 ui.level_slots = storage.0.list().unwrap_or_default();
             }
+            UiCommand::Publish => {
+                if level.data.is_verified {
+                    match storage::export_level_code(&level.data) {
+                        Ok(code) => {
+                            ui.export_code = code;
+                            ui.export_error = None;
+                            *overlay = OverlayMenu::Share;
+                        }
+                        Err(e) => {
+                            ui.export_error = Some(format!("Export failed: {e}"));
+                            ui.export_code.clear();
+                            *overlay = OverlayMenu::Share;
+                        }
+                    }
+                } else {
+                    ui.set_status("Beat the level before publishing.");
+                }
+            }
+            UiCommand::ExportCode => match storage::export_level_code(&level.data) {
+                Ok(code) => {
+                    ui.export_code = code;
+                    ui.export_error = None;
+                }
+                Err(e) => ui.export_error = Some(format!("Export failed: {e}")),
+            },
+            UiCommand::ImportCode(code) => {
+                let code = code.trim();
+                match storage::import_level_code(code) {
+                    Ok(data) => {
+                        apply_level_data(&mut level, &mut history, data);
+                        ui.import_code.clear();
+                        ui.export_code.clear();
+                        *overlay = OverlayMenu::None;
+                        ui.set_status("Level imported!");
+                    }
+                    Err(e) => ui.set_status(format!("Bad code: {e}")),
+                }
+            }
+            UiCommand::CopyCode => {
+                if ui.export_code.is_empty() {
+                    ui.set_status("No code to copy yet.");
+                } else if clipboard.set_text(ui.export_code.clone()).is_ok() {
+                    ui.set_status("Code copied!");
+                } else {
+                    ui.set_status("Clipboard unavailable.");
+                }
+            }
         }
     }
     ui.level_slots = storage.0.list().unwrap_or_default();
+}
+
+pub fn share_text_input(
+    mut keys: MessageReader<KeyboardInput>,
+    overlay: Res<OverlayMenu>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if *overlay != OverlayMenu::Share {
+        return;
+    }
+    for ev in keys.read() {
+        if ev.state != ButtonState::Pressed || ev.repeat {
+            continue;
+        }
+        if ev.key_code == KeyCode::Backspace {
+            ui.import_code.pop();
+        } else if ev.key_code == KeyCode::Enter {
+            let code = ui.import_code.clone();
+            ui.commands.push(UiCommand::ImportCode(code));
+        } else if let Some(text) = &ev.text {
+            if text.chars().all(|c| !c.is_control()) {
+                ui.import_code.push_str(text);
+            }
+        }
+    }
 }
 
 pub fn update_input_capture(

@@ -58,6 +58,10 @@ pub enum UiAction {
     MakerSaveAs(String),
     MakerDismissClear,
     MakerRetry,
+    MakerPublish,
+    MakerExportCode,
+    MakerImportCode(String),
+    MakerCopyCode,
     SetPointerOverUi(bool),
 }
 
@@ -132,6 +136,11 @@ pub fn compose_root(
                     st.overlay == OverlayMenu::LoadLevel,
                     load_level_ui(&st, actions.clone()),
                     popup_anim_config("load_level"),
+                ),
+                AnimatedVisibility(
+                    st.overlay == OverlayMenu::Share,
+                    share_overlay_ui(&st, actions.clone()),
+                    popup_anim_config("share"),
                 ),
             ))
         }
@@ -501,6 +510,7 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_save = actions.clone();
     let a_load = actions.clone();
     let a_new = actions.clone();
+    let a_pub = actions.clone();
 
     Row(Modifier::new()
         .padding(8.0)
@@ -520,6 +530,17 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         })
         .size(15.0)
         .color(col(200, 200, 210)),
+        RText(if st.level_verified {
+            t(tr, "toolbar-verified", "Verified")
+        } else {
+            t(tr, "toolbar-unverified", "Unverified")
+        })
+        .size(13.0)
+        .color(if st.level_verified {
+            col(90, 200, 120)
+        } else {
+            col(230, 160, 70)
+        }),
         Column(Modifier::new().fill_max_width()),
         mk_icon_button("↶", st.can_undo, move || {
             push_ui(&a_undo, UiAction::MakerUndo)
@@ -534,6 +555,9 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }),
         mk_icon_button("✚", true, move || {
             push_ui(&a_new, UiAction::MakerNewLevel)
+        }),
+        mk_icon_button("🚀", true, move || {
+            push_ui(&a_pub, UiAction::MakerPublish)
         }),
     ])
 }
@@ -860,6 +884,14 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .size(38.0)
             .color(RColor::WHITE),
         spacer(12.0),
+        RText(if st.level_verified {
+            t(tr, "maker-clear-verified", "Level Verified!")
+        } else {
+            String::new()
+        })
+        .size(20.0)
+        .color(col(90, 200, 120)),
+        spacer(6.0),
         RText(format!(
             "{}: {:.2}s",
             t(tr, "maker-time", "Time"),
@@ -976,6 +1008,125 @@ fn load_level_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(inner)
 }
 
+fn share_overlay_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_close = actions.clone();
+    let a_copy = actions.clone();
+    let a_export = actions.clone();
+    let a_import = actions.clone();
+    let import_code = st.import_code.clone();
+
+    let inner = Column(
+        Modifier::new()
+            .width(520.0)
+            .padding(24.0)
+            .background(col(20, 20, 28))
+            .clip_rounded(12.0)
+            .align_items(AlignItems::CENTER),
+    )
+    .child(
+        RText(t(tr, "share-title", "Share Level"))
+            .size(32.0)
+            .color(RColor::WHITE),
+    )
+    .child(spacer(8.0))
+    .child(
+        RText(if st.level_verified {
+            t(tr, "share-verified", "Verified")
+        } else {
+            t(tr, "share-unverified", "Beat the level to share it")
+        })
+        .size(14.0)
+        .color(if st.level_verified {
+            col(90, 200, 120)
+        } else {
+            col(230, 160, 70)
+        }),
+    )
+    .child(spacer(16.0))
+    .child(
+        RText(t(tr, "share-export-title", "Export"))
+            .size(18.0)
+            .color(RColor::WHITE),
+    )
+    .child(spacer(8.0))
+    .child(
+        RText(if st.export_code.is_empty() {
+            t(tr, "share-export-empty", "No code yet")
+        } else {
+            st.export_code.clone()
+        })
+        .size(14.0)
+        .color(if st.export_code.is_empty() {
+            col(180, 180, 190)
+        } else {
+            col(120, 200, 255)
+        }),
+    )
+    .child(spacer(4.0))
+    .child(
+        RText(st.export_error.clone().unwrap_or_default())
+            .size(13.0)
+            .color(col(230, 110, 110)),
+    )
+    .child(spacer(8.0))
+    .child(mk_button(
+        &t(tr, "share-export", "Generate Code"),
+        col(70, 110, 170),
+        move || push_ui(&a_export, UiAction::MakerExportCode),
+    ))
+    .child(mk_button(
+        &t(tr, "share-copy", "Copy Code"),
+        col(60, 140, 90),
+        move || push_ui(&a_copy, UiAction::MakerCopyCode),
+    ))
+    .child(spacer(20.0))
+    .child(
+        RText(t(tr, "share-import-title", "Import"))
+            .size(18.0)
+            .color(RColor::WHITE),
+    )
+    .child(spacer(8.0))
+    .child(
+        RText(if st.import_code.is_empty() {
+            t(
+                tr,
+                "share-import-hint",
+                "Type or paste a code, then press Enter",
+            )
+        } else {
+            st.import_code.clone()
+        })
+        .size(14.0)
+        .color(if st.import_code.is_empty() {
+            col(180, 180, 190)
+        } else {
+            col(120, 200, 255)
+        }),
+    )
+    .child(spacer(8.0))
+    .child(mk_button(
+        &t(tr, "share-import", "Import"),
+        col(160, 120, 60),
+        move || push_ui(&a_import, UiAction::MakerImportCode(import_code.clone())),
+    ))
+    .child(spacer(16.0))
+    .child(mk_button(
+        &t(tr, "back", "Back"),
+        col(70, 70, 90),
+        move || push_ui(&a_close, UiAction::CloseOverlay),
+    ));
+
+    Column(
+        Modifier::new()
+            .fill_max_size()
+            .justify_content(JustifyContent::CENTER)
+            .align_items(AlignItems::CENTER)
+            .background(RColor::from_rgba(0, 0, 0, 180)),
+    )
+    .child(inner)
+}
+
 fn mk_button(label: &str, _bg: RColor, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
         Modifier::new().width(260.0).height(52.0).margin(8.0),
@@ -984,7 +1135,6 @@ fn mk_button(label: &str, _bg: RColor, on_click: impl Fn() + 'static) -> View {
         move || RText(label).size(20.0),
     )
 }
-
 fn mk_button_sm(label: &str, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
         Modifier::new().width(48.0).height(40.0),

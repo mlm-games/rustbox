@@ -30,6 +30,12 @@ pub struct LevelData {
     pub tracks: Vec<TrackData>,
     #[serde(default = "level_format_entities")]
     pub entities_version: u32,
+    #[serde(default)]
+    pub author_time: Option<f32>,
+    #[serde(default)]
+    pub author_deaths: u32,
+    #[serde(default)]
+    pub is_verified: bool,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -52,6 +58,9 @@ impl Default for LevelDocument {
                 entities: vec![],
                 tracks: vec![],
                 entities_version: 1,
+                author_time: None,
+                author_deaths: 0,
+                is_verified: false,
             },
             map: HashMap::new(),
             dirty_chunks: HashSet::new(),
@@ -69,6 +78,9 @@ impl LevelDocument {
         self.map.clear();
         self.data.blocks.clear();
         self.data.spawn = [0, 2, 0];
+        self.data.is_verified = false;
+        self.data.author_time = None;
+        self.data.author_deaths = 0;
 
         for x in -8..=8 {
             for z in -8..=8 {

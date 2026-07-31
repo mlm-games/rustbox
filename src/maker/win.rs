@@ -12,7 +12,7 @@ use super::ui_bridge::MakerUi;
 
 pub fn detect_goal(
     mode: Res<MakerMode>,
-    level: Res<LevelDocument>,
+    mut level: ResMut<LevelDocument>,
     mut ui: ResMut<MakerUi>,
     mut overlay: ResMut<OverlayMenu>,
     mut paused: ResMut<Paused>,
@@ -29,6 +29,13 @@ pub fn detect_goal(
             ui.goal_latched = true;
             ui.clear_time_secs = ui.play_timer;
             ui.clear_deaths = ui.deaths;
+
+            if !level.data.is_verified {
+                level.data.is_verified = true;
+                level.data.author_time = Some(ui.play_timer);
+                level.data.author_deaths = ui.deaths;
+                ui.set_status("Level verified!");
+            }
 
             ScreenEffects::add_trauma(&mut trauma, 0.45);
             ScreenEffects::flash_white(&mut flash, 0.25);

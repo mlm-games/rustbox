@@ -192,6 +192,30 @@ pub fn deserialize_level(text: &str) -> anyhow::Result<LevelData> {
     }
 }
 
+pub fn export_level_code(level: &LevelData) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    let file = LevelFile {
+        version: FORMAT_VERSION,
+        level: level.clone(),
+    };
+    let bytes = bincode::serialize(&file)?;
+    let compressed = miniz_oxide::deflate::compress_to_vec(&bytes, 6);
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(compressed))
+}
+
+pub fn import_level_code(code: &str) -> anyhow::Result<LevelData> {
+    use base64::Engine as _;
+    let compressed = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(code)?;
+    let bytes = miniz_oxide::inflate::decompress_to_vec(&compressed)
+        .map_err(|_| anyhow::anyhow!("corrupted share code (inflate failed)"))?;
+    let file: LevelFile =
+        bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted share code"))?;
+    match file.version {
+        1 => Ok(file.level),
+        v => anyhow::bail!("unknown share code version {v}"),
+    }
+}
+
 pub fn save_level(
     storage: &LevelStorage,
     level: &mut LevelDocument,
@@ -202,17 +226,7 @@ pub fn save_level(
     storage.0.save(key, &text)
 }
 
-pub fn load_level(
-    storage: &LevelStorage,
-    level: &mut LevelDocument,
-    history: &mut CommandHistory,
-    key: &str,
-) -> anyhow::Result<bool> {
-    let Some(text) = storage.0.load(key)? else {
-        return Ok(false);
-    };
-    let data = deserialize_level(&text)?;
-
+pub fn apply_level_data(level: &mut LevelDocument, history: &mut CommandHistory, data: LevelData) {
     level.map.clear();
     for BlockData { position, kind } in &data.blocks {
         level.map.insert(IVec3::from_array(*position), *kind);
@@ -226,6 +240,19 @@ pub fn load_level(
 
     history.undo.clear();
     history.redo.clear();
+}
+
+pub fn load_level(
+    storage: &LevelStorage,
+    level: &mut LevelDocument,
+    history: &mut CommandHistory,
+    key: &str,
+) -> anyhow::Result<bool> {
+    let Some(text) = storage.0.load(key)? else {
+        return Ok(false);
+    };
+    let data = deserialize_level(&text)?;
+    apply_level_data(level, history, data);
     Ok(true)
 }
 

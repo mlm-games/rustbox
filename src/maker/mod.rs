@@ -135,6 +135,7 @@ impl Plugin for MakerPlugin {
                         .chain()
                         .before(editor::update_preview_and_edit),
                     ui_bridge::push_ui_state,
+                    ui_bridge::share_text_input.before(ui_bridge::drain_ui_commands),
                     cursor::cursor_policy,
                     storage::save_load_hotkeys.run_if(in_edit),
                     win::tick_play_timer,
