@@ -113,6 +113,11 @@ impl Plugin for MakerPlugin {
                 Update,
                 (
                     track::draw_track_gizmos.run_if(in_edit),
+                    entities_runtime::move_prowlers.after(entities_runtime::tick_track_followers),
+                    entities_runtime::prowler_touch
+                        .after(player::player_controller)
+                        .after(entities_runtime::move_prowlers)
+                        .run_if(in_play),
                     camera::edit_camera_control.run_if(in_edit),
                     camera::play_camera_follow.run_if(in_play),
                 )

@@ -13,7 +13,7 @@ use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 const GRAVITY: f32 = -25.0;
 const MOVE_SPEED: f32 = 6.0;
-const JUMP_SPEED: f32 = 9.0;
+pub const JUMP_SPEED: f32 = 9.0;
 const COYOTE_TIME: f32 = 0.10;
 const JUMP_BUFFER: f32 = 0.12;
 const MAX_FALL: f32 = -40.0;

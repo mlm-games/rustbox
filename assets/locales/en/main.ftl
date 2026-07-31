@@ -60,3 +60,5 @@ maker-ent-glimmer = Glimmer
 maker-ent-pad = Launch Pad
 maker-ent-seal = Seal
 maker-ent-drift = Drift Plate
+toolbar-prowler = Prowler
+inspector-title = Inspector

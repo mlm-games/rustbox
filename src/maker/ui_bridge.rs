@@ -55,6 +55,7 @@ pub struct MakerUi {
     pub goal_latched: bool,
     pub glimmers_collected: u32,
     pub glimmers_total: u32,
+    pub score: u32,
 }
 
 impl MakerUi {
@@ -84,6 +85,7 @@ pub fn push_ui_state(
         EntityKind::LaunchPad => 1,
         EntityKind::Seal => 2,
         EntityKind::DriftPlate => 3,
+        EntityKind::Prowler => 4,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,

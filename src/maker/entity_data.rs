@@ -12,6 +12,7 @@ pub enum EntityKind {
     LaunchPad,
     Seal,
     DriftPlate,
+    Prowler,
 }
 
 impl EntityKind {
@@ -21,6 +22,7 @@ impl EntityKind {
             Self::LaunchPad => "Launch Pad",
             Self::Seal => "Seal",
             Self::DriftPlate => "Drift Plate",
+            Self::Prowler => "Prowler",
         }
     }
 
@@ -30,6 +32,7 @@ impl EntityKind {
             Self::LaunchPad => Color::srgb(0.35, 0.75, 1.0),
             Self::Seal => Color::srgb(0.75, 0.35, 0.9),
             Self::DriftPlate => Color::srgb(0.95, 0.55, 0.25),
+            Self::Prowler => Color::srgb(0.85, 0.2, 0.35),
         }
     }
 }
@@ -70,6 +73,7 @@ impl EntityData {
             EntityKind::LaunchPad => (14.0, None),
             EntityKind::Seal => (3.0, None),
             EntityKind::DriftPlate => (3.0, None),
+            EntityKind::Prowler => (2.5, None),
         };
         Self {
             id,

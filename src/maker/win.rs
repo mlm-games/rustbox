@@ -53,7 +53,11 @@ pub fn tick_play_timer(
     }
 }
 
-pub fn on_mode_changed(mode: Res<MakerMode>, mut ui: ResMut<MakerUi>, level: Res<LevelDocument>) {
+pub fn on_mode_changed(
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut level: ResMut<LevelDocument>,
+) {
     if !mode.is_changed() {
         return;
     }
@@ -61,6 +65,8 @@ pub fn on_mode_changed(mode: Res<MakerMode>, mut ui: ResMut<MakerUi>, level: Res
         ui.play_timer = 0.0;
         ui.goal_latched = false;
         ui.glimmers_collected = 0;
+        ui.score = 0;
+        level.entities_dirty = true;
         ui.glimmers_total = level
             .data
             .entities

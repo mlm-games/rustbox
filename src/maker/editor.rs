@@ -78,6 +78,9 @@ pub fn entity_palette_hotkeys(
     if keys.just_pressed(KeyCode::Digit4) {
         sel_e.0 = EntityKind::DriftPlate;
     }
+    if keys.just_pressed(KeyCode::Digit5) {
+        sel_e.0 = EntityKind::Prowler;
+    }
 }
 
 pub fn track_tool_hotkeys(

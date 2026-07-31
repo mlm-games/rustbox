@@ -85,6 +85,7 @@ const TRANSLATION_KEYS: &[&str] = &[
     "maker-ent-pad",
     "maker-ent-seal",
     "maker-ent-drift",
+    "toolbar-prowler",
 ];
 
 const LOCALES: &[(&str, &str)] = &[
@@ -160,6 +161,9 @@ pub struct SharedUi {
     pub active_track_label: String,
     pub glimmers_collected: u32,
     pub glimmers_total: u32,
+    // Live play stats
+    pub play_time_secs: f32,
+    pub deaths: u32,
 }
 
 impl Default for SharedUi {
@@ -196,6 +200,8 @@ impl Default for SharedUi {
             active_track_label: String::new(),
             glimmers_collected: 0,
             glimmers_total: 0,
+            play_time_secs: 0.0,
+            deaths: 0,
         }
     }
 }
@@ -323,6 +329,8 @@ fn sync_shared_ui(
         ui.active_track_label = m.active_track_label.clone();
         ui.glimmers_collected = m.glimmers_collected;
         ui.glimmers_total = m.glimmers_total;
+        ui.play_time_secs = m.play_timer;
+        ui.deaths = m.deaths;
     } else {
         ui.phase = state.get().clone();
         ui.paused = paused.0;
@@ -503,9 +511,10 @@ fn process_ui_actions(
                     m.commands.push(UiCommand::SelectBlock(kind));
                 }
             }
-            UiAction::MakerBrushTab(n) => {
+            UiAction::MakerToggleBrushTab => {
                 if let Some(ref mut m) = maker_ui {
-                    let tab = match n {
+                    let next = (m.brush_tab + 1) % 3;
+                    let tab = match next {
                         1 => BrushTab::Entities,
                         2 => BrushTab::Tracks,
                         _ => BrushTab::Blocks,
@@ -519,6 +528,7 @@ fn process_ui_actions(
                         1 => EntityKind::LaunchPad,
                         2 => EntityKind::Seal,
                         3 => EntityKind::DriftPlate,
+                        4 => EntityKind::Prowler,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));
