@@ -133,29 +133,13 @@ pub fn player_controller(
             }
         }
 
-        // Drift plate carry
-        let mut carry = Vec3::ZERO;
-        for (dtf, drift) in &plates {
-            let flat = Vec2::new(
-                transform.translation.x - dtf.translation.x,
-                transform.translation.z - dtf.translation.z,
-            );
-            let on = flat.length() < 0.85
-                && transform.translation.y >= dtf.translation.y - 0.05
-                && transform.translation.y <= dtf.translation.y + 1.4;
-            if on {
-                carry += drift.carry;
-            }
-        }
-        transform.translation += carry;
-
+        let he = player.half_extents;
         player.velocity.y = (player.velocity.y + GRAVITY * dt).max(MAX_FALL);
 
-        let he = player.half_extents;
         let result = move_and_collide(
             transform.translation,
             he,
-            player.velocity * dt + carry,
+            player.velocity * dt,
             &level,
             &solids.boxes,
         );
@@ -169,7 +153,34 @@ pub fn player_controller(
             player.velocity.y = 0.0;
         }
 
-        if result.on_ground && !player.was_on_ground {
+        // One-way plate riding: probe the plate top under our feet after the
+        // move and carry the player with the plate's motion.
+        let mut pos = result.pos;
+        let feet_y = pos.y - he.y;
+        let prev_feet = feet_y - player.velocity.y * dt;
+        let mut on_plate = false;
+        for (dtf, drift) in &plates {
+            let top = dtf.translation.y + 0.125;
+            let over =
+                (pos.x - dtf.translation.x).abs() < 1.0 && (pos.z - dtf.translation.z).abs() < 1.0;
+            if over
+                && player.velocity.y <= 0.0
+                && prev_feet >= top - 0.05
+                && feet_y <= top + 0.05
+                && feet_y >= top - 1.5
+            {
+                pos.x += drift.carry.x;
+                pos.z += drift.carry.z;
+                pos.y = top + he.y;
+                player.velocity.y = 0.0;
+                on_plate = true;
+                break;
+            }
+        }
+        transform.translation = pos;
+
+        let was_grounded = result.on_ground || on_plate;
+        if was_grounded && !player.was_on_ground {
             let impact = (-player.fall_speed).max(0.0);
             if impact > 4.0 {
                 Juice::squash_stretch(&mut commands, entity, Vec2::new(1.25, 0.7), 0.12);
@@ -180,18 +191,17 @@ pub fn player_controller(
             }
             player.fall_speed = 0.0;
         }
-        if !result.on_ground {
+        if !was_grounded {
             player.fall_speed = player.fall_speed.min(player.velocity.y);
         }
-        player.was_on_ground = result.on_ground;
+        player.was_on_ground = was_grounded;
 
-        if result.on_ground {
+        if was_grounded {
             player.on_ground = true;
             player.coyote = COYOTE_TIME;
         } else {
             player.on_ground = false;
         }
-        transform.translation = result.pos;
     }
 }
 

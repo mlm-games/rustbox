@@ -504,7 +504,6 @@ pub fn prowler_touch(
 pub fn rebuild_runtime_solids(
     mut solids: ResMut<RuntimeSolids>,
     seals: Query<(&Transform, &Seal), With<SealSolid>>,
-    drifts: Query<&Transform, (With<DriftPlate>, Without<SealSolid>)>,
 ) {
     solids.boxes.clear();
     for (tf, seal) in &seals {
@@ -513,10 +512,5 @@ pub fn rebuild_runtime_solids(
                 .boxes
                 .push((tf.translation, Vec3::new(0.5, 1.0, 0.15)));
         }
-    }
-    for tf in &drifts {
-        solids
-            .boxes
-            .push((tf.translation, Vec3::new(0.7, 0.12, 0.7)));
     }
 }

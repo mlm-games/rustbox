@@ -97,7 +97,7 @@ impl Plugin for MakerPlugin {
                     entities_runtime::bob_glimmers,
                     entities_runtime::tick_launch_pads_cooldown,
                     entities_runtime::tick_track_followers.before(player::player_controller),
-                    entities_runtime::tick_drift_plates,
+                    entities_runtime::tick_drift_plates.before(player::player_controller),
                     entities_runtime::rebuild_runtime_solids,
                     player::sync_mode,
                     player::player_controller.run_if(in_play),
