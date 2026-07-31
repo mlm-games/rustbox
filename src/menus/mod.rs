@@ -19,6 +19,8 @@ use repose_ui::overlay::OverlayHandle;
 use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt, ZStack};
 
 use crate::app::{AppState, OverlayMenu, SharedUi};
+use crate::maker::entity_data::EntityKind;
+use crate::maker::track::TrackMode;
 
 fn t(translations: &HashMap<String, String>, key: &str, fallback: &str) -> String {
     translations
@@ -62,6 +64,14 @@ pub enum UiAction {
     MakerExportCode,
     MakerImportCode(String),
     MakerCopyCode,
+    MakerInspParamDelta(f32),
+    MakerInspYawDelta(f32),
+    MakerInspTrackCycle,
+    MakerInspDeleteEntity,
+    MakerInspTrackModeToggle,
+    MakerInspTrackSpeedDelta(f32),
+    MakerInspTrackReverse,
+    MakerInspTrackDelete,
     SetPointerOverUi(bool),
 }
 
@@ -656,71 +666,189 @@ fn track_hint(st: &SharedUi) -> View {
     .color(col(210, 200, 160))
 }
 
-fn inspector_panel(st: &SharedUi, _actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+fn stepper_row(
+    label: String,
+    value: String,
+    on_minus: impl Fn() + 'static,
+    on_plus: impl Fn() + 'static,
+) -> View {
+    Row(Modifier::new()
+        .fill_max_width()
+        .align_items(AlignItems::CENTER)
+        .gap(6.0))
+    .children(vec![
+        mk_icon_button("−", true, on_minus),
+        RText(format!("{label}: {value}"))
+            .size(12.0)
+            .color(col(200, 200, 210)),
+        mk_icon_button("+", true, on_plus),
+    ])
+}
+
+fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
-    let (title, body): (String, Vec<View>) = match st.brush_tab {
-        0 => {
-            let (key, fallback) = match st.selected_block {
-                1 => ("toolbar-stone", "Stone"),
-                2 => ("toolbar-hazard", "Hazard"),
-                3 => ("toolbar-goal", "Goal"),
-                4 => ("toolbar-spawn", "Spawn"),
-                _ => ("toolbar-grass", "Grass"),
-            };
-            (
-                t(tr, "inspector-title", "Inspector"),
-                vec![
-                    RText(t(tr, key, fallback)).size(16.0).color(RColor::WHITE),
-                    RText(format!(
-                        "{}: {}",
-                        t(tr, "toolbar-block-brush", "Block"),
-                        st.selected_block + 1
-                    ))
-                    .size(13.0)
-                    .color(col(180, 180, 190)),
-                ],
-            )
+    let mut body: Vec<View> = vec![
+        RText(t(tr, "inspector-title", "Inspector"))
+            .size(12.0)
+            .color(col(150, 150, 165)),
+        spacer(6.0),
+    ];
+
+    if let Some(e) = &st.selected_entity_data {
+        let (label_key, label_fb) = match e.kind {
+            EntityKind::LaunchPad => ("maker-ent-pad", "Launch Pad"),
+            EntityKind::Seal => ("maker-ent-seal", "Seal"),
+            EntityKind::DriftPlate => ("maker-ent-drift", "Drift Plate"),
+            EntityKind::Prowler => ("toolbar-prowler", "Prowler"),
+            EntityKind::Glimmer => ("maker-ent-glimmer", "Glimmer"),
+        };
+        body.push(
+            RText(t(tr, label_key, label_fb))
+                .size(16.0)
+                .color(RColor::WHITE),
+        );
+        body.push(
+            RText(format!(
+                "{} ({},{},{})",
+                t(tr, "inspector-cell", "Cell"),
+                e.cell[0],
+                e.cell[1],
+                e.cell[2]
+            ))
+            .size(12.0)
+            .color(col(180, 180, 190)),
+        );
+        body.push(spacer(6.0));
+
+        let (param_key, param_fb, step) = match e.kind {
+            EntityKind::Glimmer => ("inspector-value", "Value", 0.5),
+            EntityKind::LaunchPad => ("inspector-impulse", "Impulse", 0.5),
+            EntityKind::Seal => ("inspector-glimmers", "Glimmers", 1.0),
+            EntityKind::DriftPlate => ("inspector-period", "Period", 0.5),
+            EntityKind::Prowler => ("inspector-speed", "Speed", 0.5),
+        };
+        let a_minus = actions.clone();
+        let a_plus = actions.clone();
+        body.push(stepper_row(
+            t(tr, param_key, param_fb),
+            format!("{:.1}", e.param),
+            move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
+            move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
+        ));
+
+        if matches!(e.kind, EntityKind::LaunchPad | EntityKind::Prowler) {
+            let a_minus = actions.clone();
+            let a_plus = actions.clone();
+            body.push(stepper_row(
+                t(tr, "inspector-yaw", "Yaw"),
+                format!("{}°", e.yaw_deg as i32),
+                move || push_ui(&a_minus, UiAction::MakerInspYawDelta(-45.0)),
+                move || push_ui(&a_plus, UiAction::MakerInspYawDelta(45.0)),
+            ));
         }
-        1 => {
-            let (key, fallback, speed) = match st.selected_entity {
-                1 => ("maker-ent-pad", "Launch Pad", 14.0),
-                2 => ("maker-ent-seal", "Seal", 3.0),
-                3 => ("maker-ent-drift", "Drift Plate", 3.0),
-                4 => ("toolbar-prowler", "Prowler", 2.5),
-                _ => ("maker-ent-glimmer", "Glimmer", 1.0),
-            };
-            (
-                t(tr, "inspector-title", "Inspector"),
-                vec![
-                    RText(t(tr, key, fallback)).size(16.0).color(RColor::WHITE),
-                    RText(format!("Spd {:.1}", speed))
-                        .size(13.0)
-                        .color(col(180, 180, 190)),
-                ],
-            )
+
+        if matches!(e.kind, EntityKind::DriftPlate | EntityKind::Prowler) {
+            let cur = e
+                .track
+                .map(|id| format!("#{id}"))
+                .unwrap_or_else(|| t(tr, "inspector-none", "None"));
+            let a_cycle = actions.clone();
+            body.push(mk_pill_button(
+                format!("{}: {}", t(tr, "inspector-track", "Track"), cur),
+                move || push_ui(&a_cycle, UiAction::MakerInspTrackCycle),
+            ));
         }
-        _ => {
-            let detail = if st.active_track_label.is_empty() {
-                t(tr, "maker-track-hint-idle", "No active track")
-            } else {
-                st.active_track_label.clone()
-            };
-            (
-                t(tr, "inspector-title", "Inspector"),
-                vec![RText(detail).size(14.0).color(col(210, 200, 160))],
-            )
-        }
+
+        body.push(spacer(6.0));
+        let a_del = actions.clone();
+        body.push(mk_pill_button(
+            t(tr, "inspector-delete", "Delete"),
+            move || push_ui(&a_del, UiAction::MakerInspDeleteEntity),
+        ));
+    } else if let Some(track) = &st.active_track_data {
+        body.push(
+            RText(format!(
+                "{} #{}",
+                t(tr, "toolbar-tracks", "Tracks"),
+                track.id
+            ))
+            .size(16.0)
+            .color(RColor::WHITE),
+        );
+        body.push(
+            RText(format!(
+                "{}: {}",
+                t(tr, "inspector-points", "Points"),
+                track.points.len()
+            ))
+            .size(12.0)
+            .color(col(180, 180, 190)),
+        );
+        body.push(spacer(6.0));
+
+        let mode_label = match track.mode {
+            TrackMode::PingPong => t(tr, "inspector-mode-pingpong", "PingPong"),
+            TrackMode::Loop => t(tr, "inspector-mode-loop", "Loop"),
+        };
+        let a_mode = actions.clone();
+        body.push(mk_pill_button(
+            format!("{}: {}", t(tr, "inspector-mode", "Mode"), mode_label),
+            move || push_ui(&a_mode, UiAction::MakerInspTrackModeToggle),
+        ));
+
+        let a_minus = actions.clone();
+        let a_plus = actions.clone();
+        body.push(stepper_row(
+            t(tr, "inspector-speed", "Speed"),
+            format!("{:.1}", track.speed),
+            move || push_ui(&a_minus, UiAction::MakerInspTrackSpeedDelta(-0.5)),
+            move || push_ui(&a_plus, UiAction::MakerInspTrackSpeedDelta(0.5)),
+        ));
+
+        let a_rev = actions.clone();
+        body.push(mk_pill_button(
+            t(tr, "inspector-reverse", "Reverse"),
+            move || push_ui(&a_rev, UiAction::MakerInspTrackReverse),
+        ));
+
+        let a_del = actions.clone();
+        body.push(mk_pill_button(
+            t(tr, "inspector-delete", "Delete"),
+            move || push_ui(&a_del, UiAction::MakerInspTrackDelete),
+        ));
+    } else {
+        body.push(
+            RText(t(tr, "inspector-hint", "Select an entity or track"))
+                .size(13.0)
+                .color(col(180, 180, 190)),
+        );
+    }
+
+    let mirror_label = match st.mirror {
+        1 => "X",
+        2 => "Z",
+        3 => "X+Z",
+        _ => "Off",
     };
+    body.push(spacer(8.0));
+    body.push(
+        RText(format!(
+            "{}: {}",
+            t(tr, "inspector-mirror", "Mirror"),
+            mirror_label
+        ))
+        .size(12.0)
+        .color(col(180, 180, 190)),
+    );
 
     Column(
         Modifier::new()
-            .width(190.0)
+            .width(210.0)
             .padding(12.0)
             .background(RColor::from_rgba(15, 15, 22, 235))
             .clip_rounded(10.0)
             .align_items(AlignItems::FLEX_START),
     )
-    .child(RText(title).size(12.0).color(col(150, 150, 165)))
     .children(body)
 }
 

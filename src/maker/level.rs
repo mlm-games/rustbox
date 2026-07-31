@@ -193,6 +193,15 @@ impl LevelDocument {
         self.data.entities.iter().find(|e| e.cell_i() == cell)
     }
 
+    pub fn entity_by_id(&self, id: LevelEntityId) -> Option<&EntityData> {
+        self.data.entities.iter().find(|e| e.id == id)
+    }
+
+    pub fn entity_mut(&mut self, id: LevelEntityId) -> Option<&mut EntityData> {
+        self.entities_dirty = true;
+        self.data.entities.iter_mut().find(|e| e.id == id)
+    }
+
     pub fn alloc_track_id(&mut self) -> TrackId {
         let id = self.next_track_id;
         self.next_track_id += 1;

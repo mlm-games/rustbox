@@ -5,14 +5,15 @@ use bevy::prelude::*;
 use crate::app::OverlayMenu;
 
 use super::block::BlockKind;
-use super::commands::CommandHistory;
-use super::entity_data::EntityKind;
+use super::commands::{CommandHistory, EditCommand};
+use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
 use super::mode::{
-    BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
+    BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntity,
+    SelectedEntityKind,
 };
 use super::storage::{self, AUTOSAVE_KEY, LevelStorage, apply_level_data};
-use super::track::{ActiveTrack, TrackId, TrackMode};
+use super::track::{ActiveTrack, TrackData, TrackId, TrackMode};
 
 #[derive(Clone, Debug)]
 pub enum UiCommand {
@@ -34,6 +35,14 @@ pub enum UiCommand {
     ExportCode,
     ImportCode(String),
     CopyCode,
+    DeltaEntityParam(u32, f32),
+    DeltaEntityYaw(u32, f32),
+    CycleEntityTrack(u32),
+    DeleteEntity(u32),
+    ToggleTrackMode(u32),
+    DeltaTrackSpeed(u32, f32),
+    ReverseTrack(u32),
+    DeleteTrack(u32),
 }
 
 #[derive(Resource, Default)]
@@ -68,6 +77,10 @@ pub struct MakerUi {
     pub export_code: String,
     pub import_code: String,
     pub export_error: Option<String>,
+    pub selected_entity_data: Option<EntityData>,
+    pub active_track_data: Option<TrackData>,
+    pub track_ids: Vec<TrackId>,
+    pub mirror: u8,
 }
 
 impl MakerUi {
@@ -86,6 +99,8 @@ pub fn push_ui_state(
     stats: Res<MakerStats>,
     history: Res<CommandHistory>,
     active: Res<ActiveTrack>,
+    sel_ent: Res<SelectedEntity>,
+    mirror: Res<super::mode::MirrorMode>,
     level: Res<LevelDocument>,
     mut ui: ResMut<MakerUi>,
 ) {
@@ -105,6 +120,10 @@ pub fn push_ui_state(
         BrushTab::Tracks => 2,
     };
     ui.active_track = active.0;
+    ui.selected_entity_data = sel_ent.0.and_then(|id| level.entity_by_id(id)).cloned();
+    ui.active_track_data = active.0.and_then(|id| level.track(id)).cloned();
+    ui.track_ids = level.data.tracks.iter().map(|t| t.id).collect();
+    ui.mirror = mirror.0;
     ui.active_track_label = active
         .0
         .and_then(|id| level.track(id).map(|t| (id, t)))
@@ -139,6 +158,8 @@ pub fn drain_ui_commands(
     mut history: ResMut<CommandHistory>,
     storage: Res<LevelStorage>,
     mut overlay: ResMut<OverlayMenu>,
+    mut sel_ent: ResMut<SelectedEntity>,
+    mut active: ResMut<ActiveTrack>,
     mut clipboard: ResMut<bevy::clipboard::Clipboard>,
 ) {
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
@@ -157,7 +178,10 @@ pub fn drain_ui_commands(
             },
             UiCommand::Load => {
                 match storage::load_level(&storage, &mut level, &mut history, AUTOSAVE_KEY) {
-                    Ok(true) => ui.set_status("Loaded"),
+                    Ok(true) => {
+                        sel_ent.0 = None;
+                        ui.set_status("Loaded")
+                    }
                     Ok(false) => ui.set_status("No save found"),
                     Err(e) => ui.set_status(format!("Load failed: {e}")),
                 }
@@ -166,6 +190,7 @@ pub fn drain_ui_commands(
                 level.seed_default();
                 history.undo.clear();
                 history.redo.clear();
+                sel_ent.0 = None;
                 ui.set_status("New level");
             }
             UiCommand::SaveAs(name) => match storage::save_level(&storage, &mut level, &name) {
@@ -177,7 +202,10 @@ pub fn drain_ui_commands(
             },
             UiCommand::LoadSlot(name) => {
                 match storage::load_level(&storage, &mut level, &mut history, &name) {
-                    Ok(true) => ui.set_status(format!("Loaded '{name}'")),
+                    Ok(true) => {
+                        sel_ent.0 = None;
+                        ui.set_status(format!("Loaded '{name}'"))
+                    }
                     Ok(false) => ui.set_status("Slot empty"),
                     Err(e) => ui.set_status(format!("Load failed: {e}")),
                 }
@@ -223,6 +251,7 @@ pub fn drain_ui_commands(
                         apply_level_data(&mut level, &mut history, data);
                         ui.import_code.clear();
                         ui.export_code.clear();
+                        sel_ent.0 = None;
                         *overlay = OverlayMenu::None;
                         ui.set_status("Level imported!");
                     }
@@ -236,6 +265,98 @@ pub fn drain_ui_commands(
                     ui.set_status("Code copied!");
                 } else {
                     ui.set_status("Clipboard unavailable.");
+                }
+            }
+            UiCommand::DeltaEntityParam(id, delta) => {
+                if let Some(e) = level.entity_by_id(id) {
+                    let old = e.param;
+                    let new = (old + delta).clamp(0.0, 100.0);
+                    if (new - old).abs() > 1e-4 {
+                        history.apply(&mut level, EditCommand::SetEntityParam { id, old, new });
+                    }
+                }
+            }
+            UiCommand::DeltaEntityYaw(id, delta) => {
+                if let Some(e) = level.entity_by_id(id) {
+                    let old = e.yaw_deg;
+                    let new = (old + delta).rem_euclid(360.0);
+                    if (new - old).abs() > 1e-3 {
+                        history.apply(&mut level, EditCommand::SetEntityYaw { id, old, new });
+                    }
+                }
+            }
+            UiCommand::CycleEntityTrack(id) => {
+                let Some(e) = level.entity_by_id(id) else {
+                    continue;
+                };
+                let old = e.track;
+                let next = match old {
+                    Some(_) => None,
+                    None => {
+                        let mut ids = level.data.tracks.iter().map(|t| t.id).collect::<Vec<_>>();
+                        ids.sort();
+                        ids.first().copied()
+                    }
+                };
+                if next != old {
+                    history.apply(
+                        &mut level,
+                        EditCommand::SetEntityTrack { id, old, new: next },
+                    );
+                }
+            }
+            UiCommand::DeleteEntity(id) => {
+                if let Some(entity) = level.entity_by_id(id).cloned() {
+                    history.apply(&mut level, EditCommand::RemoveEntity { entity });
+                    if sel_ent.0 == Some(id) {
+                        sel_ent.0 = None;
+                    }
+                }
+            }
+            UiCommand::ToggleTrackMode(id) => {
+                if let Some(t) = level.track(id) {
+                    let old = t.mode;
+                    let new = match old {
+                        TrackMode::PingPong => TrackMode::Loop,
+                        TrackMode::Loop => TrackMode::PingPong,
+                    };
+                    history.apply(
+                        &mut level,
+                        EditCommand::SetTrackMode {
+                            track_id: id,
+                            old,
+                            new,
+                        },
+                    );
+                }
+            }
+            UiCommand::DeltaTrackSpeed(id, delta) => {
+                if let Some(t) = level.track(id) {
+                    let old = t.speed;
+                    let new = (old + delta).clamp(0.5, 10.0);
+                    if (new - old).abs() > 1e-4 {
+                        history.apply(
+                            &mut level,
+                            EditCommand::SetTrackSpeed {
+                                track_id: id,
+                                old,
+                                new,
+                            },
+                        );
+                    }
+                }
+            }
+            UiCommand::ReverseTrack(id) => {
+                if level.track(id).is_some() {
+                    history.apply(&mut level, EditCommand::ReverseTrackPoints { track_id: id });
+                }
+            }
+            UiCommand::DeleteTrack(id) => {
+                if let Some(track) = level.track(id).cloned() {
+                    history.apply(&mut level, EditCommand::DeleteTrack { track });
+                    if active.0 == Some(id) {
+                        active.0 = None;
+                    }
                 }
             }
         }

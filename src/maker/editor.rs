@@ -8,10 +8,12 @@ use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
 use super::mode::{
-    BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind, SelectedEntityKind,
+    BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture, MakerMode, MakerStats,
+    MirrorMode, PlaceYaw, SelectedBlockKind, SelectedEntity, SelectedEntityKind,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
+use super::ui_bridge::MakerUi;
 
 pub fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<MakerMode>) {
     if keys.just_pressed(KeyCode::Tab) {
@@ -144,6 +146,41 @@ fn default_speed() -> f32 {
     2.0
 }
 
+pub fn mirror_hotkey(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut mirror: ResMut<MirrorMode>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if keys.just_pressed(KeyCode::KeyV) {
+        mirror.0 = (mirror.0 + 1) % 4;
+        let label = match mirror.0 {
+            0 => "Off",
+            1 => "X",
+            2 => "Z",
+            _ => "X+Z",
+        };
+        ui.set_status(format!("Mirror: {label}"));
+    }
+}
+
+/// Cells affected by a placement at `cell` under the given mirror mode
+/// (bit 0 = X mirror, bit 1 = Z mirror).
+fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
+    let mut out = vec![cell];
+    if mode & 1 != 0 {
+        out.push(IVec3::new(-cell.x, cell.y, cell.z));
+    }
+    if mode & 2 != 0 {
+        out.push(IVec3::new(cell.x, cell.y, -cell.z));
+    }
+    if mode & 3 == 3 {
+        out.push(IVec3::new(-cell.x, cell.y, -cell.z));
+    }
+    out.sort_by_key(|c| (c.x, c.y, c.z));
+    out.dedup();
+    out
+}
+
 pub fn undo_redo_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     mut history: ResMut<CommandHistory>,
@@ -158,22 +195,60 @@ pub fn undo_redo_hotkeys(
     }
 }
 
-pub fn update_preview_and_edit(
-    mut commands: Commands,
+/// Recomputes the cell the edit cursor points at, so the heavier edit system
+/// can stay under Bevy's 16-system-param limit.
+pub fn update_editor_cursor(
     capture: Res<InputCapture>,
-    buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cam_q: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-    selected: Res<SelectedBlockKind>,
-    sel_e: Res<SelectedEntityKind>,
-    tab: Res<BrushTab>,
+    level: Res<LevelDocument>,
+    mut cursor: ResMut<EditorCursor>,
+) {
+    if capture.ui_wants_pointer {
+        *cursor = EditorCursor::default();
+        return;
+    }
+    let Ok(window) = windows.single() else {
+        *cursor = EditorCursor::default();
+        return;
+    };
+    let Some(pos) = window.cursor_position() else {
+        *cursor = EditorCursor::default();
+        return;
+    };
+    let Ok((camera, cam_tf)) = cam_q.single() else {
+        *cursor = EditorCursor::default();
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(cam_tf, pos) else {
+        *cursor = EditorCursor::default();
+        return;
+    };
+    cursor.hit = None;
+    cursor.place = None;
+    if let Some((hit, normal)) = raycast_present(&level, ray.origin, *ray.direction, 200.0) {
+        cursor.hit = Some(hit);
+        cursor.place = Some(hit + normal);
+    }
+}
+
+pub fn update_preview_and_edit(
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    cursor: Res<EditorCursor>,
+    mut selected: ResMut<SelectedBlockKind>,
+    mut sel_e: ResMut<SelectedEntityKind>,
+    mut tab: ResMut<BrushTab>,
     place_yaw: Res<PlaceYaw>,
+    mirror: Res<MirrorMode>,
+    mut box_start: ResMut<BoxFillStart>,
     mut active: ResMut<ActiveTrack>,
     mut level: ResMut<LevelDocument>,
     mut history: ResMut<CommandHistory>,
     mut stats: ResMut<MakerStats>,
+    mut sel_ent: ResMut<SelectedEntity>,
     mut preview_q: Query<(&mut Transform, &mut Visibility), With<PlacementPreview>>,
-    assets: Option<Res<MakerAssets>>,
+    mut placed: MessageWriter<BlockPlaced>,
 ) {
     let hide = |q: &mut Query<(&mut Transform, &mut Visibility), With<PlacementPreview>>| {
         if let Ok((_, mut vis)) = q.single_mut() {
@@ -181,34 +256,14 @@ pub fn update_preview_and_edit(
         }
     };
 
-    if capture.ui_wants_pointer {
-        hide(&mut preview_q);
-        return;
-    }
-    let Ok(window) = windows.single() else {
+    let Some(hit_cell) = cursor.hit else {
         hide(&mut preview_q);
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
+    let Some(place_cell) = cursor.place else {
         hide(&mut preview_q);
         return;
     };
-    let Ok((camera, cam_tf)) = cam_q.single() else {
-        hide(&mut preview_q);
-        return;
-    };
-    let Ok(ray) = camera.viewport_to_world(cam_tf, cursor) else {
-        hide(&mut preview_q);
-        return;
-    };
-
-    let Some((hit_cell, normal)) = raycast_present(&level, ray.origin, *ray.direction, 200.0)
-    else {
-        hide(&mut preview_q);
-        return;
-    };
-
-    let place_cell = hit_cell + normal;
     let center = Vec3::new(
         place_cell.x as f32 + 0.5,
         place_cell.y as f32 + 0.5,
@@ -222,26 +277,76 @@ pub fn update_preview_and_edit(
         *vis = Visibility::Visible;
     }
 
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+
+    // Eyedropper: middle-click picks the block/entity under the cursor.
+    if buttons.just_pressed(MouseButton::Middle) {
+        if let Some(kind) = level.get_block(hit_cell) {
+            selected.0 = kind;
+            *tab = BrushTab::Blocks;
+        } else if let Some(ent) = level.entity_at_cell(hit_cell) {
+            sel_e.0 = ent.kind;
+            *tab = BrushTab::Entities;
+        }
+    }
+
     if buttons.just_pressed(MouseButton::Left) {
         match *tab {
             BrushTab::Blocks => {
-                if level.get_block(place_cell).is_none() {
-                    history.apply(
-                        &mut level,
-                        EditCommand::Place {
-                            position: place_cell,
-                            kind: selected.0,
-                            previous: None,
-                        },
-                    );
-                    stats.blocks_placed += 1;
-                    if let Some(ref assets) = assets {
-                        spawn_place_ghost(&mut commands, assets, place_cell, selected.0);
+                if shift {
+                    match box_start.0 {
+                        None => box_start.0 = Some(place_cell),
+                        Some(a) => {
+                            box_start.0 = None;
+                            let min = a.min(place_cell);
+                            let max = a.max(place_cell);
+                            let mut cells = Vec::new();
+                            for x in min.x..=max.x {
+                                for y in min.y..=max.y {
+                                    for z in min.z..=max.z {
+                                        let c = IVec3::new(x, y, z);
+                                        let prev = level.get_block(c);
+                                        if prev != Some(selected.0) {
+                                            cells.push((c, prev));
+                                        }
+                                    }
+                                }
+                            }
+                            if !cells.is_empty() {
+                                history.apply(
+                                    &mut level,
+                                    EditCommand::BoxFill {
+                                        cells,
+                                        kind: selected.0,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    for cell in mirror_cells(place_cell, mirror.0) {
+                        if level.get_block(cell).is_none() {
+                            history.apply(
+                                &mut level,
+                                EditCommand::Place {
+                                    position: cell,
+                                    kind: selected.0,
+                                    previous: None,
+                                },
+                            );
+                            stats.blocks_placed += 1;
+                            placed.write(BlockPlaced {
+                                cell,
+                                kind: selected.0,
+                            });
+                        }
                     }
                 }
             }
             BrushTab::Entities => {
-                if level.entity_at_cell(place_cell).is_none() {
+                if let Some(ent) = level.entity_at_cell(place_cell) {
+                    sel_ent.0 = Some(ent.id);
+                } else {
                     let id = level.alloc_id();
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
@@ -320,16 +425,139 @@ pub fn update_preview_and_edit(
             } else if let Some(id) = level.track_at_cell(place_cell) {
                 active.0 = Some(id);
             }
-        } else if let Some(prev) = level.get_block(hit_cell) {
-            history.apply(
-                &mut level,
-                EditCommand::Remove {
-                    position: hit_cell,
-                    previous: prev,
-                },
-            );
+        } else if level.get_block(hit_cell).is_some() {
+            for cell in mirror_cells(hit_cell, mirror.0) {
+                if let Some(k) = level.get_block(cell) {
+                    history.apply(
+                        &mut level,
+                        EditCommand::Remove {
+                            position: cell,
+                            previous: k,
+                        },
+                    );
+                    stats.blocks_placed = stats.blocks_placed.saturating_sub(1);
+                }
+            }
         } else if let Some(ent) = level.entity_at_cell(hit_cell).cloned() {
+            let removed_id = ent.id;
             history.apply(&mut level, EditCommand::RemoveEntity { entity: ent });
+            if sel_ent.0 == Some(removed_id) {
+                sel_ent.0 = None;
+            }
         }
+    }
+
+    // Drag paint: hold LMB to keep placing, RMB to keep erasing.
+    if *tab == BrushTab::Blocks && !shift {
+        if buttons.pressed(MouseButton::Left) {
+            for cell in mirror_cells(place_cell, mirror.0) {
+                if level.get_block(cell).is_none() {
+                    history.apply(
+                        &mut level,
+                        EditCommand::Place {
+                            position: cell,
+                            kind: selected.0,
+                            previous: None,
+                        },
+                    );
+                    stats.blocks_placed += 1;
+                    placed.write(BlockPlaced {
+                        cell,
+                        kind: selected.0,
+                    });
+                }
+            }
+        } else if buttons.pressed(MouseButton::Right) {
+            for cell in mirror_cells(hit_cell, mirror.0) {
+                if let Some(k) = level.get_block(cell) {
+                    history.apply(
+                        &mut level,
+                        EditCommand::Remove {
+                            position: cell,
+                            previous: k,
+                        },
+                    );
+                    stats.blocks_placed = stats.blocks_placed.saturating_sub(1);
+                }
+            }
+        }
+    }
+}
+
+pub fn spawn_place_ghosts(
+    mut placed: MessageReader<BlockPlaced>,
+    assets: Option<Res<MakerAssets>>,
+    mut commands: Commands,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    for ev in placed.read() {
+        spawn_place_ghost(&mut commands, &assets, ev.cell, ev.kind);
+    }
+}
+
+pub fn delete_selected_entity(
+    keys: Res<ButtonInput<KeyCode>>,
+    mode: Res<MakerMode>,
+    mut sel_ent: ResMut<SelectedEntity>,
+    mut level: ResMut<LevelDocument>,
+    mut history: ResMut<CommandHistory>,
+) {
+    if *mode != MakerMode::Edit {
+        return;
+    }
+    if !keys.just_pressed(KeyCode::Delete) {
+        return;
+    }
+    let Some(id) = sel_ent.0 else {
+        return;
+    };
+    if let Some(entity) = level.entity_by_id(id).cloned() {
+        history.apply(&mut level, EditCommand::RemoveEntity { entity });
+        sel_ent.0 = None;
+    }
+}
+
+pub fn draw_selected_entity_gizmo(
+    mode: Res<MakerMode>,
+    level: Res<LevelDocument>,
+    sel_ent: Res<SelectedEntity>,
+    mut gizmos: Gizmos,
+) {
+    if *mode != MakerMode::Edit {
+        return;
+    }
+    let Some(id) = sel_ent.0 else {
+        return;
+    };
+    let Some(data) = level.entity_by_id(id) else {
+        return;
+    };
+    let center = data.cell_i().as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    let half = match data.kind {
+        EntityKind::Glimmer => Vec3::splat(0.45),
+        EntityKind::LaunchPad => Vec3::new(0.55, 0.3, 0.55),
+        EntityKind::Seal => Vec3::new(0.6, 1.1, 0.4),
+        EntityKind::DriftPlate => Vec3::new(0.8, 0.25, 0.8),
+        EntityKind::Prowler => Vec3::new(0.5, 0.5, 0.5),
+    };
+    let color = Color::srgb(0.3, 0.8, 1.0);
+    let min = center - half;
+    let max = center + half;
+    let bottom = [
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(min.x, min.y, max.z),
+    ];
+    let top: Vec<Vec3> = bottom
+        .iter()
+        .map(|c| *c + Vec3::new(0.0, max.y - min.y, 0.0))
+        .collect();
+    gizmos.lineloop(bottom, color);
+    gizmos.lineloop(top.iter().copied(), color);
+    for i in 0..4 {
+        gizmos.line(bottom[i], top[i], color);
     }
 }

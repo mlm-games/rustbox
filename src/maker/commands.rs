@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::block::BlockKind;
-use super::entity_data::EntityData;
+use super::entity_data::{EntityData, LevelEntityId};
 use super::level::LevelDocument;
 use super::track::{TrackData, TrackId, TrackMode};
 
@@ -47,6 +47,28 @@ pub enum EditCommand {
         track_id: TrackId,
         old: f32,
         new: f32,
+    },
+    SetEntityParam {
+        id: LevelEntityId,
+        old: f32,
+        new: f32,
+    },
+    SetEntityYaw {
+        id: LevelEntityId,
+        old: f32,
+        new: f32,
+    },
+    SetEntityTrack {
+        id: LevelEntityId,
+        old: Option<TrackId>,
+        new: Option<TrackId>,
+    },
+    ReverseTrackPoints {
+        track_id: TrackId,
+    },
+    BoxFill {
+        cells: Vec<(IVec3, Option<BlockKind>)>,
+        kind: BlockKind,
     },
 }
 
@@ -137,6 +159,31 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
                 t.speed = *new;
             }
         }
+        EditCommand::SetEntityParam { id, new, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.param = *new;
+            }
+        }
+        EditCommand::SetEntityYaw { id, new, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.yaw_deg = *new;
+            }
+        }
+        EditCommand::SetEntityTrack { id, new, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.track = *new;
+            }
+        }
+        EditCommand::ReverseTrackPoints { track_id } => {
+            if let Some(t) = level.track_mut(*track_id) {
+                t.points.reverse();
+            }
+        }
+        EditCommand::BoxFill { cells, kind } => {
+            for (pos, _) in cells {
+                level.set_block(*pos, Some(*kind));
+            }
+        }
     }
     level.rebuild_blocks_vec();
     invalidate_verification(level);
@@ -195,6 +242,31 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::SetTrackSpeed { track_id, old, .. } => {
             if let Some(t) = level.track_mut(*track_id) {
                 t.speed = *old;
+            }
+        }
+        EditCommand::SetEntityParam { id, old, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.param = *old;
+            }
+        }
+        EditCommand::SetEntityYaw { id, old, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.yaw_deg = *old;
+            }
+        }
+        EditCommand::SetEntityTrack { id, old, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.track = *old;
+            }
+        }
+        EditCommand::ReverseTrackPoints { track_id } => {
+            if let Some(t) = level.track_mut(*track_id) {
+                t.points.reverse();
+            }
+        }
+        EditCommand::BoxFill { cells, .. } => {
+            for (pos, prev) in cells {
+                level.set_block(*pos, *prev);
             }
         }
     }

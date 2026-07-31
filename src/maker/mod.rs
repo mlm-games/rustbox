@@ -65,6 +65,11 @@ impl Plugin for MakerPlugin {
             .init_resource::<LevelDocument>()
             .init_resource::<MakerStats>()
             .init_resource::<ActiveTrack>()
+            .init_resource::<mode::SelectedEntity>()
+            .init_resource::<mode::MirrorMode>()
+            .init_resource::<mode::BoxFillStart>()
+            .init_resource::<mode::EditorCursor>()
+            .add_message::<mode::BlockPlaced>()
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
             .init_resource::<EntityEntities>()
@@ -90,6 +95,7 @@ impl Plugin for MakerPlugin {
                     editor::entity_palette_hotkeys.run_if(in_edit),
                     editor::track_tool_hotkeys.run_if(in_edit),
                     editor::undo_redo_hotkeys.run_if(in_edit),
+                    editor::mirror_hotkey.run_if(in_edit),
                     editor::update_preview_and_edit.run_if(in_edit),
                     rendering::rebuild_dirty_chunks,
                     rendering::tick_ghosts,
@@ -113,6 +119,8 @@ impl Plugin for MakerPlugin {
                 Update,
                 (
                     track::draw_track_gizmos.run_if(in_edit),
+                    editor::delete_selected_entity.run_if(in_edit),
+                    editor::draw_selected_entity_gizmo.run_if(in_edit),
                     entities_runtime::move_prowlers.after(entities_runtime::tick_track_followers),
                     entities_runtime::prowler_touch
                         .after(player::player_controller)
@@ -134,6 +142,8 @@ impl Plugin for MakerPlugin {
                     )
                         .chain()
                         .before(editor::update_preview_and_edit),
+                    editor::update_editor_cursor.before(editor::update_preview_and_edit),
+                    editor::spawn_place_ghosts.run_if(in_edit),
                     ui_bridge::push_ui_state,
                     ui_bridge::share_text_input.before(ui_bridge::drain_ui_commands),
                     cursor::cursor_policy,

@@ -9,6 +9,8 @@ use repose_ui::overlay::OverlayHandle;
 
 use crate::dev_tools::DevToolsPlugin;
 use crate::maker::MakerPlugin;
+use crate::maker::entity_data::EntityData;
+use crate::maker::track::TrackData;
 use crate::menus::{self, UiAction, UiBridge};
 use crate::save::SaveData;
 use crate::screens::ScreensPlugin;
@@ -100,6 +102,23 @@ const TRANSLATION_KEYS: &[&str] = &[
     "share-import-title",
     "share-import-hint",
     "share-import",
+    "inspector-cell",
+    "inspector-value",
+    "inspector-impulse",
+    "inspector-glimmers",
+    "inspector-period",
+    "inspector-speed",
+    "inspector-yaw",
+    "inspector-track",
+    "inspector-none",
+    "inspector-delete",
+    "inspector-points",
+    "inspector-mode",
+    "inspector-mode-pingpong",
+    "inspector-mode-loop",
+    "inspector-reverse",
+    "inspector-hint",
+    "inspector-mirror",
 ];
 
 const LOCALES: &[(&str, &str)] = &[
@@ -184,6 +203,11 @@ pub struct SharedUi {
     pub export_code: String,
     pub import_code: String,
     pub export_error: Option<String>,
+    // Inspector
+    pub selected_entity_data: Option<EntityData>,
+    pub active_track_data: Option<TrackData>,
+    pub track_ids: Vec<u32>,
+    pub mirror: u8,
 }
 
 impl Default for SharedUi {
@@ -226,6 +250,10 @@ impl Default for SharedUi {
             export_code: String::new(),
             import_code: String::new(),
             export_error: None,
+            selected_entity_data: None,
+            active_track_data: None,
+            track_ids: Vec::new(),
+            mirror: 0,
         }
     }
 }
@@ -357,6 +385,10 @@ fn sync_shared_ui(
         ui.export_code = m.export_code.clone();
         ui.import_code = m.import_code.clone();
         ui.export_error = m.export_error.clone();
+        ui.selected_entity_data = m.selected_entity_data.clone();
+        ui.active_track_data = m.active_track_data.clone();
+        ui.track_ids = m.track_ids.clone();
+        ui.mirror = m.mirror;
         ui.play_time_secs = m.play_timer;
         ui.deaths = m.deaths;
     } else {
@@ -600,6 +632,62 @@ fn process_ui_actions(
             UiAction::MakerCopyCode => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::CopyCode);
+                }
+            }
+            UiAction::MakerInspParamDelta(delta) => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::DeltaEntityParam(id, delta));
+                }
+            }
+            UiAction::MakerInspYawDelta(delta) => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::DeltaEntityYaw(id, delta));
+                }
+            }
+            UiAction::MakerInspTrackCycle => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::CycleEntityTrack(id));
+                }
+            }
+            UiAction::MakerInspDeleteEntity => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::DeleteEntity(id));
+                }
+            }
+            UiAction::MakerInspTrackModeToggle => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.active_track_data.as_ref().map(|t| t.id)
+                {
+                    m.commands.push(UiCommand::ToggleTrackMode(id));
+                }
+            }
+            UiAction::MakerInspTrackSpeedDelta(delta) => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.active_track_data.as_ref().map(|t| t.id)
+                {
+                    m.commands.push(UiCommand::DeltaTrackSpeed(id, delta));
+                }
+            }
+            UiAction::MakerInspTrackReverse => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.active_track_data.as_ref().map(|t| t.id)
+                {
+                    m.commands.push(UiCommand::ReverseTrack(id));
+                }
+            }
+            UiAction::MakerInspTrackDelete => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.active_track_data.as_ref().map(|t| t.id)
+                {
+                    m.commands.push(UiCommand::DeleteTrack(id));
                 }
             }
             UiAction::MakerLoad => {
