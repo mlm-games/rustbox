@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use bevy::camera::ClearColorConfig;
 use bevy::prelude::*;
 use repose_bevy::{ReposePlugin, ReposePluginSettings};
 use repose_core::{prelude::Modifier, remember};
 use repose_ui::overlay::OverlayHandle;
 
-use crate::demo::DemoPlugin;
 use crate::dev_tools::DevToolsPlugin;
+use crate::maker::MakerPlugin;
 use crate::ecosystem::{
     EcosystemPlugin,
     audio::AudioChannels,
@@ -38,6 +39,8 @@ pub enum OverlayMenu {
     Settings,
     Credits,
     Pause,
+    LevelClear,
+    LoadLevel,
 }
 
 #[derive(Resource, Default)]
@@ -59,6 +62,20 @@ pub struct SharedUi {
     pub saved_language: String,
     pub available_languages: Vec<String>,
     pub translations: HashMap<String, String>,
+    // Maker toolbar state
+    pub blocks_placed: u32,
+    pub maker_mode_edit: bool,
+    pub selected_block: u8,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub maker_status: String,
+    pub pointer_over_ui: bool,
+    // Level clear
+    pub clear_time_secs: f32,
+    pub clear_deaths: u32,
+    // Named slots
+    pub level_slots: Vec<String>,
+    pub level_name: String,
 }
 
 impl Default for SharedUi {
@@ -78,6 +95,17 @@ impl Default for SharedUi {
             saved_language: "en".to_string(),
             available_languages: vec!["en".to_string()],
             translations: HashMap::new(),
+            blocks_placed: 0,
+            maker_mode_edit: true,
+            selected_block: 0,
+            can_undo: false,
+            can_redo: false,
+            maker_status: String::new(),
+            pointer_over_ui: false,
+            clear_time_secs: 0.0,
+            clear_deaths: 0,
+            level_slots: vec![],
+            level_name: "Untitled Level".to_string(),
         }
     }
 }
@@ -119,7 +147,7 @@ impl Plugin for AppPlugin {
                 ThemePlugin,
                 EcosystemPlugin,
                 ScreensPlugin,
-                DemoPlugin,
+                MakerPlugin,
                 DevToolsPlugin,
             ))
             .add_systems(Startup, setup_camera)
@@ -139,8 +167,15 @@ impl Plugin for AppPlugin {
 }
 
 fn setup_camera(mut commands: Commands) {
+    // 2D camera for UI overlay (Repose renders into Bevy UI image)
+    // Order 1 so it renders after the 3D world camera (order 0) without clearing it.
     commands.spawn((
         Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
         Transform::from_xyz(0.0, 0.0, 1000.0),
         crate::ecosystem::screen_effects::CameraBase {
             translation: Vec3::new(0.0, 0.0, 1000.0),
@@ -156,11 +191,12 @@ fn sync_shared_ui(
     overlay: Res<OverlayMenu>,
     bridge: Res<UiBridge>,
     save: Res<crate::ecosystem::save::SaveData>,
-    score: Option<Res<crate::demo::Score>>,
     transition: Res<Transition>,
     flash: Res<crate::ecosystem::screen_effects::FlashWhite>,
     locale: Res<LocaleResources>,
     mut channels: ResMut<AudioChannels>,
+    maker_ui: Option<Res<crate::maker::ui_bridge::MakerUi>>,
+    level: Option<Res<crate::maker::level::LevelDocument>>,
 ) {
     let Ok(mut ui) = bridge.shared.lock() else {
         return;
@@ -169,7 +205,21 @@ fn sync_shared_ui(
     ui.paused = paused.0;
     ui.overlay = *overlay;
     ui.high_score = save.high_score;
-    ui.score = score.map(|s| s.0).unwrap_or(0);
+    if let Some(m) = maker_ui {
+        ui.blocks_placed = m.blocks_placed;
+        ui.score = m.blocks_placed;
+        ui.maker_mode_edit = m.mode == crate::maker::mode::MakerMode::Edit;
+        ui.selected_block = m.selected as u8;
+        ui.can_undo = m.can_undo;
+        ui.can_redo = m.can_redo;
+        ui.maker_status = m.status.clone();
+        ui.clear_time_secs = m.clear_time_secs;
+        ui.clear_deaths = m.clear_deaths;
+        ui.level_slots = m.level_slots.clone();
+    }
+    if let Some(l) = level {
+        ui.level_name = l.data.name.clone();
+    }
     if *overlay != OverlayMenu::Settings {
         ui.master_vol = save.settings.master_volume;
         ui.sfx_vol = save.settings.sfx_volume;
@@ -217,7 +267,12 @@ fn process_ui_actions(
     mut virtual_time: ResMut<Time<Virtual>>,
     mut pending_unpause: ResMut<PendingUnpause>,
     mut locale: ResMut<LocaleResources>,
+    mut maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
 ) {
+    use crate::maker::block::BlockKind;
+    use crate::maker::mode::MakerMode;
+    use crate::maker::ui_bridge::UiCommand;
+
     let Ok(mut q) = bridge.actions.lock() else {
         return;
     };
@@ -246,6 +301,17 @@ fn process_ui_actions(
                     OverlayMenu::Pause if paused.0 => {
                         *overlay = OverlayMenu::None;
                         pending_unpause.0 = Some(Timer::from_seconds(0.2, TimerMode::Once));
+                    }
+                    OverlayMenu::LevelClear => {
+                        *overlay = OverlayMenu::None;
+                        paused.0 = false;
+                        virtual_time.unpause();
+                        if let Some(ref mut m) = maker_ui {
+                            m.commands.push(UiCommand::SetMode(MakerMode::Edit));
+                        }
+                    }
+                    OverlayMenu::LoadLevel => {
+                        *overlay = OverlayMenu::None;
                     }
                     _ => {
                         *overlay = OverlayMenu::None;
@@ -300,6 +366,85 @@ fn process_ui_actions(
                     locale.set_locale(lang);
                 }
             }
+            // Maker actions
+            UiAction::MakerToggleMode => {
+                if let Some(ref mut m) = maker_ui {
+                    let next = if m.mode == MakerMode::Edit { MakerMode::Play } else { MakerMode::Edit };
+                    m.commands.push(UiCommand::SetMode(next));
+                }
+            }
+            UiAction::MakerSelectBlock(i) => {
+                if let Some(ref mut m) = maker_ui {
+                    let kind = match i {
+                        1 => BlockKind::Stone,
+                        2 => BlockKind::Hazard,
+                        3 => BlockKind::Goal,
+                        4 => BlockKind::Spawn,
+                        _ => BlockKind::Grass,
+                    };
+                    m.commands.push(UiCommand::SelectBlock(kind));
+                }
+            }
+            UiAction::MakerUndo => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::Undo);
+                }
+            }
+            UiAction::MakerRedo => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::Redo);
+                }
+            }
+            UiAction::MakerSave => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::Save);
+                }
+            }
+            UiAction::MakerLoad => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::Load);
+                }
+            }
+            UiAction::MakerNewLevel => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::NewLevel);
+                }
+            }
+            UiAction::MakerOpenLoadPanel => {
+                *overlay = OverlayMenu::LoadLevel;
+            }
+            UiAction::MakerLoadSlot(ref name) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::LoadSlot(name.clone()));
+                }
+                *overlay = OverlayMenu::None;
+            }
+            UiAction::MakerSaveAs(ref name) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::SaveAs(name.clone()));
+                }
+            }
+            UiAction::MakerDismissClear => {
+                *overlay = OverlayMenu::None;
+                paused.0 = false;
+                virtual_time.unpause();
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::SetMode(MakerMode::Edit));
+                }
+            }
+            UiAction::MakerRetry => {
+                *overlay = OverlayMenu::None;
+                paused.0 = false;
+                virtual_time.unpause();
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::RetryPlay);
+                }
+            }
+            UiAction::SetPointerOverUi(v) => {
+                if let Ok(mut ui) = bridge.shared.lock() {
+                    ui.pointer_over_ui = v;
+                }
+            }
         }
     }
 }
@@ -332,6 +477,11 @@ fn handle_pause_input(
         OverlayMenu::Pause => {
             *overlay = OverlayMenu::None;
             pending_unpause.0 = Some(Timer::from_seconds(0.2, TimerMode::Once));
+        }
+        OverlayMenu::LevelClear | OverlayMenu::LoadLevel => {
+            *overlay = OverlayMenu::None;
+            paused.0 = false;
+            virtual_time.unpause();
         }
         OverlayMenu::Settings | OverlayMenu::Credits => {
             if paused.0 {

@@ -16,3 +16,24 @@ score = Score
 best = Best
 controls-hint = WASD move | Click/Space shoot | Esc pause
 loading = Loading...
+
+## Maker
+maker-brush-blocks = Blocks
+maker-brush-entities = Entities
+maker-ent-glimmer = Glimmer
+maker-ent-pad = Launch Pad
+maker-ent-seal = Seal
+maker-ent-drift = Drift Plate
+maker-glimmers = Glimmers: { $have }/{ $total }
+maker-hint-entity = Q brush . F yaw . LMB place . RMB erase
+maker-mode-edit = Mode: EDIT
+maker-mode-play = Mode: PLAY
+maker-blocks = Blocks: { $count }
+maker-save = Save
+maker-load = Load...
+maker-new = New
+maker-clear-title = Level Clear!
+maker-clear-time = Time: { $secs }s
+maker-clear-deaths = Deaths: { $count }
+maker-load-title = Load Level
+maker-load-empty = No saved levels

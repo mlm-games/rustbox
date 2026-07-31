@@ -1,8 +1,8 @@
 mod app;
 mod asset_tracking;
-mod demo;
 mod dev_tools;
 mod ecosystem;
+mod maker;
 mod menus;
 mod screens;
 mod theme;

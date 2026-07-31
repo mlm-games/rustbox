@@ -42,6 +42,20 @@ pub enum UiAction {
     SaveSettings,
     NextLanguage,
     SetLanguage(String),
+    // Maker toolbar
+    MakerToggleMode,
+    MakerSelectBlock(u8),
+    MakerUndo,
+    MakerRedo,
+    MakerSave,
+    MakerLoad,
+    MakerNewLevel,
+    MakerOpenLoadPanel,
+    MakerLoadSlot(String),
+    MakerSaveAs(String),
+    MakerDismissClear,
+    MakerRetry,
+    SetPointerOverUi(bool),
 }
 
 #[derive(bevy::prelude::Resource, Clone)]
