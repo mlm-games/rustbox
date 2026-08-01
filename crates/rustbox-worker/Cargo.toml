@@ -1,0 +1,32 @@
+[package]
+name = "rustbox-worker"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Cloudflare Worker backend (D1 metadata + R2 level files) for rustbox online level sharing"
+rust-version = "1.96"
+
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Build it standalone by:
+#   cd crates/rustbox-worker
+#   cargo check --target wasm32-unknown-unknown
+#   npx wrangler deploy
+[workspace]
+
+[dependencies]
+worker = { version = "0.8", features = ["d1"] }
+rustbox-format = { path = "../rustbox-format" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+chrono = "0.4"
+hex = "0.4"
+sha2 = "0.10"
+wasm-bindgen = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1

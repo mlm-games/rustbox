@@ -11,6 +11,7 @@ pub mod entities_runtime;
 pub mod entity_data;
 pub mod level;
 pub mod mode;
+pub mod online;
 pub mod player;
 #[cfg(feature = "physics")]
 pub mod rapier;
@@ -57,6 +58,7 @@ pub struct MakerPlugin;
 
 impl Plugin for MakerPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(online::OnlinePlugin);
         #[cfg(feature = "physics")]
         app.add_plugins(crate::maker::rapier::rapier_plugin);
         app.init_resource::<MakerMode>()

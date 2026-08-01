@@ -20,6 +20,9 @@ path = "src/main.rs"
 
 [workspace]
 members = ["crates/*"]
+# rustbox-worker is a wasm32-only Cloudflare Worker with its own workspace,
+# hence it must be excluded from the glob (built standalone with --target wasm32).
+exclude = ["crates/rustbox-worker"]
 
 [features]
 default = ["dev_native"]
@@ -89,6 +92,7 @@ repose-material = "0.25"
 repose-render-wgpu = "0.25"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 ron = "0.12"
 directories = "6"
 anyhow = "1"
@@ -99,6 +103,8 @@ bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", optional = t
     "parallel",
 ] }
 rustbox-format = { path = "crates/rustbox-format" }
+ehttp = { version = "0.7", features = ["multipart", "json"] }
+crossbeam-channel = "0.5"
 # Optional big-game crates (pull in bevy-0.19)
 # leafwing-input-manager = { version = "0.14", optional = true, default-features = false, features = [] }
 # bevy_hanabi = { version = "0.14", optional = true, default-features = false, features = ["2d"] }
@@ -118,6 +124,12 @@ getrandom_02 = { version = "0.2", features = ["js"], package = "getrandom" }
 
 [package.metadata.android]
 features = ["bevy/android-native-activity"]
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.ACCESS_NETWORK_STATE"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26

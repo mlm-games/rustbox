@@ -753,7 +753,7 @@ pub fn update_seals(
     }
 }
 
-/// Player touches an orb → pulse its channel.
+/// Player touches an orb -> pulse its channel.
 pub fn trigger_orbs(
     time: Res<Time>,
     mode: Res<MakerMode>,

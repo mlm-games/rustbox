@@ -9,12 +9,17 @@
 //! Gameplay helpers that need Bevy math (colors, `IVec3`, gizmos, ...) live in
 //! the game crate as extension traits, not here.
 
+pub mod api;
 pub mod block;
 pub mod entity;
 pub mod file;
 pub mod level;
 pub mod track;
 
+pub use api::{
+    API_VERSION, MAX_TAGS, MAX_UPLOAD_BYTES, ApiError, LevelListResponse, LevelMeta,
+    UploadMetadata, UploadResponse,
+};
 pub use block::BlockKind;
 pub use entity::{EntityData, EntityKind, LevelEntityId};
 pub use file::{

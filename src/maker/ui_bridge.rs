@@ -14,8 +14,11 @@ use super::mode::{
     ActiveLinkChannel, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind,
     SelectedEntity, SelectedEntityKind,
 };
+use super::online::OnlineRequest;
 use super::storage::{self, AUTOSAVE_KEY, LevelStorage, apply_level_data};
 use super::track::{ActiveTrack, TrackData, TrackId, TrackMode};
+use rustbox_format::api::{LevelMeta, UploadMetadata};
+use rustbox_format::file::FORMAT_VERSION;
 
 #[derive(Clone, Debug)]
 pub enum UiCommand {
@@ -54,6 +57,13 @@ pub enum UiCommand {
     AddToCollection,
     OpenLevelInfo,
     SaveMetadata,
+    OnlineBrowse,
+    OnlineUpload,
+    OnlinePlay(u64),
+    OnlineLike(u64),
+    OnlineReport(u64),
+    OnlineDelete(u64),
+    OnlineSetToken(String),
 }
 
 #[derive(Resource, Default)]
@@ -109,6 +119,14 @@ pub struct MakerUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
+
+    /// Online level-sharing state.
+    pub online_levels: Vec<LevelMeta>,
+    pub online_query: String,
+    pub online_token: String,
+    /// Requests the flush system turns into fetches (kept here so
+    /// `drain_ui_commands` stays under Bevy's 16-param system limit).
+    pub online_pending: Vec<OnlineRequest>,
 }
 
 impl MakerUi {
@@ -407,6 +425,70 @@ pub fn drain_ui_commands(
                 } else {
                     ui.set_status("Clipboard unavailable.");
                 }
+            }
+            UiCommand::OnlineBrowse => {
+                let query = ui.browse_query.clone();
+                ui.online_query = query.clone();
+                ui.online_pending.push(OnlineRequest::List {
+                    query,
+                    limit: 50,
+                    offset: 0,
+                });
+                ui.set_status("Loading online levels...");
+            }
+            UiCommand::OnlineUpload => {
+                if !level.data.is_verified {
+                    ui.set_status("Beat the level before publishing.");
+                    continue;
+                }
+                let meta = UploadMetadata {
+                    name: level.data.name.clone(),
+                    description: level.data.description.clone(),
+                    tags: level.data.tags.iter().map(|t| t.label().to_string()).collect(),
+                    format_version: FORMAT_VERSION,
+                    game_version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                ui.online_pending.push(OnlineRequest::Upload {
+                    meta,
+                    data: level.data.clone(),
+                });
+                ui.set_status("Uploading...");
+            }
+            UiCommand::OnlinePlay(id) => {
+                let meta = ui
+                    .online_levels
+                    .iter()
+                    .find(|m| m.id == id)
+                    .cloned()
+                    .unwrap_or_else(|| LevelMeta {
+                        id,
+                        author: String::new(),
+                        name: format!("#{id}"),
+                        description: String::new(),
+                        tags: Vec::new(),
+                        format_version: 0,
+                        game_version: String::new(),
+                        size_bytes: 0,
+                        sha256: String::new(),
+                        likes: 0,
+                        plays: 0,
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    });
+                ui.online_pending.push(OnlineRequest::Download { meta, play: true });
+            }
+            UiCommand::OnlineLike(id) => ui.online_pending.push(OnlineRequest::Like { id }),
+            UiCommand::OnlineReport(id) => ui.online_pending.push(OnlineRequest::Report { id }),
+            UiCommand::OnlineDelete(id) => ui.online_pending.push(OnlineRequest::Delete { id }),
+            UiCommand::OnlineSetToken(token) => {
+                let token = token.trim().to_string();
+                let msg = if token.is_empty() {
+                    "Upload token cleared."
+                } else {
+                    "Upload token set."
+                };
+                ui.online_token = token;
+                ui.set_status(msg);
             }
             UiCommand::DeltaEntityParam(id, delta) => {
                 if let Some(e) = level.entity_by_id(id) {

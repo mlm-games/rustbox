@@ -1,0 +1,40 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["crates/rustbox-worker/**"]
+  workflow_dispatch:
+
+# permissions:
+#   contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wrangler
+        run: npm install -g wrangler@latest
+
+      - name: Deploy to Cloudflare Workers
+        working-directory: crates/rustbox-worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Set upload token secret
+        if: ${{ secrets.UPLOAD_TOKEN != '' }}
+        working-directory: crates/rustbox-worker
+        run: echo "${{ secrets.UPLOAD_TOKEN }}" | npx wrangler secret put UPLOAD_TOKEN
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

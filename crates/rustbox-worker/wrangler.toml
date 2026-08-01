@@ -1,0 +1,20 @@
+name = "rustbox-api"
+main = "build/index.js"
+compatibility_date = "2026-08-01"
+
+# workers-rs build: compiles src/lib.rs to wasm32 and bundles the worker.
+[build]
+command = "cargo install -q \"worker-build@^0.8\" && worker-build --release"
+
+[vars]
+ALLOWED_ORIGINS = "https://mlm-games.github.io,http://localhost:8080"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rustbox"
+database_id = "0d769b0b-d085-47e5-b58a-7c11c7a37712"
+
+[[r2_buckets]]
+binding = "LEVELS"
+bucket_name = "rustbox-levels"
+preview_bucket_name = "rustbox-levels-preview"
