@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::WorldAsset;
 
 use super::MakerCleanup;
-use super::block::BlockKind;
+use super::block::{BlockKind, BlockKindColor};
 use super::chunk::CHUNK_SIZE;
 use super::level::LevelDocument;
 use super::player;

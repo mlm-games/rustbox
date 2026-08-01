@@ -3552,17 +3552,14 @@ name = "my-ecosystem-bevy"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "base64",
  "bevy",
  "bevy_rapier3d",
- "bincode",
  "directories",
  "game-utils",
  "game-utils-bevy",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
- "miniz_oxide",
  "rand",
  "repose-bevy",
  "repose-core",
@@ -3570,6 +3567,7 @@ dependencies = [
  "repose-render-wgpu",
  "repose-ui",
  "ron",
+ "rustbox-format",
  "serde",
  "wasm-bindgen",
  "web-sys",
@@ -4931,6 +4929,17 @@ dependencies = [
  "heapless 0.8.0",
  "num-traits",
  "smallvec",
+]
+
+[[package]]
+name = "rustbox-format"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bincode",
+ "miniz_oxide",
+ "serde",
 ]
 
 [[package]]

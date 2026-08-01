@@ -15,11 +15,11 @@ use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::MakerCleanup;
 use super::collision::is_solid;
-use super::entity_data::{EntityKind, LevelEntityId, link_color};
+use super::entity_data::{EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::{JUMP_SPEED, Player, spawn_center};
-use super::track::TrackId;
+use super::track::{TrackDataExt, TrackId};
 use super::ui_bridge::MakerUi;
 #[cfg(feature = "physics")]
 use bevy_rapier3d::prelude::{Collider, RigidBody, Sensor, Velocity};

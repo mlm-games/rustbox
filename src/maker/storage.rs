@@ -1,11 +1,11 @@
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+
+use rustbox_format::file::{FORMAT_VERSION, LevelFile};
+use rustbox_format::level::LevelData;
 
 use super::commands::CommandHistory;
-use super::entity_data::EntityData;
-use super::level::{BlockData, LevelData, LevelDocument};
+use super::level::LevelDocument;
 use super::mode::MakerMode;
-use super::track::TrackData;
 
 pub const AUTOSAVE_KEY: &str = "level_autosave";
 pub const COLLECTION_PREFIX: &str = "__col_";
@@ -229,60 +229,6 @@ fn create_backend() -> Box<dyn StorageBackend> {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct LevelFile {
-    pub version: u32,
-    pub level: LevelData,
-}
-
-pub const FORMAT_VERSION: u32 = 2;
-
-/// Layout of version-1 levels (before description/tags/author/created_at were
-/// added). Only needed to decode old share codes, which use bincode (binary,
-/// so serde defaults cannot fill in missing trailing fields).
-#[derive(Serialize, Deserialize)]
-struct LevelFileV1 {
-    version: u32,
-    level: LevelDataV1,
-}
-
-#[derive(Serialize, Deserialize)]
-struct LevelDataV1 {
-    name: String,
-    spawn: [i32; 3],
-    blocks: Vec<BlockData>,
-    #[serde(default)]
-    entities: Vec<EntityData>,
-    #[serde(default)]
-    tracks: Vec<TrackData>,
-    #[serde(default)]
-    entities_version: u32,
-    #[serde(default)]
-    author_time: Option<f32>,
-    #[serde(default)]
-    author_deaths: u32,
-    #[serde(default)]
-    is_verified: bool,
-}
-
-fn upgrade_v1(old: LevelDataV1) -> LevelData {
-    LevelData {
-        name: old.name,
-        spawn: old.spawn,
-        blocks: old.blocks,
-        entities: old.entities,
-        tracks: old.tracks,
-        entities_version: old.entities_version,
-        author_time: old.author_time,
-        author_deaths: old.author_deaths,
-        is_verified: old.is_verified,
-        description: String::new(),
-        tags: vec![],
-        author: String::new(),
-        created_at: 0,
-    }
-}
-
 pub fn serialize_level(level: &LevelData) -> anyhow::Result<String> {
     let file = LevelFile {
         version: FORMAT_VERSION,
@@ -302,39 +248,8 @@ pub fn deserialize_level(text: &str) -> anyhow::Result<LevelData> {
     }
 }
 
-pub fn export_level_code(level: &LevelData) -> anyhow::Result<String> {
-    use base64::Engine as _;
-    let file = LevelFile {
-        version: FORMAT_VERSION,
-        level: level.clone(),
-    };
-    let bytes = bincode::serialize(&file)?;
-    let compressed = miniz_oxide::deflate::compress_to_vec(&bytes, 6);
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(compressed))
-}
-
-pub fn import_level_code(code: &str) -> anyhow::Result<LevelData> {
-    use base64::Engine as _;
-    let compressed = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(code)?;
-    let bytes = miniz_oxide::inflate::decompress_to_vec(&compressed)
-        .map_err(|_| anyhow::anyhow!("corrupted share code (inflate failed)"))?;
-    match bincode::deserialize::<LevelFile>(&bytes) {
-        Ok(file) => match file.version {
-            1 | 2 => Ok(file.level),
-            v => anyhow::bail!("unknown share code version {v}"),
-        },
-        Err(_) => {
-            // Older codes were produced with a struct that had fewer fields, so
-            // binary decoding into the current shape fails. Try the legacy shape.
-            let old: LevelFileV1 = bincode::deserialize(&bytes)
-                .map_err(|_| anyhow::anyhow!("corrupted share code"))?;
-            if old.version != 1 {
-                anyhow::bail!("unknown share code version {}", old.version);
-            }
-            Ok(upgrade_v1(old.level))
-        }
-    }
-}
+pub use rustbox_format::file::export_code as export_level_code;
+pub use rustbox_format::file::import_code as import_level_code;
 
 pub fn save_level(
     storage: &LevelStorage,

@@ -5,7 +5,7 @@ use super::block::BlockKind;
 use super::camera::WorldCamera;
 use super::collision::raycast_present;
 use super::commands::{CommandHistory, EditCommand};
-use super::entity_data::{EntityData, EntityKind};
+use super::entity_data::{EntityData, EntityDataExt, EntityKind};
 use super::level::LevelDocument;
 use super::mode::{
     ActiveLinkChannel, BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture, MakerMode,

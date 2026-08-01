@@ -1,0 +1,16 @@
+[package]
+name = "rustbox-format"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Shared serializable level format for the rustbox game and its online backend (no Bevy dependency)"
+repository = "https://github.com/mlm-games/my-ecosystem-template-bevy"
+keywords = ["gamedev", "bevy", "mario-maker", "level", "serialization"]
+rust-version = "1.96"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+miniz_oxide = "0.8"
+base64 = "0.22"
+anyhow = "1"

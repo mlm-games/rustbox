@@ -1,5 +1,7 @@
 use bevy::prelude::Color;
 
+use super::block::BlockKindColor;
+use super::entity_data::EntityKindColor;
 use super::level::{BlockData, LevelData};
 
 // Internal render resolution (supersampled), then boxed down for the grid.
@@ -312,7 +314,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::maker::block::BlockKind;
-    use crate::maker::entity_data::{EntityData, EntityKind};
+    use crate::maker::entity_data::{EntityData, EntityDataExt, EntityKind};
     use crate::maker::level::BlockData;
 
     fn sample_level() -> LevelData {

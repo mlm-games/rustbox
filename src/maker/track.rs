@@ -1,41 +1,30 @@
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
 
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 
-pub type TrackId = u32;
+pub use rustbox_format::track::{TrackData, TrackId, TrackMode};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum TrackMode {
-    #[default]
-    PingPong,
-    Loop,
+/// Bevy-math helpers for track data (the pure `TrackData` struct lives in
+/// `rustbox-format`; these need `Vec3`).
+pub trait TrackDataExt {
+    fn world_points(&self) -> Vec<Vec3>;
+    fn total_length(&self) -> f32;
+    /// Closest point to `p`: (arc-length distance, nearest point, distance to track).
+    fn nearest(&self, p: Vec3) -> Option<(f32, Vec3, f32)>;
+    /// Position at distance `d` along the track, honoring `mode`.
+    fn sample(&self, d: f32) -> Vec3;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TrackData {
-    pub id: TrackId,
-    pub points: Vec<[i32; 3]>,
-    #[serde(default)]
-    pub mode: TrackMode,
-    #[serde(default = "default_speed")]
-    pub speed: f32,
-}
-
-fn default_speed() -> f32 {
-    2.0
-}
-
-impl TrackData {
-    pub fn world_points(&self) -> Vec<Vec3> {
+impl TrackDataExt for TrackData {
+    fn world_points(&self) -> Vec<Vec3> {
         self.points
             .iter()
             .map(|p| IVec3::from_array(*p).as_vec3() + Vec3::new(0.5, 0.15, 0.5))
             .collect()
     }
 
-    pub fn total_length(&self) -> f32 {
+    fn total_length(&self) -> f32 {
         let pts = self.world_points();
         let mut len = pts.windows(2).map(|w| w[0].distance(w[1])).sum::<f32>();
         if self.mode == TrackMode::Loop && pts.len() > 2 {
@@ -44,8 +33,7 @@ impl TrackData {
         len.max(0.001)
     }
 
-    /// Closest point to `p`: (arc-length distance, nearest point, distance to track).
-    pub fn nearest(&self, p: Vec3) -> Option<(f32, Vec3, f32)> {
+    fn nearest(&self, p: Vec3) -> Option<(f32, Vec3, f32)> {
         let pts = self.world_points();
         if pts.is_empty() {
             return None;
@@ -80,8 +68,7 @@ impl TrackData {
         best
     }
 
-    /// Position at distance `d` along the track, honoring `mode`.
-    pub fn sample(&self, d: f32) -> Vec3 {
+    fn sample(&self, d: f32) -> Vec3 {
         let pts = self.world_points();
         if pts.is_empty() {
             return Vec3::ZERO;
