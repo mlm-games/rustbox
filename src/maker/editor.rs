@@ -15,7 +15,14 @@ use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
 use super::ui_bridge::MakerUi;
 
-pub fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<MakerMode>) {
+pub fn toggle_mode(
+    keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
+    mut mode: ResMut<MakerMode>,
+) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
     if keys.just_pressed(KeyCode::Tab) {
         *mode = match *mode {
             MakerMode::Edit => MakerMode::Play,
@@ -26,9 +33,13 @@ pub fn toggle_mode(keys: Res<ButtonInput<KeyCode>>, mut mode: ResMut<MakerMode>)
 
 pub fn block_palette_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
     tab: Res<BrushTab>,
     mut selected: ResMut<SelectedBlockKind>,
 ) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
     if *tab != BrushTab::Blocks {
         return;
     }
@@ -51,12 +62,16 @@ pub fn block_palette_hotkeys(
 
 pub fn entity_palette_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
     mut tab: ResMut<BrushTab>,
     mut sel_e: ResMut<SelectedEntityKind>,
     mut place_yaw: ResMut<PlaceYaw>,
     mut channel: ResMut<ActiveLinkChannel>,
     mut ui: ResMut<MakerUi>,
 ) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyQ) {
         *tab = match *tab {
             BrushTab::Blocks => BrushTab::Entities,
@@ -99,11 +114,15 @@ pub fn entity_palette_hotkeys(
 
 pub fn track_tool_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
     tab: Res<BrushTab>,
     mut active: ResMut<ActiveTrack>,
     mut history: ResMut<CommandHistory>,
     mut level: ResMut<LevelDocument>,
 ) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
     if *tab != BrushTab::Tracks {
         return;
     }
@@ -160,9 +179,13 @@ fn default_speed() -> f32 {
 
 pub fn mirror_hotkey(
     keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
     mut mirror: ResMut<MirrorMode>,
     mut ui: ResMut<MakerUi>,
 ) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyV) {
         mirror.0 = (mirror.0 + 1) % 4;
         let label = match mirror.0 {
@@ -195,9 +218,13 @@ fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
 
 pub fn undo_redo_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
     mut history: ResMut<CommandHistory>,
     mut level: ResMut<LevelDocument>,
 ) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     if ctrl && keys.just_pressed(KeyCode::KeyZ) {
         history.undo(&mut level);

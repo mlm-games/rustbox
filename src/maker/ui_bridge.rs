@@ -6,6 +6,7 @@ use crate::app::OverlayMenu;
 
 use super::block::BlockKind;
 use super::campaign::{self, LevelSource};
+use super::catalog;
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
@@ -48,6 +49,11 @@ pub enum UiCommand {
     DeleteTrack(u32),
     PlayBundled(usize),
     RemixCurrent,
+    PlayCatalogEntry(String),
+    EditCatalogEntry(String),
+    AddToCollection,
+    OpenLevelInfo,
+    SaveMetadata,
 }
 
 #[derive(Resource, Default)]
@@ -87,6 +93,22 @@ pub struct MakerUi {
     pub track_ids: Vec<TrackId>,
     pub mirror: u8,
     pub link_channel: u32,
+    pub catalog: Vec<crate::maker::catalog::LevelSummary>,
+    pub browse_query: String,
+    pub browse_include_tags: Vec<crate::maker::level::LevelTag>,
+    pub browse_verified_only: bool,
+    pub browse_difficulty: Option<u8>,
+    pub browse_sort: u8,
+    pub browse_confirm_delete: Option<String>,
+
+    /// Key the current level is saved under (slot / collection entry), used by
+    /// the Level Info metadata editor so it persists to the browsable copy.
+    pub current_key: Option<String>,
+    pub info_name: String,
+    pub info_author: String,
+    pub info_description: String,
+    pub info_tags: Vec<crate::maker::level::LevelTag>,
+    pub info_focus: u8,
 }
 
 impl MakerUi {
@@ -204,11 +226,13 @@ pub fn drain_ui_commands(
                 history.undo.clear();
                 history.redo.clear();
                 sel_ent.0 = None;
+                ui.current_key = None;
                 ui.set_status("New level");
             }
             UiCommand::SaveAs(name) => match storage::save_level(&storage, &mut level, &name) {
                 Ok(()) => {
                     level.data.name = name.clone();
+                    ui.current_key = Some(name.clone());
                     ui.set_status(format!("Saved '{name}'"));
                 }
                 Err(e) => ui.set_status(format!("Save failed: {e}")),
@@ -217,6 +241,7 @@ pub fn drain_ui_commands(
                 match storage::load_level(&storage, &mut level, &mut history, &name) {
                     Ok(true) => {
                         sel_ent.0 = None;
+                        ui.current_key = Some(name.clone());
                         ui.set_status(format!("Loaded '{name}'"))
                     }
                     Ok(false) => ui.set_status("Slot empty"),
@@ -267,6 +292,7 @@ pub fn drain_ui_commands(
                         apply_level_data(&mut level, &mut history, data);
                         ui.import_code.clear();
                         ui.export_code.clear();
+                        ui.current_key = None;
                         sel_ent.0 = None;
                         *overlay = OverlayMenu::None;
                         *source = LevelSource::Imported;
@@ -293,7 +319,85 @@ pub fn drain_ui_commands(
                 *source = LevelSource::Editor;
                 *mode = MakerMode::Edit;
                 sel_ent.0 = None;
+                ui.current_key = None;
                 ui.set_status("Remixing — level is yours now. Beat it to share!");
+            }
+            UiCommand::PlayCatalogEntry(key) => {
+                match storage::load_level(&storage, &mut level, &mut history, &key) {
+                    Ok(true) => {
+                        ui.play_timer = 0.0;
+                        ui.deaths = 0;
+                        ui.goal_latched = false;
+                        ui.clear_time_secs = 0.0;
+                        ui.clear_deaths = 0;
+                        ui.current_key = Some(key);
+                        sel_ent.0 = None;
+                        *source = LevelSource::Imported;
+                        *mode = MakerMode::Play;
+                        ui.set_status(format!("Playing: {}", level.data.name));
+                    }
+                    Ok(false) => ui.set_status("Level not found."),
+                    Err(e) => ui.set_status(format!("Load failed: {e}")),
+                }
+            }
+            UiCommand::EditCatalogEntry(key) => {
+                match storage::load_level(&storage, &mut level, &mut history, &key) {
+                    Ok(true) => {
+                        ui.current_key = Some(key);
+                        sel_ent.0 = None;
+                        *source = LevelSource::Editor;
+                        *mode = MakerMode::Edit;
+                        ui.set_status(format!("Editing: {}", level.data.name));
+                    }
+                    Ok(false) => ui.set_status("Level not found."),
+                    Err(e) => ui.set_status(format!("Load failed: {e}")),
+                }
+            }
+            UiCommand::AddToCollection => {
+                if let LevelSource::Bundled(_) = *source {
+                    ui.set_status("Remix bundled levels before saving.");
+                } else {
+                    match storage::save_to_collection(&storage, &mut level) {
+                        Ok(key) => {
+                            ui.current_key = Some(key);
+                            ui.set_status("Saved to your collection.");
+                            ui.catalog = catalog::build_catalog(&storage);
+                        }
+                        Err(e) => ui.set_status(format!("Save failed: {e}")),
+                    }
+                }
+            }
+            UiCommand::OpenLevelInfo => {
+                ui.info_name = level.data.name.clone();
+                ui.info_author = level.data.author.clone();
+                ui.info_description = level.data.description.clone();
+                ui.info_tags = level.data.tags.clone();
+                ui.info_focus = 0;
+                *overlay = OverlayMenu::LevelInfo;
+            }
+            UiCommand::SaveMetadata => {
+                level.data.name = ui.info_name.clone();
+                level.data.author = ui.info_author.clone();
+                level.data.description = ui.info_description.clone();
+                level.data.tags = ui.info_tags.clone();
+                if level.data.created_at == 0 {
+                    level.data.created_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                }
+                let key = ui
+                    .current_key
+                    .clone()
+                    .unwrap_or_else(|| AUTOSAVE_KEY.to_string());
+                match storage::save_level(&storage, &mut level, &key) {
+                    Ok(()) => {
+                        ui.catalog = catalog::build_catalog(&storage);
+                        ui.set_status("Level info saved.");
+                        *overlay = OverlayMenu::None;
+                    }
+                    Err(e) => ui.set_status(format!("Save failed: {e}")),
+                }
             }
             UiCommand::CopyCode => {
                 if ui.export_code.is_empty() {
@@ -435,6 +539,64 @@ pub fn share_text_input(
             && text.chars().all(|c| !c.is_control())
         {
             ui.import_code.push_str(text);
+        }
+    }
+}
+
+pub fn browse_text_input(
+    mut keys: MessageReader<KeyboardInput>,
+    overlay: Res<OverlayMenu>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if *overlay != OverlayMenu::Browse {
+        return;
+    }
+    for ev in keys.read() {
+        if ev.state != ButtonState::Pressed || ev.repeat {
+            continue;
+        }
+        if ev.key_code == KeyCode::Backspace {
+            ui.browse_query.pop();
+        } else if let Some(text) = &ev.text
+            && text.chars().all(|c| !c.is_control())
+        {
+            ui.browse_query.push_str(text);
+        }
+    }
+}
+
+pub fn level_info_text_input(
+    mut keys: MessageReader<KeyboardInput>,
+    overlay: Res<OverlayMenu>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if *overlay != OverlayMenu::LevelInfo {
+        return;
+    }
+    for ev in keys.read() {
+        if ev.state != ButtonState::Pressed || ev.repeat {
+            continue;
+        }
+        if ev.key_code == KeyCode::Backspace {
+            match ui.info_focus {
+                0 => {
+                    ui.info_name.pop();
+                }
+                1 => {
+                    ui.info_author.pop();
+                }
+                _ => {
+                    ui.info_description.pop();
+                }
+            }
+        } else if let Some(text) = &ev.text
+            && text.chars().all(|c| !c.is_control())
+        {
+            match ui.info_focus {
+                0 => ui.info_name.push_str(text),
+                1 => ui.info_author.push_str(text),
+                _ => ui.info_description.push_str(text),
+            }
         }
     }
 }

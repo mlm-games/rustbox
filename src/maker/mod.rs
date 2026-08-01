@@ -1,6 +1,7 @@
 pub mod block;
 pub mod camera;
 pub mod campaign;
+pub mod catalog;
 pub mod chunk;
 pub mod collision;
 pub mod commands;
@@ -123,7 +124,8 @@ impl Plugin for MakerPlugin {
                 )
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)
-                    .run_if(not_blocked),
+                    .run_if(not_blocked)
+                    .after(ui_bridge::update_input_capture),
             )
             .add_systems(
                 Update,
@@ -162,8 +164,12 @@ impl Plugin for MakerPlugin {
                     editor::spawn_place_ghosts.run_if(in_edit),
                     ui_bridge::push_ui_state,
                     ui_bridge::share_text_input.before(ui_bridge::drain_ui_commands),
+                    ui_bridge::browse_text_input.before(ui_bridge::drain_ui_commands),
+                    ui_bridge::level_info_text_input.before(ui_bridge::drain_ui_commands),
                     cursor::cursor_policy,
-                    storage::save_load_hotkeys.run_if(in_edit),
+                    storage::save_load_hotkeys
+                        .run_if(in_edit)
+                        .after(ui_bridge::update_input_capture),
                     win::tick_play_timer,
                     win::on_mode_changed,
                     win::detect_goal.run_if(in_play),

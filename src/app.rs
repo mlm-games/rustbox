@@ -169,6 +169,8 @@ pub enum OverlayMenu {
     LoadLevel,
     Share,
     LevelSelect,
+    Browse,
+    LevelInfo,
 }
 
 #[derive(Resource, Default)]
@@ -230,6 +232,21 @@ pub struct SharedUi {
     pub author_time: Option<f32>,
     pub is_bundled: bool,
     pub campaign_levels: Vec<crate::maker::campaign::CampaignLevelUi>,
+    // Browse
+    pub browse_levels: Vec<crate::maker::catalog::LevelSummary>,
+    pub browse_visible: Vec<crate::maker::catalog::LevelSummary>,
+    pub browse_query: String,
+    pub browse_include_tags: Vec<crate::maker::level::LevelTag>,
+    pub browse_verified_only: bool,
+    pub browse_difficulty: Option<u8>,
+    pub browse_sort: u8,
+    pub browse_confirm_delete: Option<String>,
+    // Level Info metadata editor
+    pub info_name: String,
+    pub info_author: String,
+    pub info_description: String,
+    pub info_tags: Vec<crate::maker::level::LevelTag>,
+    pub info_focus: u8,
 }
 
 impl Default for SharedUi {
@@ -281,6 +298,19 @@ impl Default for SharedUi {
             author_time: None,
             is_bundled: false,
             campaign_levels: Vec::new(),
+            browse_levels: Vec::new(),
+            browse_visible: Vec::new(),
+            browse_query: String::new(),
+            browse_include_tags: Vec::new(),
+            browse_verified_only: false,
+            browse_difficulty: None,
+            browse_sort: 0,
+            browse_confirm_delete: None,
+            info_name: String::new(),
+            info_author: String::new(),
+            info_description: String::new(),
+            info_tags: Vec::new(),
+            info_focus: 0,
         }
     }
 }
@@ -406,6 +436,26 @@ fn sync_shared_ui(
         ui.clear_time_secs = m.clear_time_secs;
         ui.clear_deaths = m.clear_deaths;
         ui.level_slots = m.level_slots.clone();
+        ui.browse_levels = m.catalog.clone();
+        ui.browse_visible = crate::maker::catalog::filter_catalog(
+            &m.catalog,
+            &m.browse_query,
+            &m.browse_include_tags,
+            m.browse_verified_only,
+            m.browse_difficulty,
+            m.browse_sort,
+        );
+        ui.browse_query = m.browse_query.clone();
+        ui.browse_include_tags = m.browse_include_tags.clone();
+        ui.browse_verified_only = m.browse_verified_only;
+        ui.browse_difficulty = m.browse_difficulty;
+        ui.browse_sort = m.browse_sort;
+        ui.browse_confirm_delete = m.browse_confirm_delete.clone();
+        ui.info_name = m.info_name.clone();
+        ui.info_author = m.info_author.clone();
+        ui.info_description = m.info_description.clone();
+        ui.info_tags = m.info_tags.clone();
+        ui.info_focus = m.info_focus;
         ui.brush_entities = m.brush_entities;
         ui.selected_entity = m.selected_entity;
         ui.brush_tab = m.brush_tab;
@@ -511,6 +561,7 @@ fn process_ui_actions(
     mut pending_unpause: ResMut<PendingUnpause>,
     mut locale: ResMut<LocaleResources>,
     mut maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
+    storage: Res<crate::maker::storage::LevelStorage>,
 ) {
     use crate::maker::block::BlockKind;
     use crate::maker::entity_data::EntityKind;
@@ -533,6 +584,140 @@ fn process_ui_actions(
             }
             UiAction::OpenCredits => *overlay = OverlayMenu::Credits,
             UiAction::OpenLevelSelect => *overlay = OverlayMenu::LevelSelect,
+            UiAction::BrowseOpen => {
+                if let Some(ref mut m) = maker_ui {
+                    m.catalog = crate::maker::catalog::build_catalog(&storage);
+                    m.browse_confirm_delete = None;
+                }
+                *overlay = OverlayMenu::Browse;
+            }
+            UiAction::BrowsePlay(key) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_confirm_delete = None;
+                    m.commands.push(UiCommand::PlayCatalogEntry(key));
+                }
+                *overlay = OverlayMenu::None;
+                transition.begin_to_state(AppState::Loading);
+            }
+            UiAction::BrowseEdit(key) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_confirm_delete = None;
+                    m.commands.push(UiCommand::EditCatalogEntry(key));
+                }
+                *overlay = OverlayMenu::None;
+                transition.begin_to_state(AppState::Loading);
+            }
+            UiAction::BrowseDelete(key) => {
+                // First click arms a confirm; only the explicit Confirm action deletes.
+                if let Some(ref mut m) = maker_ui {
+                    if m.browse_confirm_delete.as_deref() == Some(key.as_str()) {
+                        let result = if key.starts_with(crate::maker::storage::COLLECTION_PREFIX) {
+                            crate::maker::storage::delete_collection(&storage, &key)
+                        } else {
+                            storage.0.delete(&key)
+                        };
+                        m.browse_confirm_delete = None;
+                        match result {
+                            Ok(()) => {
+                                m.catalog = crate::maker::catalog::build_catalog(&storage);
+                                m.set_status("Deleted.");
+                            }
+                            Err(e) => m.set_status(format!("Delete failed: {e}")),
+                        }
+                    } else {
+                        m.browse_confirm_delete = Some(key);
+                    }
+                }
+            }
+            UiAction::BrowseConfirmDelete(key) => {
+                if let Some(ref mut m) = maker_ui {
+                    let result = if key.starts_with(crate::maker::storage::COLLECTION_PREFIX) {
+                        crate::maker::storage::delete_collection(&storage, &key)
+                    } else {
+                        storage.0.delete(&key)
+                    };
+                    m.browse_confirm_delete = None;
+                    match result {
+                        Ok(()) => {
+                            m.catalog = crate::maker::catalog::build_catalog(&storage);
+                            m.set_status("Deleted.");
+                        }
+                        Err(e) => m.set_status(format!("Delete failed: {e}")),
+                    }
+                }
+            }
+            UiAction::BrowseCancelDelete => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_confirm_delete = None;
+                }
+            }
+            UiAction::BrowseToggleTag(tag) => {
+                if let Some(ref mut m) = maker_ui {
+                    if let Some(pos) = m.browse_include_tags.iter().position(|t| *t == tag) {
+                        m.browse_include_tags.remove(pos);
+                    } else {
+                        m.browse_include_tags.push(tag);
+                    }
+                    m.browse_confirm_delete = None;
+                }
+            }
+            UiAction::BrowseToggleVerified => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_verified_only = !m.browse_verified_only;
+                    m.browse_confirm_delete = None;
+                }
+            }
+            UiAction::BrowseSetDifficulty(d) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_difficulty = d;
+                    m.browse_confirm_delete = None;
+                }
+            }
+            UiAction::BrowseCycleSort => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_sort = (m.browse_sort + 1) % 6;
+                }
+            }
+            UiAction::BrowseClearQuery => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_query.clear();
+                    m.browse_confirm_delete = None;
+                }
+            }
+            UiAction::BrowseAddToCollection => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::AddToCollection);
+                }
+            }
+            UiAction::LevelInfoOpen => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::OpenLevelInfo);
+                }
+                *overlay = OverlayMenu::LevelInfo;
+            }
+            UiAction::LevelInfoFocus(focus) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.info_focus = focus;
+                }
+            }
+            UiAction::LevelInfoToggleTag(tag) => {
+                if let Some(ref mut m) = maker_ui {
+                    if let Some(pos) = m.info_tags.iter().position(|t| *t == tag) {
+                        m.info_tags.remove(pos);
+                    } else {
+                        m.info_tags.push(tag);
+                    }
+                }
+            }
+            UiAction::LevelInfoSave => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::SaveMetadata);
+                }
+                *overlay = OverlayMenu::None;
+            }
+            UiAction::LevelInfoClose => {
+                *overlay = OverlayMenu::None;
+            }
             UiAction::PlayBundledLevel(i) => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::PlayBundled(i as usize));
@@ -863,7 +1048,7 @@ fn handle_pause_input(
             *overlay = OverlayMenu::None;
             pending_unpause.0 = Some(Timer::from_seconds(0.2, TimerMode::Once));
         }
-        OverlayMenu::LevelClear | OverlayMenu::LoadLevel => {
+        OverlayMenu::LevelClear | OverlayMenu::LoadLevel | OverlayMenu::LevelInfo => {
             *overlay = OverlayMenu::None;
             paused.0 = false;
             virtual_time.unpause();

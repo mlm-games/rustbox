@@ -19,6 +19,38 @@ fn level_format_entities() -> u32 {
     1
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LevelTag {
+    Short,
+    Puzzle,
+    Precision,
+    Chill,
+    Music,
+    Auto,
+}
+
+impl LevelTag {
+    pub const ALL: [LevelTag; 6] = [
+        LevelTag::Short,
+        LevelTag::Puzzle,
+        LevelTag::Precision,
+        LevelTag::Chill,
+        LevelTag::Music,
+        LevelTag::Auto,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LevelTag::Short => "Short",
+            LevelTag::Puzzle => "Puzzle",
+            LevelTag::Precision => "Precision",
+            LevelTag::Chill => "Chill",
+            LevelTag::Music => "Music",
+            LevelTag::Auto => "Auto",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LevelData {
     pub name: String,
@@ -36,6 +68,14 @@ pub struct LevelData {
     pub author_deaths: u32,
     #[serde(default)]
     pub is_verified: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<LevelTag>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: u64,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -61,6 +101,10 @@ impl Default for LevelDocument {
                 author_time: None,
                 author_deaths: 0,
                 is_verified: false,
+                description: String::new(),
+                tags: vec![],
+                author: String::new(),
+                created_at: 0,
             },
             map: HashMap::new(),
             dirty_chunks: HashSet::new(),
