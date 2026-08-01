@@ -32,7 +32,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Set upload token secret
-        if: ${{ secrets.UPLOAD_TOKEN != '' }}
         working-directory: crates/rustbox-worker
         run: echo "${{ secrets.UPLOAD_TOKEN }}" | npx wrangler secret put UPLOAD_TOKEN
         env:
