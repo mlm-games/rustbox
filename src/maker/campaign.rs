@@ -14,7 +14,7 @@ pub struct BundledLevel {
     pub source: &'static str,
 }
 
-/// Embedded at compile time — works identically on native and web.
+/// Embedded at compile time.
 pub const BUNDLED_LEVELS: &[BundledLevel] = &[
     BundledLevel {
         id: "01_first_steps",
@@ -37,7 +37,7 @@ pub const BUNDLED_LEVELS: &[BundledLevel] = &[
     BundledLevel {
         id: "04_prowler_tracks",
         name: "Patrol Route",
-        teaches: "Prowlers ride tracks — stomp or dodge",
+        teaches: "Prowlers ride tracks - stomp or dodge",
         source: include_str!("../../assets/levels/04_prowler_tracks.ron"),
     },
     BundledLevel {
@@ -59,7 +59,7 @@ pub fn load_bundled(index: usize) -> Option<LevelData> {
     }
 }
 
-/// Where the current level came from — controls mode defaults and Remix.
+/// Where the current level came from, controls mode defaults and Remix.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub enum LevelSource {
     #[default]

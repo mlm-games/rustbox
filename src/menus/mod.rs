@@ -24,6 +24,7 @@ use crate::app::{AppState, OverlayMenu, SharedUi};
 use crate::maker::catalog::{LevelSourceKind, LevelSummary, difficulty_label};
 use crate::maker::entity_data::EntityKind;
 use crate::maker::level::LevelTag;
+use crate::maker::thumbnail::ThumbPreview;
 use crate::maker::track::TrackMode;
 
 material_symbols! {
@@ -651,9 +652,7 @@ fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     }
 }
 
-// ---------------------------------------------------------------------------
 // EDIT MODE
-// ---------------------------------------------------------------------------
 
 fn edit_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     ZStack(Modifier::new().fill_max_size()).child((
@@ -1068,9 +1067,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .children(body)
 }
 
-// ---------------------------------------------------------------------------
 // PLAY MODE
-// ---------------------------------------------------------------------------
 
 fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
@@ -1114,8 +1111,6 @@ fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             )),
         ),
     );
-    // Bundled/imported levels are read-only sources — Remix from the clear
-    // screen instead of dropping straight into the editor.
     if !st.is_bundled {
         children.push(
             Column(
@@ -1139,9 +1134,7 @@ fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     ZStack(Modifier::new().fill_max_size()).children(children)
 }
 
-// ---------------------------------------------------------------------------
 // Shared pieces
-// ---------------------------------------------------------------------------
 
 fn toast_anchor(st: &SharedUi) -> View {
     if st.maker_status.is_empty() {
@@ -1283,7 +1276,7 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                     t(tr, "maker-beat-author", "Beat the author!")
                 )
             } else {
-                format!("Author: {author:.2}s — try again?")
+                format!("Author: {author:.2}s - try again?")
             },
             16.0,
             if beat {
@@ -1603,27 +1596,26 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }
         tag_pills.push(RText(stats).size(11.0).color(col(140, 140, 160)));
 
-        let mut rows: Vec<View> = Vec::new();
-        rows.push(
+        let mut meta: Vec<View> = vec![
             Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(name_children),
-        );
-        rows.push(icon_text(
-            Symbols::AUTO_AWESOME,
-            format!(
-                "{} · {} · {}",
-                if s.author.is_empty() {
-                    "Unknown".to_string()
-                } else {
-                    s.author.clone()
-                },
-                difficulty_label(s.difficulty),
-                s.author_time
-                    .map(|t| format!("{t:.1}s"))
-                    .unwrap_or_else(|| "—".to_string())
+            icon_text(
+                Symbols::AUTO_AWESOME,
+                format!(
+                    "{} · {} · {}",
+                    if s.author.is_empty() {
+                        "Unknown".to_string()
+                    } else {
+                        s.author.clone()
+                    },
+                    difficulty_label(s.difficulty),
+                    s.author_time
+                        .map(|t| format!("{t:.1}s"))
+                        .unwrap_or_else(|| "-".to_string())
+                ),
+                12.0,
+                col(150, 150, 170),
             ),
-            12.0,
-            col(150, 150, 170),
-        ));
+        ];
         if !s.description.is_empty() {
             let desc = if s.description.chars().count() > 120 {
                 let mut d: String = s.description.chars().take(120).collect();
@@ -1632,9 +1624,32 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             } else {
                 s.description.clone()
             };
-            rows.push(RText(desc).size(13.0).color(col(190, 190, 205)));
+            meta.push(RText(desc).size(13.0).color(col(190, 190, 205)));
         }
-        rows.push(Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(tag_pills));
+        meta.push(Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(tag_pills));
+
+        let mut rows: Vec<View> = Vec::new();
+        rows.push(
+            Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
+                Column(
+                    Modifier::new()
+                        .width(76.0)
+                        .height(56.0)
+                        .align_items(AlignItems::CENTER)
+                        .justify_content(JustifyContent::CENTER)
+                        .background(col(30, 30, 42))
+                        .clip_rounded(8.0),
+                )
+                .child(thumb_grid_view(&s.preview)),
+                Column(
+                    Modifier::new()
+                        .fill_max_width()
+                        .gap(6.0)
+                        .align_items(AlignItems::FLEX_START),
+                )
+                .child(meta),
+            )),
+        );
 
         let action_row: View = if confirming {
             Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
@@ -1719,6 +1734,34 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .background(RColor::from_rgba(0, 0, 0, 180)),
     )
     .child(inner)
+}
+
+/// Renders an isometric preview as a grid of colored boxes (Repose primitives
+/// only).
+fn thumb_grid_view(p: &ThumbPreview) -> View {
+    const CELL: f32 = 4.0;
+
+    let mut rows: Vec<View> = Vec::with_capacity(p.rows);
+    for r in 0..p.rows {
+        let mut cells: Vec<View> = Vec::with_capacity(p.cols);
+        for cidx in 0..p.cols {
+            let px = p.cells[r * p.cols + cidx];
+            cells.push(Column(
+                Modifier::new()
+                    .width(CELL)
+                    .height(CELL)
+                    .background(RColor::from_rgba(px[0], px[1], px[2], px[3])),
+            ));
+        }
+        rows.push(Row(Modifier::new()).child(cells));
+    }
+
+    Column(
+        Modifier::new()
+            .clip_rounded(8.0)
+            .background(col(30, 30, 40)),
+    )
+    .child(rows)
 }
 
 fn tag_color(tag: LevelTag) -> RColor {
@@ -1886,7 +1929,7 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let a = a_focus.clone();
         let focused = st.info_focus == focus;
         let display = if value.is_empty() {
-            "—".to_string()
+            "-".to_string()
         } else {
             value.clone()
         };

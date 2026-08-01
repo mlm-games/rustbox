@@ -320,7 +320,7 @@ pub fn drain_ui_commands(
                 *mode = MakerMode::Edit;
                 sel_ent.0 = None;
                 ui.current_key = None;
-                ui.set_status("Remixing — level is yours now. Beat it to share!");
+                ui.set_status("Remixing... level is yours now. Beat it to share!");
             }
             UiCommand::PlayCatalogEntry(key) => {
                 match storage::load_level(&storage, &mut level, &mut history, &key) {

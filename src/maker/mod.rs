@@ -16,6 +16,7 @@ pub mod player;
 pub mod rapier;
 pub mod rendering;
 pub mod storage;
+pub mod thumbnail;
 pub mod track;
 pub mod ui_bridge;
 pub mod win;

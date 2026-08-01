@@ -1,6 +1,11 @@
 use super::entity_data::EntityKind;
 use super::level::{LevelData, LevelTag};
 use super::storage::{self, LevelStorage};
+use super::thumbnail::{self, ThumbPreview};
+
+/// Grid dimensions for the browse-card preview. cols*rows colored boxes per card.
+pub const PREVIEW_COLS: usize = 18;
+pub const PREVIEW_ROWS: usize = 13;
 
 /// UI-ready snapshot of one level in the browsable pool (named slots +
 /// collection). Kept cheap: no map/entity runtime data, just metadata.
@@ -23,6 +28,8 @@ pub struct LevelSummary {
     /// Bitset of which entity kinds appear in the level (`KIND_*` flags).
     pub kind_flags: u32,
     pub source: LevelSourceKind,
+    /// Isometric preview computed from the level data (fresh on every build).
+    pub preview: ThumbPreview,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +79,7 @@ fn summarize(key: String, data: &LevelData, source: LevelSourceKind) -> LevelSum
         difficulty: estimate_difficulty(data),
         kind_flags,
         source,
+        preview: thumbnail::render_preview(data, PREVIEW_COLS, PREVIEW_ROWS),
     }
 }
 
