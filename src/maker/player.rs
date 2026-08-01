@@ -30,6 +30,7 @@ pub struct Player {
     pub half_extents: Vec3,
     pub was_on_ground: bool,
     pub fall_speed: f32,
+    pub launch: f32,
 }
 
 impl Default for Player {
@@ -42,6 +43,7 @@ impl Default for Player {
             half_extents: Vec3::new(0.3, 0.9, 0.3),
             was_on_ground: true,
             fall_speed: 0.0,
+            launch: 0.0,
         }
     }
 }
@@ -65,6 +67,7 @@ pub fn reset_player(
     player.jump_buffer = 0.0;
     player.was_on_ground = true;
     player.fall_speed = 0.0;
+    player.launch = 0.0;
 }
 
 pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
@@ -139,11 +142,14 @@ pub fn player_controller(
         if horiz.length_squared() > 1.0 {
             horiz = horiz.normalize();
         }
-        player.velocity.x = horiz.x * MOVE_SPEED;
-        player.velocity.z = horiz.z * MOVE_SPEED;
+        if player.launch <= 0.0 {
+            player.velocity.x = horiz.x * MOVE_SPEED;
+            player.velocity.z = horiz.z * MOVE_SPEED;
+        }
 
         player.coyote = (player.coyote - dt).max(0.0);
         player.jump_buffer = (player.jump_buffer - dt).max(0.0);
+        player.launch = (player.launch - dt).max(0.0);
         if kb && keys.just_pressed(KeyCode::Space) {
             player.jump_buffer = JUMP_BUFFER;
         }
@@ -164,6 +170,7 @@ pub fn player_controller(
             if on_pad {
                 let dir = Quat::from_rotation_y(pad.yaw_rad) * Vec3::NEG_Z;
                 player.velocity = dir * pad.impulse + Vec3::Y * (pad.impulse * 0.35);
+                player.launch = 0.9;
                 player.on_ground = false;
                 player.coyote = 0.0;
                 ScreenEffects::add_trauma(&mut trauma, 0.2);
@@ -236,6 +243,7 @@ pub fn player_controller(
         if was_grounded {
             player.on_ground = true;
             player.coyote = COYOTE_TIME;
+            player.launch = 0.0;
         } else {
             player.on_ground = false;
         }

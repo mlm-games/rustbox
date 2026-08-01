@@ -11,8 +11,9 @@ use repose_core::prelude::{
 };
 use repose_material::material3::{
     ButtonConfig, DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem,
-    FilledTonalButton, MenuState,
+    FilledTonalButton, FilledTonalIconButton, IconButtonColors, IconButtonConfig, MenuState,
 };
+use repose_material::{material_symbols, Icon, Symbol};
 use repose_ui::anim_ext::{
     AnimatedVisibility, AnimatedVisibilityConfig, EnterTransition, ExitTransition,
 };
@@ -22,6 +23,26 @@ use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt, ZStack};
 use crate::app::{AppState, OverlayMenu, SharedUi};
 use crate::maker::entity_data::EntityKind;
 use crate::maker::track::TrackMode;
+
+material_symbols! {
+    ADD: '\u{E145}',
+    AUTO_AWESOME: '\u{E65F}',
+    CHECK: '\u{E5CA}',
+    EDIT: '\u{F097}',
+    FOLDER_OPEN: '\u{E2C8}',
+    LINK: '\u{E250}',
+    PLAY_ARROW: '\u{E037}',
+    PUBLISH: '\u{E255}',
+    REDO: '\u{E15A}',
+    REMOVE: '\u{E15B}',
+    ROTATE_RIGHT: '\u{E41A}',
+    SAVE: '\u{E161}',
+    SKULL: '\u{F89A}',
+    STAR: '\u{F09A}',
+    SWAP_HORIZ: '\u{E8D4}',
+    TIMER: '\u{E425}',
+    UNDO: '\u{E166}',
+}
 
 fn t(translations: &HashMap<String, String>, key: &str, fallback: &str) -> String {
     translations
@@ -285,18 +306,20 @@ fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let teaches = lvl.teaches.clone();
         let status = if lvl.completed {
             match (lvl.best_time, lvl.best_deaths) {
-                (Some(best), Some(d)) => {
-                    format!("✓ {:.1}s · {} {}", best, d, t(tr, "maker-deaths", "deaths"))
-                }
-                _ => t(tr, "completed", "Completed").to_string(),
+                (Some(best), Some(d)) => icon_text(
+                    Symbols::CHECK,
+                    format!("{:.1}s · {} {}", best, d, t(tr, "maker-deaths", "deaths")),
+                    12.0,
+                    col(220, 210, 120),
+                ),
+                _ => RText(t(tr, "completed", "Completed"))
+                    .size(12.0)
+                    .color(col(220, 210, 120)),
             }
         } else {
-            t(tr, "uncleared", "Uncleared").to_string()
-        };
-        let status_color = if lvl.completed {
-            col(220, 210, 120)
-        } else {
-            col(120, 125, 140)
+            RText(t(tr, "uncleared", "Uncleared"))
+                .size(12.0)
+                .color(col(120, 125, 140))
         };
         Column(Modifier::new().align_items(AlignItems::CENTER)).child((
             mk_button(
@@ -305,7 +328,7 @@ fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 move || push(&a, UiAction::PlayBundledLevel(i)),
             ),
             RText(teaches).size(12.0).color(col(160, 165, 180)),
-            RText(status).size(12.0).color(status_color),
+            status,
             spacer(4.0),
         ))
     };
@@ -643,7 +666,7 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .background(RColor::from_rgba(15, 15, 22, 235)))
     .children(vec![
         mk_primary_button(
-            format!("▶ {}", t(tr, "toolbar-play", "Play")),
+            icon_label(Symbols::PLAY_ARROW, t(tr, "toolbar-play", "Play")),
             col(60, 160, 90),
             move || push_ui(&a_mode, UiAction::MakerToggleMode),
         ),
@@ -666,21 +689,23 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             col(230, 160, 70)
         }),
         Column(Modifier::new().fill_max_width()),
-        mk_icon_button("↶", st.can_undo, move || {
+        mk_icon_button(Symbols::UNDO, st.can_undo, move || {
             push_ui(&a_undo, UiAction::MakerUndo)
         }),
-        mk_icon_button("↷", st.can_redo, move || {
+        mk_icon_button(Symbols::REDO, st.can_redo, move || {
             push_ui(&a_redo, UiAction::MakerRedo)
         }),
         Column(Modifier::new().width(12.0)),
-        mk_icon_button("💾", true, move || push_ui(&a_save, UiAction::MakerSave)),
-        mk_icon_button("📂", true, move || {
+        mk_icon_button(Symbols::SAVE, true, move || {
+            push_ui(&a_save, UiAction::MakerSave)
+        }),
+        mk_icon_button(Symbols::FOLDER_OPEN, true, move || {
             push_ui(&a_load, UiAction::MakerOpenLoadPanel)
         }),
-        mk_icon_button("✚", true, move || {
+        mk_icon_button(Symbols::ADD, true, move || {
             push_ui(&a_new, UiAction::MakerNewLevel)
         }),
-        mk_icon_button("🚀", true, move || {
+        mk_icon_button(Symbols::PUBLISH, true, move || {
             push_ui(&a_pub, UiAction::MakerPublish)
         }),
     ])
@@ -711,9 +736,12 @@ fn palette_dock(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     )
     .child(
         Row(Modifier::new().gap(10.0).align_items(AlignItems::CENTER)).child((
-            mk_pill_button(format!("⇄ {tab_label} [Q]"), move || {
-                push_ui(&a_tab, UiAction::MakerToggleBrushTab)
-            }),
+            mk_pill_button(
+                icon_label(Symbols::SWAP_HORIZ, format!("{tab_label} [Q]")),
+                move || {
+                    push_ui(&a_tab, UiAction::MakerToggleBrushTab)
+                },
+            ),
             swatches,
         )),
     )
@@ -761,9 +789,10 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             move || push_ui(&a, UiAction::MakerSelectEntity(idx)),
         ));
     }
-    row = row.child(mk_pill_button("⟳ F".into(), move || {
-        push_ui(&a_rot, UiAction::MakerRotateBrush)
-    }));
+    row = row.child(mk_pill_button(
+        icon_label(Symbols::ROTATE_RIGHT, "F".into()),
+        move || push_ui(&a_rot, UiAction::MakerRotateBrush),
+    ));
     if st.selected_entity >= 5 {
         let a_ch = actions.clone();
         let label = if st.selected_entity == 5 {
@@ -772,7 +801,7 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             t(&st.translations, "toolbar-gate", "Relay Gate")
         };
         row = row.child(mk_pill_button(
-            format!("⛓ {label} · Ch {} [L]", st.link_channel),
+            icon_label(Symbols::LINK, format!("{label} · Ch {} [L]", st.link_channel)),
             move || push_ui(&a_ch, UiAction::MakerCycleLinkChannel),
         ));
     }
@@ -805,11 +834,11 @@ fn stepper_row(
         .align_items(AlignItems::CENTER)
         .gap(6.0))
     .children(vec![
-        mk_icon_button("−", true, on_minus),
+        mk_icon_button(Symbols::REMOVE, true, on_minus),
         RText(format!("{label}: {value}"))
             .size(12.0)
             .color(col(200, 200, 210)),
-        mk_icon_button("+", true, on_plus),
+        mk_icon_button(Symbols::ADD, true, on_plus),
     ])
 }
 
@@ -897,7 +926,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 .unwrap_or_else(|| t(tr, "inspector-none", "None"));
             let a_cycle = actions.clone();
             body.push(mk_pill_button(
-                format!("{}: {}", t(tr, "inspector-track", "Track"), cur),
+                RText(format!("{}: {}", t(tr, "inspector-track", "Track"), cur)),
                 move || push_ui(&a_cycle, UiAction::MakerInspTrackCycle),
             ));
         }
@@ -905,7 +934,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         body.push(spacer(6.0));
         let a_del = actions.clone();
         body.push(mk_pill_button(
-            t(tr, "inspector-delete", "Delete"),
+            RText(t(tr, "inspector-delete", "Delete")),
             move || push_ui(&a_del, UiAction::MakerInspDeleteEntity),
         ));
     } else if let Some(track) = &st.active_track_data {
@@ -935,7 +964,11 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         };
         let a_mode = actions.clone();
         body.push(mk_pill_button(
-            format!("{}: {}", t(tr, "inspector-mode", "Mode"), mode_label),
+            RText(format!(
+                "{}: {}",
+                t(tr, "inspector-mode", "Mode"),
+                mode_label
+            )),
             move || push_ui(&a_mode, UiAction::MakerInspTrackModeToggle),
         ));
 
@@ -950,13 +983,13 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 
         let a_rev = actions.clone();
         body.push(mk_pill_button(
-            t(tr, "inspector-reverse", "Reverse"),
+            RText(t(tr, "inspector-reverse", "Reverse")),
             move || push_ui(&a_rev, UiAction::MakerInspTrackReverse),
         ));
 
         let a_del = actions.clone();
         body.push(mk_pill_button(
-            t(tr, "inspector-delete", "Delete"),
+            RText(t(tr, "inspector-delete", "Delete")),
             move || push_ui(&a_del, UiAction::MakerInspTrackDelete),
         ));
     } else {
@@ -1020,15 +1053,24 @@ fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 .clip_rounded(20.0)
                 .align_items(AlignItems::CENTER))
             .child((
-                RText(format!("⏱ {:.1}s", st.play_time_secs))
-                    .size(16.0)
-                    .color(RColor::WHITE),
-                RText(format!("☠ {}", st.deaths))
-                    .size(16.0)
-                    .color(col(230, 120, 120)),
-                RText(format!("✦ {}/{}", st.glimmers_collected, st.glimmers_total))
-                    .size(16.0)
-                    .color(col(255, 220, 110)),
+                icon_text(
+                    Symbols::TIMER,
+                    format!("{:.1}s", st.play_time_secs),
+                    16.0,
+                    RColor::WHITE,
+                ),
+                icon_text(
+                    Symbols::SKULL,
+                    format!("{}", st.deaths),
+                    16.0,
+                    col(230, 120, 120),
+                ),
+                icon_text(
+                    Symbols::AUTO_AWESOME,
+                    format!("{}/{}", st.glimmers_collected, st.glimmers_total),
+                    16.0,
+                    col(255, 220, 110),
+                ),
             )),
         ),
     );
@@ -1044,7 +1086,7 @@ fn play_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                     .padding(10.0),
             )
             .child(mk_pill_button(
-                format!("✏ {} [Tab]", t(tr, "toolbar-edit", "Edit")),
+                icon_label(Symbols::EDIT, format!("{} [Tab]", t(tr, "toolbar-edit", "Edit"))),
                 move || push_ui(&a_edit, UiAction::MakerToggleMode),
             )),
         );
@@ -1104,24 +1146,39 @@ fn mk_swatch(hotkey: String, color: RColor, selected: bool, on_click: impl Fn() 
     )
 }
 
-fn mk_icon_button(icon: &str, enabled: bool, on_click: impl Fn() + 'static) -> View {
-    let label = icon.to_string();
-    FilledTonalButton(
-        Modifier::new()
-            .width(40.0)
-            .height(36.0)
-            .background(if enabled {
-                col(60, 60, 80)
-            } else {
-                col(35, 35, 45)
-            }),
+fn mk_icon_button(icon: Symbol, enabled: bool, on_click: impl Fn() + 'static) -> View {
+    FilledTonalIconButton(
+        Icon(icon).size(19.0),
         on_click,
-        ButtonConfig::default(),
-        move || RText(label.clone()).size(17.0),
+        IconButtonConfig {
+            enabled,
+            container_size: Some(38.0),
+            colors: IconButtonColors {
+                container_color: col(60, 60, 80),
+                content_color: RColor::WHITE,
+                disabled_container_color: col(35, 35, 45),
+                disabled_content_color: col(90, 90, 105),
+            },
+            ..Default::default()
+        },
     )
 }
 
-fn mk_pill_button(label: String, on_click: impl Fn() + 'static) -> View {
+fn icon_label(symbol: Symbol, text: String) -> View {
+    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+        Icon(symbol).size(16.0),
+        RText(text),
+    ))
+}
+
+fn icon_text(symbol: Symbol, text: String, size: f32, color: RColor) -> View {
+    Row(Modifier::new().gap(5.0).align_items(AlignItems::CENTER)).child((
+        Icon(symbol).size(size).color(color),
+        RText(text).size(size).color(color),
+    ))
+}
+
+fn mk_pill_button(label: View, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
         Modifier::new()
             .height(38.0)
@@ -1129,11 +1186,11 @@ fn mk_pill_button(label: String, on_click: impl Fn() + 'static) -> View {
             .clip_rounded(19.0),
         on_click,
         ButtonConfig::default(),
-        move || RText(label.clone()).size(14.0),
+        move || label.clone(),
     )
 }
 
-fn mk_primary_button(label: String, bg: RColor, on_click: impl Fn() + 'static) -> View {
+fn mk_primary_button(label: View, bg: RColor, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
         Modifier::new()
             .height(38.0)
@@ -1142,7 +1199,7 @@ fn mk_primary_button(label: String, bg: RColor, on_click: impl Fn() + 'static) -
             .clip_rounded(8.0),
         on_click,
         ButtonConfig::default(),
-        move || RText(label.clone()).size(16.0),
+        move || label.clone(),
     )
 }
 
@@ -1178,20 +1235,20 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     if let Some(author) = st.author_time {
         let beat = st.clear_time_secs <= author;
         body.push(
-            RText(if beat {
-                format!(
-                    "★ {} ({author:.2}s)",
-                    t(tr, "maker-beat-author", "Beat the author!")
-                )
-            } else {
-                format!("Author: {author:.2}s — try again?")
-            })
-            .size(16.0)
-            .color(if beat {
-                col(120, 230, 140)
-            } else {
-                col(255, 200, 90)
-            }),
+            icon_text(
+                Symbols::STAR,
+                if beat {
+                    format!("{} ({author:.2}s)", t(tr, "maker-beat-author", "Beat the author!"))
+                } else {
+                    format!("Author: {author:.2}s — try again?")
+                },
+                16.0,
+                if beat {
+                    col(120, 230, 140)
+                } else {
+                    col(255, 200, 90)
+                },
+            ),
         );
     }
 
