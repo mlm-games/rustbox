@@ -178,6 +178,7 @@ pub struct PendingUnpause(pub Option<Timer>);
 pub struct SharedUi {
     pub phase: AppState,
     pub paused: bool,
+    pub loading_progress: f32,
     pub overlay: OverlayMenu,
     pub master_vol: f32,
     pub sfx_vol: f32,
@@ -236,6 +237,7 @@ impl Default for SharedUi {
         Self {
             phase: AppState::Splash,
             paused: false,
+            loading_progress: 0.0,
             overlay: OverlayMenu::None,
             master_vol: 1.0,
             sfx_vol: 1.0,
@@ -379,6 +381,8 @@ fn sync_shared_ui(
     level: Option<Res<crate::maker::level::LevelDocument>>,
     source: Option<Res<crate::maker::campaign::LevelSource>>,
     progress: Option<Res<crate::maker::campaign::CampaignProgress>>,
+    loading: Option<Res<crate::asset_tracking::AssetsLoading>>,
+    asset_server: Res<AssetServer>,
 ) {
     let Ok(mut ui) = bridge.shared.lock() else {
         return;
@@ -454,6 +458,15 @@ fn sync_shared_ui(
         ui.sfx_vol = save.settings.sfx_volume;
         ui.music_vol = save.settings.music_volume;
     }
+    ui.loading_progress = match loading {
+        Some(l) if !l.0.is_empty() => {
+            l.0.iter()
+                .filter(|h| asset_server.is_loaded_with_dependencies(h.id()))
+                .count() as f32
+                / l.0.len() as f32
+        }
+        _ => 1.0,
+    };
     ui.transition_alpha = transition.overlay_alpha;
     ui.flash_alpha = flash.amount;
     ui.language = locale.current.clone();
@@ -510,7 +523,7 @@ fn process_ui_actions(
     for action in q.drain(..) {
         match action {
             UiAction::StartGame => {
-                transition.begin_to_state(AppState::InGame);
+                transition.begin_to_state(AppState::Loading);
             }
             UiAction::OpenSettings => {
                 if let Ok(mut ui) = bridge.shared.lock() {
@@ -525,7 +538,7 @@ fn process_ui_actions(
                     m.commands.push(UiCommand::PlayBundled(i as usize));
                 }
                 *overlay = OverlayMenu::None;
-                transition.begin_to_state(AppState::InGame);
+                transition.begin_to_state(AppState::Loading);
             }
             UiAction::MakerRemix => {
                 *overlay = OverlayMenu::None;

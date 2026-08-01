@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
+use bevy::world_serialization::WorldAssetRoot;
 
 use super::MakerCleanup;
 use super::camera::CameraRig;
 use super::collision::{move_and_collide, overlaps_kind};
-use super::entities_runtime::{DriftPlate, LaunchPad, RuntimeSolids};
+use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
 use super::rendering::MakerAssets;
@@ -48,15 +51,49 @@ pub fn spawn_center(level: &LevelDocument) -> Vec3 {
     Vec3::new(s[0] as f32 + 0.5, s[1] as f32 + 0.9, s[2] as f32 + 0.5)
 }
 
+pub fn reset_player(
+    transform: &mut Transform,
+    player: &mut Player,
+    vis: &mut Visibility,
+    level: &LevelDocument,
+) {
+    *vis = Visibility::Visible;
+    transform.translation = spawn_center(level);
+    player.velocity = Vec3::ZERO;
+    player.on_ground = false;
+    player.coyote = 0.0;
+    player.jump_buffer = 0.0;
+    player.was_on_ground = true;
+    player.fall_speed = 0.0;
+}
+
 pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
-    commands.spawn((
-        Mesh3d(assets.player_mesh.clone()),
-        MeshMaterial3d(assets.player_mat.clone()),
-        Transform::from_translation(spawn_center(level)),
-        Visibility::Hidden,
-        Player::default(),
-        MakerCleanup,
-    ));
+    let root = commands
+        .spawn((
+            Transform::from_translation(spawn_center(level)),
+            Visibility::Hidden,
+            Player::default(),
+            MakerCleanup,
+        ))
+        .id();
+    commands.entity(root).with_children(|p| {
+        p.spawn((
+            WorldAssetRoot(assets.player_scene.clone()),
+            MakerCleanup,
+            ModelMaterial(assets.player_material.clone()),
+            ModelAnim {
+                source: "player",
+                idle: "Idle",
+                run: Some("Run"),
+                air: Some("Jump"),
+                player: None,
+                started: false,
+                nodes: HashMap::new(),
+                state: None,
+            },
+            Transform::from_translation(Vec3::Y * -0.9).with_scale(Vec3::splat(0.6)),
+        ));
+    });
 }
 
 pub fn player_controller(
@@ -243,16 +280,7 @@ pub fn sync_mode(
     }
     for (mut transform, mut player, mut vis) in &mut q {
         match *mode {
-            MakerMode::Play => {
-                *vis = Visibility::Visible;
-                transform.translation = spawn_center(&level);
-                player.velocity = Vec3::ZERO;
-                player.on_ground = false;
-                player.coyote = 0.0;
-                player.jump_buffer = 0.0;
-                player.was_on_ground = true;
-                player.fall_speed = 0.0;
-            }
+            MakerMode::Play => reset_player(&mut transform, &mut player, &mut vis, &level),
             MakerMode::Edit => {
                 *vis = Visibility::Hidden;
             }

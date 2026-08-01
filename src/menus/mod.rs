@@ -6,7 +6,8 @@ use std::rc::Rc;
 
 use repose_core::View;
 use repose_core::prelude::{
-    AlignItems, AnimationSpec, Color as RColor, Easing, JustifyContent, Modifier, remember,
+    AlignItems, AlignSelf, AnimationSpec, Color as RColor, Easing, JustifyContent, Modifier,
+    remember,
 };
 use repose_material::material3::{
     ButtonConfig, DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem,
@@ -109,7 +110,7 @@ pub fn compose_root(
 
     let content = match st.phase {
         AppState::Splash => splash_ui(),
-        AppState::Loading => loading_ui(),
+        AppState::Loading => loading_ui(&st),
         AppState::Title => ZStack(Modifier::new().fill_max_size()).child((
             title_ui(&st, actions.clone()),
             AnimatedVisibility(
@@ -198,7 +199,8 @@ fn splash_ui() -> View {
     .child(RText("My Ecosystem").size(48.0).color(RColor::WHITE))
 }
 
-fn loading_ui() -> View {
+fn loading_ui(st: &SharedUi) -> View {
+    let pct = st.loading_progress.clamp(0.0, 1.0);
     Column(
         Modifier::new()
             .fill_max_size()
@@ -207,6 +209,32 @@ fn loading_ui() -> View {
             .background(col(8, 8, 12)),
     )
     .child(RText("Loading...").size(32.0).color(RColor::WHITE))
+    .child(spacer(16.0))
+    .child(
+        RText(format!("{:.0}%", pct * 100.0))
+            .size(18.0)
+            .color(RColor::WHITE),
+    )
+    .child(spacer(12.0))
+    .child(
+        Column(
+            Modifier::new()
+                .width(320.0)
+                .height(12.0)
+                .background(col(30, 30, 38))
+                .clip_rounded(6.0),
+        )
+        .child(
+            Column(
+                Modifier::new()
+                    .width((320.0 * pct).max(1.0))
+                    .height(12.0)
+                    .background(col(96, 165, 250))
+                    .clip_rounded(6.0)
+                    .align_self(AlignSelf::FLEX_START),
+            ),
+        ),
+    )
 }
 
 fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -538,6 +566,9 @@ fn credits_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .size(16.0)
             .color(RColor::WHITE),
         RText("Engine: Bevy  UI: Repose")
+            .size(16.0)
+            .color(RColor::WHITE),
+        RText("3D models: Quaternius Cubeworld Kit (CC0)")
             .size(16.0)
             .color(RColor::WHITE),
         spacer(16.0),

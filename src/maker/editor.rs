@@ -296,6 +296,15 @@ pub fn update_preview_and_edit(
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
+    // Reset paint chaining when the mouse button isn't held, so a fresh
+    // click always starts a new chain instead of resuming the old one.
+    if !buttons.pressed(MouseButton::Left) {
+        box_start.last_paint = None;
+    }
+    if !buttons.pressed(MouseButton::Right) {
+        box_start.last_erase = None;
+    }
+
     // Eyedropper: middle-click picks the block/entity under the cursor.
     if buttons.just_pressed(MouseButton::Middle) {
         if let Some(kind) = level.get_block(hit_cell) {
@@ -311,10 +320,10 @@ pub fn update_preview_and_edit(
         match *tab {
             BrushTab::Blocks => {
                 if shift {
-                    match box_start.0 {
-                        None => box_start.0 = Some(place_cell),
+                    match box_start.start {
+                        None => box_start.start = Some(place_cell),
                         Some(a) => {
-                            box_start.0 = None;
+                            box_start.start = None;
                             let min = a.min(place_cell);
                             let max = a.max(place_cell);
                             let mut cells = Vec::new();
@@ -358,6 +367,7 @@ pub fn update_preview_and_edit(
                             });
                         }
                     }
+                    box_start.last_paint = Some(place_cell);
                 }
             }
             BrushTab::Entities => {
@@ -467,27 +477,31 @@ pub fn update_preview_and_edit(
         }
     }
 
-    // Drag paint: hold LMB to keep placing, RMB to keep erasing.
+    // Drag paint: hold LMB to chain blocks as the cursor moves across cells;
+    // a stationary click (even a long hold) only places one block per cell.
     if *tab == BrushTab::Blocks && !shift {
         if buttons.pressed(MouseButton::Left) {
-            for cell in mirror_cells(place_cell, mirror.0) {
-                if level.get_block(cell).is_none() {
-                    history.apply(
-                        &mut level,
-                        EditCommand::Place {
-                            position: cell,
+            if box_start.last_paint != Some(place_cell) {
+                for cell in mirror_cells(place_cell, mirror.0) {
+                    if level.get_block(cell).is_none() {
+                        history.apply(
+                            &mut level,
+                            EditCommand::Place {
+                                position: cell,
+                                kind: selected.0,
+                                previous: None,
+                            },
+                        );
+                        stats.blocks_placed += 1;
+                        placed.write(BlockPlaced {
+                            cell,
                             kind: selected.0,
-                            previous: None,
-                        },
-                    );
-                    stats.blocks_placed += 1;
-                    placed.write(BlockPlaced {
-                        cell,
-                        kind: selected.0,
-                    });
+                        });
+                    }
                 }
+                box_start.last_paint = Some(place_cell);
             }
-        } else if buttons.pressed(MouseButton::Right) {
+        } else if buttons.pressed(MouseButton::Right) && box_start.last_erase != Some(hit_cell) {
             for cell in mirror_cells(hit_cell, mirror.0) {
                 if let Some(k) = level.get_block(cell) {
                     history.apply(
@@ -500,6 +514,7 @@ pub fn update_preview_and_edit(
                     stats.blocks_placed = stats.blocks_placed.saturating_sub(1);
                 }
             }
+            box_start.last_erase = Some(hit_cell);
         }
     }
 }

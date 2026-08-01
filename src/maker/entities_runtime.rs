@@ -1,6 +1,14 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
+use bevy::{
+    animation::RepeatAnimation,
+    animation::prelude::{
+        AnimationClip, AnimationGraph, AnimationGraphHandle, AnimationNodeIndex, AnimationPlayer,
+    },
+    gltf::Gltf,
+};
 
 use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
@@ -102,30 +110,45 @@ pub struct RuntimeSolids {
 
 #[derive(Resource)]
 pub struct EntityAssets {
-    pub glimmer: Handle<Mesh>,
-    pub pad: Handle<Mesh>,
-    pub seal: Handle<Mesh>,
-    pub drift: Handle<Mesh>,
-    pub prowler: Handle<Mesh>,
-    pub orb: Handle<Mesh>,
-    pub gate: Handle<Mesh>,
+    pub scenes: HashMap<EntityKind, Handle<WorldAsset>>,
+    pub albedo_mats: HashMap<EntityKind, Handle<StandardMaterial>>,
+    pub pad_mesh: Handle<Mesh>,
+    pub marker_mesh: Handle<Mesh>,
     pub mats: HashMap<EntityKind, Handle<StandardMaterial>>,
     pub link_mats: HashMap<u32, Handle<StandardMaterial>>,
+}
+
+/// Marks a spawned glTF scene whose meshes need a material attached once they
+/// exist (the fork's glTF loader spawns meshes without `MeshMaterial3d`).
+/// Tinted kinds get a flat color (keeps the link-channel / collectible color
+/// language); everything else gets the model's albedo texture material.
+#[derive(Component)]
+pub struct ModelMaterial(pub Handle<StandardMaterial>);
+
+/// Requests that an animated model play named clips (looped) once its
+/// `AnimationPlayer` spawns inside the async-loaded scene.
+#[derive(Component)]
+pub struct ModelAnim {
+    /// Key into the [`ClipLibrary`] (the model file).
+    pub source: &'static str,
+    pub idle: &'static str,
+    pub run: Option<&'static str>,
+    pub air: Option<&'static str>,
+    pub player: Option<Entity>,
+    pub started: bool,
+    /// clip name -> node index, filled when the graph is built.
+    pub nodes: HashMap<&'static str, AnimationNodeIndex>,
+    pub state: Option<&'static str>,
 }
 
 pub fn setup_entity_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let mut mats = HashMap::new();
-    for kind in [
-        EntityKind::Glimmer,
-        EntityKind::LaunchPad,
-        EntityKind::Seal,
-        EntityKind::DriftPlate,
-        EntityKind::Prowler,
-    ] {
+    for kind in [EntityKind::Glimmer, EntityKind::LaunchPad] {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
         m.metallic = 0.2;
@@ -144,25 +167,318 @@ pub fn setup_entity_assets(
         link_mats.insert(ch, materials.add(m));
     }
 
-    let glimmer = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
-    let pad = meshes.add(Cylinder::new(0.45, 0.15));
-    let seal = meshes.add(Cuboid::new(1.0, 2.0, 0.25));
-    let drift = meshes.add(Cuboid::new(1.4, 0.25, 1.4));
-    let prowler = meshes.add(Cuboid::new(0.7, 0.7, 0.7));
-    let orb = meshes.add(Sphere::new(0.35).mesh().ico(3).unwrap());
-    let gate = meshes.add(Cuboid::new(1.0, 2.0, 0.4));
+    let mut scenes = HashMap::new();
+    scenes.insert(
+        EntityKind::Glimmer,
+        asset_server.load("models/cubeworld/Crystal_Big.gltf#Scene0"),
+    );
+    scenes.insert(
+        EntityKind::Seal,
+        asset_server.load("models/cubeworld/Door_Closed.gltf#Scene0"),
+    );
+    scenes.insert(
+        EntityKind::DriftPlate,
+        asset_server.load("models/cubeworld/Cart.gltf#Scene0"),
+    );
+    scenes.insert(
+        EntityKind::Prowler,
+        asset_server.load("models/cubeworld/Goblin.gltf#Scene0"),
+    );
+    scenes.insert(
+        EntityKind::TriggerOrb,
+        asset_server.load("models/cubeworld/Button.gltf#Scene0"),
+    );
+    scenes.insert(
+        EntityKind::RelayGate,
+        asset_server.load("models/cubeworld/Door_Closed.gltf#Scene0"),
+    );
+
+    let pad_mesh = meshes.add(Cylinder::new(0.45, 0.15));
+    let marker_mesh = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
+
+    let mut albedo_mats = HashMap::new();
+    let mut albedo = |path: &'static str| {
+        let texture: Handle<Image> = asset_server.load(path);
+        materials.add(StandardMaterial {
+            base_color_texture: Some(texture),
+            perceptual_roughness: 0.9,
+            ..default()
+        })
+    };
+    albedo_mats.insert(
+        EntityKind::Seal,
+        albedo("models/cubeworld/Door_Closed.gltf#Texture0"),
+    );
+    albedo_mats.insert(
+        EntityKind::DriftPlate,
+        albedo("models/cubeworld/Cart.gltf#Texture0"),
+    );
+    albedo_mats.insert(
+        EntityKind::Prowler,
+        albedo("models/cubeworld/Goblin.gltf#Texture0"),
+    );
 
     commands.insert_resource(EntityAssets {
-        glimmer,
-        pad,
-        seal,
-        drift,
-        prowler,
-        orb,
-        gate,
+        scenes,
+        albedo_mats,
+        pad_mesh,
+        marker_mesh,
         mats,
         link_mats,
     });
+}
+
+/// Gameplay position of an entity's root transform (kept identical to the
+/// pre-model values so hitboxes and proximity checks are unchanged).
+fn root_y_off(kind: EntityKind) -> f32 {
+    match kind {
+        EntityKind::Glimmer => 1.0,
+        EntityKind::LaunchPad => 0.1,
+        EntityKind::Seal => 1.0,
+        EntityKind::DriftPlate => 0.15,
+        EntityKind::Prowler => 0.4,
+        EntityKind::TriggerOrb => 1.0,
+        EntityKind::RelayGate => 1.0,
+    }
+}
+
+/// Per-kind visual config: (scene, material, scene scale, child y-offset).
+/// The root transform keeps its current gameplay position; the glTF model is a
+/// child so gameplay hitboxes and transforms stay untouched.
+fn visual_for(
+    kind: EntityKind,
+    link: u32,
+    assets: &EntityAssets,
+) -> Option<(Handle<WorldAsset>, Handle<StandardMaterial>, f32, f32)> {
+    let (scale, y_off) = match kind {
+        EntityKind::Glimmer => (0.11, -0.20),
+        EntityKind::Seal => (0.5, -1.0),
+        EntityKind::DriftPlate => (0.8, -0.18),
+        EntityKind::Prowler => (0.34, -0.4),
+        EntityKind::TriggerOrb => (0.8, -1.0),
+        EntityKind::RelayGate => (0.5, -1.0),
+        EntityKind::LaunchPad => return None, // stays a primitive cylinder
+    };
+    let scene = assets.scenes[&kind].clone();
+    let material = match kind {
+        EntityKind::Glimmer => assets.mats[&kind].clone(),
+        EntityKind::TriggerOrb | EntityKind::RelayGate => assets.link_mats[&link.min(9)].clone(),
+        _ => assets.albedo_mats[&kind].clone(),
+    };
+    Some((scene, material, scale, y_off))
+}
+
+/// glTF scenes instantiate asynchronously (a frame after the WorldAssetRoot is
+/// spawned). Mesh nodes get their materials from the fork's `bevy_pbr` glTF
+/// extension handler, but this runs every frame as a fallback so any mesh node
+/// that still lacks a `MeshMaterial3d` gets our model material attached.
+pub fn apply_model_materials(
+    mut commands: Commands,
+    roots: Query<(Entity, &ModelMaterial)>,
+    children: Query<&Children>,
+    mesh_nodes: Query<(), With<Mesh3d>>,
+    matted: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
+) {
+    for (e, mat) in &roots {
+        let mut found = false;
+        let mut stack: Vec<Entity> = children
+            .get(e)
+            .map(|c| c.iter().collect())
+            .unwrap_or_default();
+        while let Some(ce) = stack.pop() {
+            if mesh_nodes.contains(ce) && !matted.contains(ce) {
+                commands.entity(ce).insert(MeshMaterial3d(mat.0.clone()));
+                found = true;
+            }
+            if let Ok(grand) = children.get(ce) {
+                stack.extend(grand.iter());
+            }
+        }
+        if found {
+            commands.entity(e).remove::<ModelMaterial>();
+        }
+    }
+}
+
+/// Which animated model (if any) each entity kind maps to, and its clips.
+fn anim_for(kind: EntityKind) -> Option<ModelAnim> {
+    match kind {
+        EntityKind::Prowler => Some(ModelAnim {
+            source: "prowler",
+            idle: "Idle",
+            run: Some("Walk"),
+            air: None,
+            player: None,
+            started: false,
+            nodes: HashMap::new(),
+            state: None,
+        }),
+        _ => None,
+    }
+}
+
+/// Named animation clips per model, resolved from the loaded [`Gltf`] asset.
+#[derive(Resource, Default)]
+pub struct ClipLibrary {
+    pub pending: Vec<(&'static str, Handle<Gltf>)>,
+    pub clips: HashMap<&'static str, HashMap<Box<str>, Handle<AnimationClip>>>,
+}
+
+/// Kicks off the `Gltf` loads whose `named_animations` we want to resolve.
+pub fn init_clip_library(asset_server: Res<AssetServer>, mut lib: ResMut<ClipLibrary>) {
+    lib.pending = vec![
+        (
+            "player",
+            asset_server.load::<Gltf>("models/cubeworld/Character_Male_2.gltf"),
+        ),
+        (
+            "prowler",
+            asset_server.load::<Gltf>("models/cubeworld/Goblin.gltf"),
+        ),
+    ];
+}
+
+/// Copies `named_animations` from each loaded `Gltf` into the [`ClipLibrary`].
+pub fn collect_clips(mut lib: ResMut<ClipLibrary>, gltfs: Res<Assets<Gltf>>) {
+    let ready: Vec<_> = lib.pending.drain(..).collect();
+    for (key, handle) in ready {
+        if let Some(gltf) = gltfs.get(&handle) {
+            lib.clips.entry(key).or_default().extend(
+                gltf.named_animations
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
+        } else {
+            lib.pending.push((key, handle));
+        }
+    }
+}
+
+/// Once a model's scene has spawned its `AnimationPlayer`, build an animation
+/// graph from its requested clips, attach it, and start the idle clip.
+pub fn apply_model_anims(
+    mut commands: Commands,
+    lib: Res<ClipLibrary>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+    mut roots: Query<(Entity, &mut ModelAnim, &Children)>,
+    children: Query<&Children>,
+    mut anims: Query<(Entity, &mut AnimationPlayer)>,
+) {
+    for (_e, mut anim, root_children) in &mut roots {
+        let Some(player) = anim.player else {
+            let mut stack: Vec<Entity> = root_children.iter().collect();
+            while let Some(ce) = stack.pop() {
+                if anims.contains(ce) {
+                    anim.player = Some(ce);
+                    break;
+                }
+                if let Ok(grand) = children.get(ce) {
+                    stack.extend(grand.iter());
+                }
+            }
+            continue;
+        };
+        if anim.started {
+            continue;
+        }
+        let Some(clips) = lib.clips.get(anim.source) else {
+            continue;
+        };
+        let mut graph = AnimationGraph::new();
+        let root = graph.root;
+        let mut node_count = 0;
+        for name in [Some(anim.idle), anim.run, anim.air].into_iter().flatten() {
+            if let Some(handle) = clips.get(name) {
+                let node = graph.add_clip(handle.clone(), 1.0, root);
+                anim.nodes.insert(name, node);
+                node_count += 1;
+            }
+        }
+        if node_count == 0 {
+            continue;
+        }
+        let handle = graphs.add(graph);
+        commands.entity(player).insert(AnimationGraphHandle(handle));
+        if let Ok((_, mut p)) = anims.get_mut(player)
+            && let Some(node) = anim.nodes.get(anim.idle)
+        {
+            p.start(*node).set_repeat(RepeatAnimation::Forever);
+            anim.state = Some(anim.idle);
+        }
+        anim.started = true;
+    }
+}
+
+/// Switches looped clips at runtime: the player picks Idle/Run/Air from its
+/// velocity + ground state and faces its movement direction; the prowler
+/// walks while the game is in Play (its facing is driven by `move_prowlers`).
+pub fn tick_model_anims(
+    mode: Res<MakerMode>,
+    players: Query<(&Player, &Children)>,
+    level_ents: Query<(&LevelEnt, &Children)>,
+    mut anims: Query<&mut AnimationPlayer>,
+    mut model_anims: Query<(&mut ModelAnim, &mut Transform)>,
+) {
+    let playing = *mode == MakerMode::Play;
+    for (player, children) in &players {
+        let horizontal = player.velocity.xz().length();
+        let airborne = !player.on_ground;
+        let dir = player.velocity.xz();
+        let moving = dir.length_squared() > 0.01;
+        for child in children.iter() {
+            let Ok((mut anim, mut tf)) = model_anims.get_mut(child) else {
+                continue;
+            };
+            if moving {
+                let d = dir.normalize();
+                tf.rotation = Quat::from_rotation_y((-d.x).atan2(-d.y));
+            }
+            let target = if airborne && let Some(air) = anim.air {
+                air
+            } else if !airborne
+                && horizontal > 1.0
+                && let Some(run) = anim.run
+            {
+                run
+            } else {
+                anim.idle
+            };
+            play_if_needed(&mut anim, target, &mut anims);
+        }
+    }
+    for (ent, children) in &level_ents {
+        if ent.kind != EntityKind::Prowler {
+            continue;
+        }
+        for child in children.iter() {
+            let Ok((mut anim, _tf)) = model_anims.get_mut(child) else {
+                continue;
+            };
+            let target = if playing && let Some(run) = anim.run {
+                run
+            } else {
+                anim.idle
+            };
+            play_if_needed(&mut anim, target, &mut anims);
+        }
+    }
+}
+
+fn play_if_needed(
+    anim: &mut ModelAnim,
+    target: &'static str,
+    anims: &mut Query<&mut AnimationPlayer>,
+) {
+    if anim.state == Some(target) {
+        return;
+    }
+    let (Some(pent), Some(node)) = (anim.player, anim.nodes.get(target).copied()) else {
+        return;
+    };
+    if let Ok(mut p) = anims.get_mut(pent) {
+        p.start(node).set_repeat(RepeatAnimation::Forever);
+        anim.state = Some(target);
+    }
 }
 
 pub fn reconcile_entities(
@@ -191,22 +507,8 @@ pub fn reconcile_entities(
         let yaw = data.yaw_deg.to_radians();
         let rot = Quat::from_rotation_y(yaw);
 
-        let (mesh, y_off, _scale) = match data.kind {
-            EntityKind::Glimmer => (assets.glimmer.clone(), 1.0, Vec3::ONE),
-            EntityKind::LaunchPad => (assets.pad.clone(), 0.1, Vec3::ONE),
-            EntityKind::Seal => (assets.seal.clone(), 1.0, Vec3::ONE),
-            EntityKind::DriftPlate => (assets.drift.clone(), 0.15, Vec3::ONE),
-            EntityKind::Prowler => (assets.prowler.clone(), 0.4, Vec3::ONE),
-            EntityKind::TriggerOrb => (assets.orb.clone(), 1.0, Vec3::ONE),
-            EntityKind::RelayGate => (assets.gate.clone(), 1.0, Vec3::ONE),
-        };
-        let mat = if matches!(data.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
-            assets.link_mats[&data.link.min(9)].clone()
-        } else {
-            assets.mats[&data.kind].clone()
-        };
-
-        let mut tf = Transform::from_translation(world + Vec3::Y * y_off).with_rotation(rot);
+        let mut tf =
+            Transform::from_translation(world + Vec3::Y * root_y_off(data.kind)).with_rotation(rot);
         let mut track_distance = 0.0;
         if let Some(track_id) = data.track
             && let Some((d, nearest, _)) = level.track(track_id).and_then(|t| t.nearest(world))
@@ -215,18 +517,45 @@ pub fn reconcile_entities(
             tf.translation = nearest;
         }
 
-        let eid = commands
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(mat),
-                tf,
-                LevelEnt {
-                    id: data.id,
-                    kind: data.kind,
-                },
-                MakerCleanup,
-            ))
-            .id();
+        let eid = if let Some((scene, material, scale, y_off)) =
+            visual_for(data.kind, data.link, &assets)
+        {
+            let root = commands
+                .spawn((
+                    tf,
+                    LevelEnt {
+                        id: data.id,
+                        kind: data.kind,
+                    },
+                    MakerCleanup,
+                ))
+                .id();
+            commands.entity(root).with_children(|p| {
+                let mut vis = p.spawn((
+                    WorldAssetRoot(scene),
+                    MakerCleanup,
+                    ModelMaterial(material),
+                    Transform::from_translation(Vec3::Y * y_off).with_scale(Vec3::splat(scale)),
+                ));
+                if let Some(anim) = anim_for(data.kind) {
+                    vis.insert(anim);
+                }
+            });
+            root
+        } else {
+            commands
+                .spawn((
+                    tf,
+                    Mesh3d(assets.pad_mesh.clone()),
+                    MeshMaterial3d(assets.mats[&EntityKind::LaunchPad].clone()),
+                    LevelEnt {
+                        id: data.id,
+                        kind: data.kind,
+                    },
+                    MakerCleanup,
+                ))
+                .id()
+        };
 
         let ecmds = &mut commands.entity(eid);
 
@@ -339,8 +668,8 @@ pub fn reconcile_entities(
         {
             let b = b.as_vec3() + Vec3::new(0.5, 0.15, 0.5);
             commands.spawn((
-                Mesh3d(assets.glimmer.clone()),
-                MeshMaterial3d(assets.mats[&EntityKind::DriftPlate].clone()),
+                Mesh3d(assets.marker_mesh.clone()),
+                MeshMaterial3d(assets.mats[&EntityKind::Glimmer].clone()),
                 Transform::from_translation(b).with_scale(Vec3::splat(0.3)),
                 MakerCleanup,
             ));

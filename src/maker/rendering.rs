@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::world_serialization::WorldAsset;
 
 use super::MakerCleanup;
 use super::block::BlockKind;
@@ -14,8 +15,8 @@ use super::player;
 pub struct MakerAssets {
     pub cube: Handle<Mesh>,
     pub chunk_material: Handle<StandardMaterial>,
-    pub player_mesh: Handle<Mesh>,
-    pub player_mat: Handle<StandardMaterial>,
+    pub player_scene: Handle<WorldAsset>,
+    pub player_material: Handle<StandardMaterial>,
     pub preview_mat: Handle<StandardMaterial>,
     pub ghost_mats: HashMap<BlockKind, Handle<StandardMaterial>>,
 }
@@ -186,6 +187,7 @@ pub fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
     level: Res<LevelDocument>,
 ) {
     let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
@@ -194,8 +196,15 @@ pub fn setup_world(
     chunk_mat.perceptual_roughness = 0.9;
     let chunk_material = materials.add(chunk_mat);
 
-    let player_mesh = meshes.add(Capsule3d::new(0.3, 1.2));
-    let player_mat = materials.add(StandardMaterial::from_color(Color::srgb(0.9, 0.3, 0.3)));
+    let player_scene = asset_server.load("models/cubeworld/Character_Male_2.gltf#Scene0");
+
+    let player_texture: Handle<Image> =
+        asset_server.load("models/cubeworld/Character_Male_2.gltf#Texture0");
+    let player_material = materials.add(StandardMaterial {
+        base_color_texture: Some(player_texture),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
 
     let mut preview = StandardMaterial::from_color(Color::srgba(1.0, 1.0, 1.0, 0.35));
     preview.alpha_mode = AlphaMode::Blend;
@@ -218,8 +227,8 @@ pub fn setup_world(
     let assets = MakerAssets {
         cube: cube.clone(),
         chunk_material,
-        player_mesh: player_mesh.clone(),
-        player_mat: player_mat.clone(),
+        player_scene,
+        player_material,
         preview_mat: preview_mat.clone(),
         ghost_mats,
     };

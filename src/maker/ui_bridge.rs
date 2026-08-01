@@ -173,6 +173,11 @@ pub fn drain_ui_commands(
     mut channel: ResMut<ActiveLinkChannel>,
     mut clipboard: ResMut<bevy::clipboard::Clipboard>,
     mut source: ResMut<LevelSource>,
+    mut players: Query<(
+        &mut Transform,
+        &mut super::player::Player,
+        &mut Visibility,
+    )>,
 ) {
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
     for cmd in commands {
@@ -227,6 +232,9 @@ pub fn drain_ui_commands(
                 ui.play_timer = 0.0;
                 ui.deaths = 0;
                 *mode = MakerMode::Play;
+                for (mut tf, mut player, mut vis) in &mut players {
+                    super::player::reset_player(&mut tf, &mut player, &mut vis, &level);
+                }
             }
             UiCommand::RefreshSlotList => {
                 ui.level_slots = storage::list_slots(&storage);

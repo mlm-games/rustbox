@@ -82,8 +82,10 @@ impl Plugin for MakerPlugin {
             .init_resource::<RuntimeSolids>()
             .init_resource::<storage::LevelStorage>()
             .init_resource::<ui_bridge::MakerUi>()
+            .init_resource::<entities_runtime::ClipLibrary>()
             .add_systems(Startup, campaign::load_campaign_progress)
             .add_systems(Update, campaign::save_campaign_progress)
+            .add_systems(Startup, entities_runtime::init_clip_library)
             .add_systems(
                 OnEnter(AppState::InGame),
                 (
@@ -165,9 +167,13 @@ impl Plugin for MakerPlugin {
                     win::tick_play_timer,
                     win::on_mode_changed,
                     win::detect_goal.run_if(in_play),
+                    entities_runtime::apply_model_materials,
+                    entities_runtime::apply_model_anims,
+                    entities_runtime::tick_model_anims,
                 )
                     .run_if(in_state(AppState::InGame)),
             )
+            .add_systems(Update, entities_runtime::collect_clips)
             .add_systems(
                 OnEnter(AppState::InGame),
                 |mut ui: ResMut<ui_bridge::MakerUi>, storage: Res<storage::LevelStorage>| {
