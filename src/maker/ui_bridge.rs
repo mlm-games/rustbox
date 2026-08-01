@@ -173,11 +173,7 @@ pub fn drain_ui_commands(
     mut channel: ResMut<ActiveLinkChannel>,
     mut clipboard: ResMut<bevy::clipboard::Clipboard>,
     mut source: ResMut<LevelSource>,
-    mut players: Query<(
-        &mut Transform,
-        &mut super::player::Player,
-        &mut Visibility,
-    )>,
+    mut players: Query<(&mut Transform, &mut super::player::Player, &mut Visibility)>,
 ) {
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
     for cmd in commands {

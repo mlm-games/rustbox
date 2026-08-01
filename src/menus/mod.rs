@@ -224,16 +224,14 @@ fn loading_ui(st: &SharedUi) -> View {
                 .background(col(30, 30, 38))
                 .clip_rounded(6.0),
         )
-        .child(
-            Column(
-                Modifier::new()
-                    .width((320.0 * pct).max(1.0))
-                    .height(12.0)
-                    .background(col(96, 165, 250))
-                    .clip_rounded(6.0)
-                    .align_self(AlignSelf::FLEX_START),
-            ),
-        ),
+        .child(Column(
+            Modifier::new()
+                .width((320.0 * pct).max(1.0))
+                .height(12.0)
+                .background(col(96, 165, 250))
+                .clip_rounded(6.0)
+                .align_self(AlignSelf::FLEX_START),
+        )),
     )
 }
 
