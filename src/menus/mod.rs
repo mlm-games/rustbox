@@ -1903,22 +1903,25 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             push(&a_clear2, UiAction::OnlineClearQuery)
         }));
     }
-    let search_row = Row(Modifier::new().fill_max_width().gap(8.0).align_items(AlignItems::CENTER))
-        .child((
-            Row(Modifier::new()
-                .fill_max_width()
-                .gap(8.0)
-                .align_items(AlignItems::CENTER)
-                .padding(10.0)
-                .background(col(45, 45, 60))
-                .clip_rounded(18.0))
-            .child(search_children),
-            mk_pill_button(icon_label(Symbols::SEARCH, "Search".into()), move || {
-                let q = query_state.borrow().text.clone();
-                push(&a_search, UiAction::OnlineSetQuery(q));
-                push(&a_search, UiAction::OnlineSearch);
-            }),
-        ));
+    let search_row = Row(Modifier::new()
+        .fill_max_width()
+        .gap(8.0)
+        .align_items(AlignItems::CENTER))
+    .child((
+        Row(Modifier::new()
+            .fill_max_width()
+            .gap(8.0)
+            .align_items(AlignItems::CENTER)
+            .padding(10.0)
+            .background(col(45, 45, 60))
+            .clip_rounded(18.0))
+        .child(search_children),
+        mk_pill_button(icon_label(Symbols::SEARCH, "Search".into()), move || {
+            let q = query_state.borrow().text.clone();
+            push(&a_search, UiAction::OnlineSetQuery(q));
+            push(&a_search, UiAction::OnlineSearch);
+        }),
+    ));
 
     let token_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
     let token_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
@@ -1945,24 +1948,27 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             ..Default::default()
         },
     );
-    let token_row = Row(Modifier::new().fill_max_width().gap(8.0).align_items(AlignItems::CENTER))
+    let token_row = Row(Modifier::new()
+        .fill_max_width()
+        .gap(8.0)
+        .align_items(AlignItems::CENTER))
+    .child((
+        Row(Modifier::new()
+            .fill_max_width()
+            .gap(8.0)
+            .align_items(AlignItems::CENTER)
+            .padding(10.0)
+            .background(col(45, 45, 60))
+            .clip_rounded(18.0))
         .child((
-            Row(Modifier::new()
-                .fill_max_width()
-                .gap(8.0)
-                .align_items(AlignItems::CENTER)
-                .padding(10.0)
-                .background(col(45, 45, 60))
-                .clip_rounded(18.0))
-            .child((
-                Icon(Symbols::LINK).size(16.0).color(col(150, 150, 170)),
-                token_field,
-            )),
-            mk_pill_button(icon_label(Symbols::CHECK, "Set".into()), move || {
-                let t = token_state.borrow().text.clone();
-                push(&a_set_token, UiAction::OnlineSetToken(t));
-            }),
-        ));
+            Icon(Symbols::LINK).size(16.0).color(col(150, 150, 170)),
+            token_field,
+        )),
+        mk_pill_button(icon_label(Symbols::CHECK, "Set".into()), move || {
+            let t = token_state.borrow().text.clone();
+            push(&a_set_token, UiAction::OnlineSetToken(t));
+        }),
+    ));
 
     let verified_hint = RText(if st.level_verified {
         "Ready to publish".to_string()
@@ -2000,7 +2006,12 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         move || sort_text.clone(),
     );
     let count_text: View = if st.online_loading {
-        icon_text(Symbols::REFRESH, "Loading...".into(), 12.0, col(230, 160, 70))
+        icon_text(
+            Symbols::REFRESH,
+            "Loading...".into(),
+            12.0,
+            col(230, 160, 70),
+        )
     } else {
         RText(format!("{} levels", levels.len()))
             .size(12.0)
@@ -2042,9 +2053,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         ];
         if !m.created_at.is_empty() {
             let date: String = m.created_at.chars().take(10).collect();
-            meta.push(
-                RText(date).size(11.0).color(col(130, 130, 150)),
-            );
+            meta.push(RText(date).size(11.0).color(col(130, 130, 150)));
         }
         if !m.description.is_empty() {
             let desc = if m.description.chars().count() > 120 {
@@ -2393,12 +2402,9 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let a = actions.clone();
         let selected = st.info_preset == Some(p);
         let label = RText(p.label()).size(11.0).color(RColor::WHITE);
-        preset_views.push(mk_chip(
-            label,
-            selected,
-            col(90, 90, 120),
-            move || push(&a, UiAction::LevelInfoPreset(p)),
-        ));
+        preset_views.push(mk_chip(label, selected, col(90, 90, 120), move || {
+            push(&a, UiAction::LevelInfoPreset(p))
+        }));
     }
     let preset_row = Row(Modifier::new().gap(6.0)).child(preset_views);
 
@@ -2452,9 +2458,7 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let height_minus = mk_button_sm("-", move || {
         push(&a_hdn, UiAction::LevelInfoHeightDelta(-1))
     });
-    let height_plus = mk_button_sm("+", move || {
-        push(&a_hup, UiAction::LevelInfoHeightDelta(1))
-    });
+    let height_plus = mk_button_sm("+", move || push(&a_hup, UiAction::LevelInfoHeightDelta(1)));
     let height_auto_btn = mk_button_sm("Auto", move || {
         push_ui(&a_hauto, UiAction::LevelInfoHeightAuto)
     });
@@ -2523,9 +2527,7 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(spacer(6.0))
     .child(height_row)
     .child(spacer(12.0))
-    .child(
-        RText(stats).size(13.0).color(col(200, 200, 210)),
-    )
+    .child(RText(stats).size(13.0).color(col(200, 200, 210)))
     .child(spacer(12.0))
     .child(
         RText("Saving metadata does not reset verification.")

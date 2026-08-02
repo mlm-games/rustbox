@@ -354,10 +354,7 @@ pub fn slope_slide(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<Vec2
     for (d, dist) in dirs.iter().zip(dists.iter()) {
         let h = ground_height(level, center.x + d.x * dist, center.z + d.y * dist);
         let drop = hc - h;
-        if drop.is_finite()
-            && drop >= SLIDE_MIN
-            && best.is_none_or(|(_, bd)| drop > bd)
-        {
+        if drop.is_finite() && drop >= SLIDE_MIN && best.is_none_or(|(_, bd)| drop > bd) {
             best = Some((*d, drop));
         }
     }

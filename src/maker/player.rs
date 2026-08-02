@@ -198,7 +198,11 @@ pub fn player_controller(
         } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
             // A slide-jump launches off the slope with extra height while
             // keeping the slide's horizontal momentum.
-            player.velocity.y = if sliding { SLIDE_JUMP_SPEED } else { JUMP_SPEED };
+            player.velocity.y = if sliding {
+                SLIDE_JUMP_SPEED
+            } else {
+                JUMP_SPEED
+            };
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
             player.on_ground = false;
@@ -301,11 +305,7 @@ pub fn player_controller(
                 player.gripping = false;
                 player.grip_top = 0.0;
             }
-        } else if !result.on_ground
-            && player.velocity.y <= 0.0
-            && !underwater
-            && !player.slamming
-        {
+        } else if !result.on_ground && player.velocity.y <= 0.0 && !underwater && !player.slamming {
             if let Some(g) = ledge_grip(&level, transform.translation, he, player.velocity) {
                 transform.translation.y = g.wall_top - he.y + 0.05;
                 player.gripping = true;

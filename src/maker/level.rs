@@ -7,7 +7,9 @@ use super::chunk::affected_chunks;
 use super::entity_data::{EntityData, EntityDataExt, EntityKind, LevelEntityId};
 use super::track::{TrackData, TrackDataExt, TrackId, TrackMode};
 
-pub use rustbox_format::level::{BlockData, BoundaryConfig, BoundaryPreset, LevelData, LevelTag, Theme};
+pub use rustbox_format::level::{
+    BlockData, BoundaryConfig, BoundaryPreset, LevelData, LevelTag, Theme,
+};
 
 /// Default fallback half-extents for levels with no explicit size.
 const AUTO_SIZE_MIN: i32 = 8;

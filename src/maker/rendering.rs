@@ -898,23 +898,16 @@ pub fn rebuild_water_and_boundary(
     let ceiling = level.data.boundary.ceiling;
     let theme = level.data.theme;
     let edit = *mode == super::mode::MakerMode::Edit;
-    let changed = (
-        water_level,
-        size,
-        walls,
-        floor,
-        ceiling,
-        theme,
-        edit,
-    ) != (
-        state.water_level,
-        state.size,
-        state.walls,
-        state.floor,
-        state.ceiling,
-        state.theme,
-        state.edit,
-    );
+    let changed = (water_level, size, walls, floor, ceiling, theme, edit)
+        != (
+            state.water_level,
+            state.size,
+            state.walls,
+            state.floor,
+            state.ceiling,
+            state.theme,
+            state.edit,
+        );
 
     if changed {
         // Re-tint chunk geometry (underwater shading) when the water level or
