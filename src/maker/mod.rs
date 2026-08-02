@@ -17,6 +17,7 @@ pub mod player;
 pub mod rapier;
 pub mod rendering;
 pub mod storage;
+pub mod theme;
 pub mod thumbnail;
 pub mod track;
 pub mod ui_bridge;
@@ -34,7 +35,7 @@ use campaign::LevelSource;
 use commands::CommandHistory;
 use entities_runtime::{EntityEntities, RuntimeSolids};
 use level::LevelDocument;
-use mode::{BrushTab, InputCapture, MakerMode, PlaceYaw, SelectedBlockKind, SelectedEntityKind};
+use mode::{BlockBrush, BrushTab, InputCapture, MakerMode, PlaceYaw, SelectedEntityKind};
 use rendering::ChunkEntities;
 use track::ActiveTrack;
 
@@ -62,7 +63,7 @@ impl Plugin for MakerPlugin {
         #[cfg(feature = "physics")]
         app.add_plugins(crate::maker::rapier::rapier_plugin);
         app.init_resource::<MakerMode>()
-            .init_resource::<SelectedBlockKind>()
+            .init_resource::<BlockBrush>()
             .init_resource::<SelectedEntityKind>()
             .init_resource::<BrushTab>()
             .init_resource::<PlaceYaw>()
@@ -79,9 +80,11 @@ impl Plugin for MakerPlugin {
             .init_resource::<entities_runtime::LinkState>()
             .init_resource::<campaign::LevelSource>()
             .init_resource::<campaign::CampaignProgress>()
+            .init_resource::<rendering::WaterBoundaryState>()
             .add_message::<mode::BlockPlaced>()
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
+            .init_resource::<rendering::WaterChunkEntities>()
             .init_resource::<EntityEntities>()
             .init_resource::<RuntimeSolids>()
             .init_resource::<storage::LevelStorage>()
@@ -183,6 +186,14 @@ impl Plugin for MakerPlugin {
                 )
                     .run_if(in_state(AppState::InGame)),
             )
+            .add_systems(
+                Update,
+                (
+                    rendering::rebuild_water_and_boundary.before(rendering::rebuild_dirty_chunks),
+                    rendering::apply_theme,
+                )
+                    .run_if(in_state(AppState::InGame)),
+            )
             .add_systems(Update, entities_runtime::collect_clips)
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -210,12 +221,14 @@ fn cleanup_maker(
     mut commands: Commands,
     q: Query<Entity, With<MakerCleanup>>,
     mut chunks: ResMut<ChunkEntities>,
+    mut water_chunks: ResMut<rendering::WaterChunkEntities>,
     mut entities: ResMut<EntityEntities>,
 ) {
     for e in &q {
         commands.entity(e).despawn();
     }
     chunks.0.clear();
+    water_chunks.0.clear();
     entities.0.clear();
     commands.remove_resource::<rendering::MakerAssets>();
     commands.remove_resource::<entities_runtime::EntityAssets>();

@@ -1,15 +1,15 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use super::block::BlockKind;
+use super::block::{BlockKind, BlockShape, ALL_BLOCK_SHAPES};
 use super::camera::WorldCamera;
 use super::collision::raycast_present;
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityDataExt, EntityKind};
-use super::level::LevelDocument;
+use super::level::{BlockData, LevelDocument};
 use super::mode::{
-    ActiveLinkChannel, BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture, MakerMode,
-    MakerStats, MirrorMode, PlaceYaw, SelectedBlockKind, SelectedEntity, SelectedEntityKind,
+    ActiveLinkChannel, BlockBrush, BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture,
+    MakerMode, MakerStats, MirrorMode, PlaceYaw, SelectedEntity, SelectedEntityKind,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
@@ -35,7 +35,8 @@ pub fn block_palette_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     capture: Res<InputCapture>,
     tab: Res<BrushTab>,
-    mut selected: ResMut<SelectedBlockKind>,
+    mut brush: ResMut<BlockBrush>,
+    mut ui: ResMut<MakerUi>,
 ) {
     if capture.ui_wants_keyboard {
         return;
@@ -44,19 +45,41 @@ pub fn block_palette_hotkeys(
         return;
     }
     if keys.just_pressed(KeyCode::Digit1) {
-        selected.0 = BlockKind::Grass;
+        brush.kind = BlockKind::Grass;
     }
     if keys.just_pressed(KeyCode::Digit2) {
-        selected.0 = BlockKind::Stone;
+        brush.kind = BlockKind::Stone;
     }
     if keys.just_pressed(KeyCode::Digit3) {
-        selected.0 = BlockKind::Hazard;
+        brush.kind = BlockKind::Hazard;
     }
     if keys.just_pressed(KeyCode::Digit4) {
-        selected.0 = BlockKind::Goal;
+        brush.kind = BlockKind::Goal;
     }
     if keys.just_pressed(KeyCode::Digit5) {
-        selected.0 = BlockKind::Spawn;
+        brush.kind = BlockKind::Spawn;
+    }
+    if keys.just_pressed(KeyCode::Digit6) {
+        brush.kind = BlockKind::Water;
+        ui.set_status("Water: fills a cell with swimmable water");
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        brush.rot = (brush.rot + 1) % 4;
+        ui.set_status(format!("Block rotation: {}°", brush.rot * 90));
+    }
+    if keys.just_pressed(KeyCode::KeyT) {
+        let shapes = ALL_BLOCK_SHAPES;
+        let idx = shapes.iter().position(|s| *s == brush.shape).unwrap_or(0);
+        brush.shape = shapes[(idx + 1) % shapes.len()];
+        ui.set_status(format!("Block shape: {}", brush.shape.name()));
+    }
+    if keys.just_pressed(KeyCode::KeyU) {
+        brush.waterlogged = !brush.waterlogged;
+        ui.set_status(if brush.waterlogged {
+            "Waterlogged: on (blocks fill their cell with water)"
+        } else {
+            "Waterlogged: off"
+        });
     }
 }
 
@@ -216,6 +239,27 @@ fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
     out
 }
 
+fn build_block_data(kind: BlockKind, shape: BlockShape, rot: u8, waterlogged: bool, cell: IVec3) -> BlockData {
+    // Water is always a full, unlogged cell fill.
+    let shape = if kind == BlockKind::Water {
+        BlockShape::Full
+    } else {
+        shape
+    };
+    let waterlogged = if kind == BlockKind::Water {
+        false
+    } else {
+        waterlogged
+    };
+    BlockData {
+        position: cell.to_array(),
+        kind,
+        shape,
+        rot,
+        waterlogged,
+    }
+}
+
 pub fn undo_redo_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     capture: Res<InputCapture>,
@@ -271,13 +315,16 @@ pub fn update_editor_cursor(
     }
 }
 
-/// Moves the placement ghost to the cursor's target cell (Blocks/Entities tabs).
+/// Moves the placement ghost to the cursor's target cell (Blocks/Entities tabs)
+/// and updates its mesh + rotation to match the selected block shape/rot.
 pub fn update_placement_preview(
     cursor: Res<EditorCursor>,
     tab: Res<BrushTab>,
-    mut preview_q: Query<(&mut Transform, &mut Visibility), With<PlacementPreview>>,
+    brush: Res<BlockBrush>,
+    assets: Option<Res<MakerAssets>>,
+    mut preview_q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<PlacementPreview>>,
 ) {
-    let Ok((mut tr, mut vis)) = preview_q.single_mut() else {
+    let Ok((mut tr, mut vis, mut mesh)) = preview_q.single_mut() else {
         return;
     };
     if *tab == BrushTab::Tracks {
@@ -288,11 +335,24 @@ pub fn update_placement_preview(
         *vis = Visibility::Hidden;
         return;
     };
+    if *tab == BrushTab::Entities {
+        *vis = Visibility::Hidden;
+        return;
+    }
+    let Some(assets) = assets else {
+        *vis = Visibility::Hidden;
+        return;
+    };
+    if let Some(handle) = assets.shape_meshes.get(&brush.shape) {
+        *mesh = Mesh3d(handle.clone());
+    }
     tr.translation = Vec3::new(
         place_cell.x as f32 + 0.5,
         place_cell.y as f32 + 0.5,
         place_cell.z as f32 + 0.5,
     );
+    tr.rotation = Quat::from_rotation_y(brush.rot as f32 * std::f32::consts::FRAC_PI_2);
+    tr.scale = Vec3::splat(1.02);
     *vis = Visibility::Visible;
 }
 
@@ -300,7 +360,7 @@ pub fn update_preview_and_edit(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     cursor: Res<EditorCursor>,
-    mut selected: ResMut<SelectedBlockKind>,
+    mut brush: ResMut<BlockBrush>,
     mut sel_e: ResMut<SelectedEntityKind>,
     mut tab: ResMut<BrushTab>,
     place_yaw: Res<PlaceYaw>,
@@ -334,8 +394,11 @@ pub fn update_preview_and_edit(
 
     // Eyedropper: middle-click picks the block/entity under the cursor.
     if buttons.just_pressed(MouseButton::Middle) {
-        if let Some(kind) = level.get_block(hit_cell) {
-            selected.0 = kind;
+        if let Some(b) = level.get_block(hit_cell) {
+            brush.kind = b.kind;
+            brush.shape = b.shape;
+            brush.rot = b.rot;
+            brush.waterlogged = b.waterlogged;
             *tab = BrushTab::Blocks;
         } else if let Some(ent) = level.entity_at_cell(hit_cell) {
             sel_e.0 = ent.kind;
@@ -358,8 +421,13 @@ pub fn update_preview_and_edit(
                                 for y in min.y..=max.y {
                                     for z in min.z..=max.z {
                                         let c = IVec3::new(x, y, z);
-                                        let prev = level.get_block(c);
-                                        if prev != Some(selected.0) {
+                                        let prev = level.get_block(c).cloned();
+                                        let same = prev
+                                            .as_ref()
+                                            .is_some_and(|b| {
+                                                (b.kind, b.shape, b.rot, b.waterlogged) == (brush.kind, brush.shape, brush.rot, brush.waterlogged)
+                                            });
+                                        if !same {
                                             cells.push((c, prev));
                                         }
                                     }
@@ -370,7 +438,7 @@ pub fn update_preview_and_edit(
                                     &mut level,
                                     EditCommand::BoxFill {
                                         cells,
-                                        kind: selected.0,
+                                        data: build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, place_cell),
                                     },
                                 );
                             }
@@ -378,20 +446,30 @@ pub fn update_preview_and_edit(
                     }
                 } else {
                     for cell in mirror_cells(place_cell, mirror.0) {
-                        if level.get_block(cell).is_none() {
+                        if level.get_block(cell).is_none() && !level.boundary_solid(cell) {
                             history.apply(
                                 &mut level,
                                 EditCommand::Place {
                                     position: cell,
-                                    kind: selected.0,
+                                    data: build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell),
                                     previous: None,
                                 },
                             );
                             stats.blocks_placed += 1;
                             placed.write(BlockPlaced {
-                                cell,
-                                kind: selected.0,
-                            });
+                            cell,
+                            kind: brush.kind,
+                            shape: if brush.kind == BlockKind::Water {
+                                BlockShape::Full
+                            } else {
+                                brush.shape
+                            },
+                            rot: if brush.kind == BlockKind::Water {
+                                0
+                            } else {
+                                brush.rot
+                            },
+                        });
                         }
                     }
                     box_start.last_paint = Some(place_cell);
@@ -484,7 +562,7 @@ pub fn update_preview_and_edit(
             }
         } else if level.get_block(hit_cell).is_some() {
             for cell in mirror_cells(hit_cell, mirror.0) {
-                if let Some(k) = level.get_block(cell) {
+                if let Some(k) = level.get_block(cell).cloned() {
                     history.apply(
                         &mut level,
                         EditCommand::Remove {
@@ -510,19 +588,29 @@ pub fn update_preview_and_edit(
         if buttons.pressed(MouseButton::Left) {
             if box_start.last_paint != Some(place_cell) {
                 for cell in mirror_cells(place_cell, mirror.0) {
-                    if level.get_block(cell).is_none() {
+                    if level.get_block(cell).is_none() && !level.boundary_solid(cell) {
                         history.apply(
                             &mut level,
                             EditCommand::Place {
                                 position: cell,
-                                kind: selected.0,
+                                data: build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell),
                                 previous: None,
                             },
                         );
                         stats.blocks_placed += 1;
                         placed.write(BlockPlaced {
                             cell,
-                            kind: selected.0,
+                            kind: brush.kind,
+                            shape: if brush.kind == BlockKind::Water {
+                                BlockShape::Full
+                            } else {
+                                brush.shape
+                            },
+                            rot: if brush.kind == BlockKind::Water {
+                                0
+                            } else {
+                                brush.rot
+                            },
                         });
                     }
                 }
@@ -530,7 +618,7 @@ pub fn update_preview_and_edit(
             }
         } else if buttons.pressed(MouseButton::Right) && box_start.last_erase != Some(hit_cell) {
             for cell in mirror_cells(hit_cell, mirror.0) {
-                if let Some(k) = level.get_block(cell) {
+                if let Some(k) = level.get_block(cell).cloned() {
                     history.apply(
                         &mut level,
                         EditCommand::Remove {
@@ -555,7 +643,7 @@ pub fn spawn_place_ghosts(
         return;
     };
     for ev in placed.read() {
-        spawn_place_ghost(&mut commands, &assets, ev.cell, ev.kind);
+        spawn_place_ghost(&mut commands, &assets, ev.cell, ev.kind, ev.shape, ev.rot);
     }
 }
 

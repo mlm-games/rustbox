@@ -1,11 +1,12 @@
 use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
+use crate::block::{BlockKind, BlockShape};
 use crate::entity::EntityData;
-use crate::level::{BlockData, LevelData};
+use crate::level::{BlockData, LevelData, Theme};
 use crate::track::TrackData;
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// Upper bound for inflating untrusted levels (tiny compressed input must not
 /// explode into gigabytes of memory).
@@ -26,9 +27,63 @@ pub struct LevelFile {
     pub level: LevelData,
 }
 
+/// Layout of version-2 levels (before size/water/theme were added). Only
+/// needed to decode old share codes, which use bincode (binary, so serde
+/// defaults cannot fill in missing trailing fields).
+#[derive(Serialize, Deserialize)]
+struct LevelFileV2 {
+    version: u32,
+    level: LevelDataV2,
+}
+
+/// Blocks as they were serialized before shape/rot/waterlogged existed.
+#[derive(Serialize, Deserialize)]
+struct BlockDataV1 {
+    position: [i32; 3],
+    kind: BlockKind,
+}
+
+impl BlockDataV1 {
+    fn upgrade(self) -> BlockData {
+        BlockData {
+            position: self.position,
+            kind: self.kind,
+            shape: BlockShape::Full,
+            rot: 0,
+            waterlogged: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct LevelDataV2 {
+    name: String,
+    spawn: [i32; 3],
+    blocks: Vec<BlockDataV1>,
+    #[serde(default)]
+    entities: Vec<EntityData>,
+    #[serde(default)]
+    tracks: Vec<TrackData>,
+    #[serde(default)]
+    entities_version: u32,
+    #[serde(default)]
+    author_time: Option<f32>,
+    #[serde(default)]
+    author_deaths: u32,
+    #[serde(default)]
+    is_verified: bool,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    tags: Vec<crate::level::LevelTag>,
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    created_at: u64,
+}
+
 /// Layout of version-1 levels (before description/tags/author/created_at were
-/// added). Only needed to decode old share codes, which use bincode (binary,
-/// so serde defaults cannot fill in missing trailing fields).
+/// added).
 #[derive(Serialize, Deserialize)]
 struct LevelFileV1 {
     version: u32,
@@ -39,7 +94,7 @@ struct LevelFileV1 {
 struct LevelDataV1 {
     name: String,
     spawn: [i32; 3],
-    blocks: Vec<BlockData>,
+    blocks: Vec<BlockDataV1>,
     #[serde(default)]
     entities: Vec<EntityData>,
     #[serde(default)]
@@ -54,8 +109,32 @@ struct LevelDataV1 {
     is_verified: bool,
 }
 
-fn upgrade_v1(old: LevelDataV1) -> LevelData {
+fn upgrade_v2(old: LevelDataV2) -> LevelData {
     LevelData {
+        name: old.name,
+        spawn: old.spawn,
+        blocks: old.blocks.into_iter().map(BlockDataV1::upgrade).collect(),
+        entities: old.entities,
+        tracks: old.tracks,
+        entities_version: old.entities_version,
+        author_time: old.author_time,
+        author_deaths: old.author_deaths,
+        is_verified: old.is_verified,
+        description: old.description,
+        tags: old.tags,
+        author: old.author,
+        created_at: old.created_at,
+        size: None,
+        water_level: None,
+        theme: Theme::Grass,
+        boundary: Default::default(),
+        secret_stars: 0,
+        coin_star: false,
+    }
+}
+
+fn upgrade_v1(old: LevelDataV1) -> LevelData {
+    upgrade_v2(LevelDataV2 {
         name: old.name,
         spawn: old.spawn,
         blocks: old.blocks,
@@ -69,7 +148,7 @@ fn upgrade_v1(old: LevelDataV1) -> LevelData {
         tags: vec![],
         author: String::new(),
         created_at: 0,
-    }
+    })
 }
 
 /// Serialize + DEFLATE a level into the compact wire format (raw bytes, no
@@ -91,19 +170,26 @@ pub fn decode_level(compressed: &[u8]) -> anyhow::Result<LevelData> {
             .map_err(|_| anyhow::anyhow!("corrupted level (inflate failed)"))?;
     match bincode::deserialize::<LevelFile>(&bytes) {
         Ok(file) => match file.version {
-            1 | 2 => Ok(file.level),
+            1 | 2 | 3 => Ok(file.level),
             v => bail!("unknown level format version {v}"),
         },
-        Err(_) => {
-            // Older codes were produced with a struct that had fewer fields, so
-            // binary decoding into the current shape fails. Try the legacy shape.
-            let old: LevelFileV1 =
-                bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
-            if old.version != 1 {
-                bail!("unknown level format version {}", old.version);
+        Err(_) => match bincode::deserialize::<LevelFileV2>(&bytes) {
+            Ok(old) => {
+                if old.version != 2 {
+                    bail!("unknown level format version {}", old.version);
+                }
+                Ok(upgrade_v2(old.level))
             }
-            Ok(upgrade_v1(old.level))
-        }
+            Err(_) => {
+                // Oldest codes were produced with an even smaller struct.
+                let old: LevelFileV1 =
+                    bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
+                if old.version != 1 {
+                    bail!("unknown level format version {}", old.version);
+                }
+                Ok(upgrade_v1(old.level))
+            }
+        },
     }
 }
 
@@ -175,6 +261,11 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
     if level.author_time.is_some_and(|t| !t.is_finite()) {
         bail!("author time is not finite");
     }
+    if let Some(w) = level.water_level {
+        if w.abs() > MAX_COORD {
+            bail!("water level out of bounds");
+        }
+    }
     Ok(())
 }
 
@@ -185,7 +276,7 @@ fn in_bounds(cell: &[i32; 3]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::BlockKind;
+    use crate::block::{BlockKind, BlockShape};
     use crate::entity::{EntityData, EntityKind};
     use crate::level::BlockData;
 
@@ -196,6 +287,9 @@ mod tests {
             blocks: vec![BlockData {
                 position: [0, 0, 0],
                 kind: BlockKind::Grass,
+                shape: BlockShape::Half,
+                rot: 1,
+                waterlogged: false,
             }],
             entities: vec![EntityData {
                 id: 1,
@@ -216,6 +310,12 @@ mod tests {
             tags: vec![],
             author: String::new(),
             created_at: 0,
+            size: None,
+            water_level: Some(2),
+            theme: Theme::Cave,
+            boundary: Default::default(),
+            secret_stars: 3,
+            coin_star: true,
         }
     }
 
@@ -227,6 +327,10 @@ mod tests {
         assert_eq!(lvl.name, back.name);
         assert_eq!(lvl.blocks.len(), back.blocks.len());
         assert_eq!(lvl.entities.len(), back.entities.len());
+        assert_eq!(lvl.theme, back.theme);
+        assert_eq!(lvl.water_level, back.water_level);
+        assert_eq!(lvl.secret_stars, back.secret_stars);
+        assert_eq!(lvl.blocks, back.blocks);
     }
 
     #[test]
@@ -235,6 +339,7 @@ mod tests {
         let code = export_code(&lvl).unwrap();
         let back = import_code(&code).unwrap();
         assert_eq!(lvl.blocks, back.blocks);
+        assert_eq!(lvl.water_level, back.water_level);
     }
 
     #[test]
@@ -261,5 +366,38 @@ mod tests {
         let bomb =
             miniz_oxide::deflate::compress_to_vec(&vec![0u8; MAX_DECOMPRESSED_LEVEL_SIZE + 1], 6);
         assert!(decode_level(&bomb).is_err());
+    }
+
+    #[test]
+    fn v1_code_upgrades_without_shape_rot() {
+        // Old codes serialized blocks as {position, kind} only.
+        let old = LevelFileV1 {
+            version: 1,
+            level: LevelDataV1 {
+                name: "Legacy".into(),
+                spawn: [0, 1, 0],
+                blocks: vec![BlockDataV1 {
+                    position: [1, 2, 3],
+                    kind: BlockKind::Stone,
+                }],
+                entities: vec![],
+                tracks: vec![],
+                entities_version: 1,
+                author_time: None,
+                author_deaths: 0,
+                is_verified: false,
+            },
+        };
+        let bytes = bincode::serialize(&old).unwrap();
+        let compressed = miniz_oxide::deflate::compress_to_vec(&bytes, 6);
+        let lvl = decode_level(&compressed).unwrap();
+        assert_eq!(lvl.blocks.len(), 1);
+        assert_eq!(lvl.blocks[0].position, [1, 2, 3]);
+        assert_eq!(lvl.blocks[0].kind, BlockKind::Stone);
+        assert_eq!(lvl.blocks[0].shape, BlockShape::Full);
+        assert_eq!(lvl.blocks[0].rot, 0);
+        assert!(!lvl.blocks[0].waterlogged);
+        assert_eq!(lvl.theme, Theme::Grass);
+        assert_eq!(lvl.water_level, None);
     }
 }

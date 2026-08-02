@@ -4,14 +4,14 @@ use bevy::prelude::*;
 
 use crate::app::OverlayMenu;
 
-use super::block::BlockKind;
+use super::block::{ALL_BLOCK_SHAPES, BlockKind};
 use super::campaign::{self, LevelSource};
 use super::catalog;
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
 use super::level::LevelDocument;
 use super::mode::{
-    ActiveLinkChannel, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw, SelectedBlockKind,
+    ActiveLinkChannel, BlockBrush, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw,
     SelectedEntity, SelectedEntityKind,
 };
 use super::online::OnlineRequest;
@@ -23,6 +23,9 @@ use rustbox_format::file::FORMAT_VERSION;
 #[derive(Clone, Debug)]
 pub enum UiCommand {
     SelectBlock(BlockKind),
+    CycleShape,
+    ToggleWaterlog,
+    RotateBrush,
     SetMode(MakerMode),
     SetBrushTab(BrushTab),
     SelectEntity(EntityKind),
@@ -64,6 +67,9 @@ pub enum UiCommand {
 pub struct MakerUi {
     pub mode: MakerMode,
     pub selected: BlockKind,
+    pub brush_shape: u8,
+    pub brush_rot: u8,
+    pub waterlogged: bool,
     pub brush_entities: bool,
     pub selected_entity: u8,
     pub brush_tab: u8,
@@ -135,7 +141,7 @@ impl MakerUi {
 pub fn push_ui_state(
     time: Res<Time>,
     mode: Res<MakerMode>,
-    selected: Res<SelectedBlockKind>,
+    brush: Res<BlockBrush>,
     tab: Res<BrushTab>,
     sel_e: Res<SelectedEntityKind>,
     stats: Res<MakerStats>,
@@ -148,7 +154,10 @@ pub fn push_ui_state(
     mut ui: ResMut<MakerUi>,
 ) {
     ui.mode = *mode;
-    ui.selected = selected.0;
+    ui.selected = brush.kind;
+    ui.brush_shape = brush.shape as u8;
+    ui.brush_rot = brush.rot;
+    ui.waterlogged = brush.waterlogged;
     ui.brush_entities = *tab == BrushTab::Entities;
     ui.selected_entity = match sel_e.0 {
         EntityKind::Glimmer => 0,
@@ -196,7 +205,7 @@ pub fn push_ui_state(
 pub fn drain_ui_commands(
     mut ui: ResMut<MakerUi>,
     mut mode: ResMut<MakerMode>,
-    mut selected: ResMut<SelectedBlockKind>,
+    mut brush: ResMut<BlockBrush>,
     mut tab: ResMut<BrushTab>,
     mut sel_e: ResMut<SelectedEntityKind>,
     mut place_yaw: ResMut<PlaceYaw>,
@@ -214,7 +223,25 @@ pub fn drain_ui_commands(
     let commands: Vec<UiCommand> = ui.commands.drain(..).collect();
     for cmd in commands {
         match cmd {
-            UiCommand::SelectBlock(kind) => selected.0 = kind,
+            UiCommand::SelectBlock(kind) => brush.kind = kind,
+            UiCommand::CycleShape => {
+                let shapes = ALL_BLOCK_SHAPES;
+                let idx = shapes.iter().position(|s| *s == brush.shape).unwrap_or(0);
+                brush.shape = shapes[(idx + 1) % shapes.len()];
+                ui.set_status(format!("Block shape: {}", brush.shape.name()));
+            }
+            UiCommand::ToggleWaterlog => {
+                brush.waterlogged = !brush.waterlogged;
+                ui.set_status(if brush.waterlogged {
+                    "Waterlogged: on (blocks fill their cell with water)"
+                } else {
+                    "Waterlogged: off"
+                });
+            }
+            UiCommand::RotateBrush => {
+                brush.rot = (brush.rot + 1) % 4;
+                ui.set_status(format!("Block rotation: {}°", brush.rot * 90));
+            }
             UiCommand::SetMode(m) => *mode = m,
             UiCommand::SetBrushTab(t) => *tab = t,
             UiCommand::SelectEntity(kind) => sel_e.0 = kind,

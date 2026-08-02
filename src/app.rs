@@ -198,6 +198,9 @@ pub struct SharedUi {
     pub blocks_placed: u32,
     pub maker_mode_edit: bool,
     pub selected_block: u8,
+    pub brush_shape: u8,
+    pub brush_rot: u8,
+    pub waterlogged: bool,
     pub can_undo: bool,
     pub can_redo: bool,
     pub maker_status: String,
@@ -276,6 +279,9 @@ impl Default for SharedUi {
             blocks_placed: 0,
             maker_mode_edit: true,
             selected_block: 0,
+            brush_shape: 0,
+            brush_rot: 0,
+            waterlogged: false,
             can_undo: false,
             can_redo: false,
             maker_status: String::new(),
@@ -440,6 +446,9 @@ fn sync_shared_ui(
         ui.score = m.blocks_placed;
         ui.maker_mode_edit = m.mode == crate::maker::mode::MakerMode::Edit;
         ui.selected_block = m.selected as u8;
+        ui.brush_shape = m.brush_shape;
+        ui.brush_rot = m.brush_rot;
+        ui.waterlogged = m.waterlogged;
         ui.can_undo = m.can_undo;
         ui.can_redo = m.can_redo;
         ui.maker_status = m.status.clone();
@@ -947,6 +956,7 @@ fn process_ui_actions(
                         2 => BlockKind::Hazard,
                         3 => BlockKind::Goal,
                         4 => BlockKind::Spawn,
+                        5 => BlockKind::Water,
                         _ => BlockKind::Grass,
                     };
                     m.commands.push(UiCommand::SelectBlock(kind));
@@ -985,6 +995,21 @@ fn process_ui_actions(
             UiAction::MakerRotateBrush => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::Rotate);
+                }
+            }
+            UiAction::MakerRotateBrushBlock => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::RotateBrush);
+                }
+            }
+            UiAction::MakerCycleShape => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::CycleShape);
+                }
+            }
+            UiAction::MakerToggleWaterlog => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::ToggleWaterlog);
                 }
             }
             UiAction::MakerUndo => {

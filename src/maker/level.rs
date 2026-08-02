@@ -7,12 +7,16 @@ use super::chunk::affected_chunks;
 use super::entity_data::{EntityData, EntityDataExt, EntityKind, LevelEntityId};
 use super::track::{TrackData, TrackDataExt, TrackId, TrackMode};
 
-pub use rustbox_format::level::{BlockData, LevelData, LevelTag};
+pub use rustbox_format::level::{BlockData, BoundaryConfig, LevelData, LevelTag, Theme};
+
+/// Default fallback half-extents for levels with no explicit size.
+const AUTO_SIZE_MIN: i32 = 8;
+const AUTO_SIZE_MAX: i32 = 64;
 
 #[derive(Resource, Clone, Debug)]
 pub struct LevelDocument {
     pub data: LevelData,
-    pub map: HashMap<IVec3, BlockKind>,
+    pub map: HashMap<IVec3, BlockData>,
     pub dirty_chunks: HashSet<IVec3>,
     pub next_entity_id: LevelEntityId,
     pub next_track_id: TrackId,
@@ -36,6 +40,12 @@ impl Default for LevelDocument {
                 tags: vec![],
                 author: String::new(),
                 created_at: 0,
+                size: None,
+                water_level: None,
+                theme: Theme::Grass,
+                boundary: BoundaryConfig::default(),
+                secret_stars: 0,
+                coin_star: false,
             },
             map: HashMap::new(),
             dirty_chunks: HashSet::new(),
@@ -56,20 +66,38 @@ impl LevelDocument {
         self.data.is_verified = false;
         self.data.author_time = None;
         self.data.author_deaths = 0;
+        self.data.size = None;
+        self.data.water_level = None;
+        self.data.theme = Theme::Grass;
+        self.data.boundary = BoundaryConfig::default();
+        self.data.secret_stars = 0;
+        self.data.coin_star = false;
 
         for x in -8..=8 {
             for z in -8..=8 {
-                self.set_block(IVec3::new(x, 0, z), Some(BlockKind::Grass));
+                self.set_block(IVec3::new(x, 0, z), Some(BlockData::new([x, 0, z], BlockKind::Grass)));
             }
         }
 
         for x in 2..=5 {
-            self.set_block(IVec3::new(x, 2, 0), Some(BlockKind::Stone));
+            self.set_block(
+                IVec3::new(x, 2, 0),
+                Some(BlockData::new([x, 2, 0], BlockKind::Stone)),
+            );
         }
 
-        self.set_block(IVec3::new(0, 1, -3), Some(BlockKind::Stone));
-        self.set_block(IVec3::new(0, 2, -4), Some(BlockKind::Stone));
-        self.set_block(IVec3::new(0, 3, -5), Some(BlockKind::Goal));
+        self.set_block(
+            IVec3::new(0, 1, -3),
+            Some(BlockData::new([0, 1, -3], BlockKind::Stone)),
+        );
+        self.set_block(
+            IVec3::new(0, 2, -4),
+            Some(BlockData::new([0, 2, -4], BlockKind::Stone)),
+        );
+        self.set_block(
+            IVec3::new(0, 3, -5),
+            Some(BlockData::new([0, 3, -5], BlockKind::Goal)),
+        );
 
         self.data.entities.clear();
         self.data.tracks.clear();
@@ -113,23 +141,97 @@ impl LevelDocument {
         self.entities_dirty = true;
     }
 
-    pub fn get_block(&self, pos: IVec3) -> Option<BlockKind> {
-        self.map.get(&pos).copied()
+    pub fn get_block(&self, pos: IVec3) -> Option<&BlockData> {
+        self.map.get(&pos)
     }
 
-    pub fn set_block(&mut self, pos: IVec3, kind: Option<BlockKind>) {
-        match kind {
-            Some(kind) => {
-                self.map.insert(pos, kind);
-                if kind == BlockKind::Spawn {
+    pub fn get_kind(&self, pos: IVec3) -> Option<BlockKind> {
+        self.map.get(&pos).map(|b| b.kind)
+    }
+
+    pub fn set_block(&mut self, pos: IVec3, data: Option<BlockData>) {
+        match data {
+            Some(data) => {
+                if data.kind == BlockKind::Spawn {
                     self.data.spawn = [pos.x, pos.y + 1, pos.z];
                 }
+                self.map.insert(pos, data);
             }
             None => {
                 self.map.remove(&pos);
             }
         }
         self.dirty_chunks.extend(affected_chunks(pos));
+    }
+
+    /// Effective play-area half-extents `[rx, ry, rz]`. `None` levels derive
+    /// the bounds from their content with a margin, like MB64's grid.
+    pub fn play_size(&self) -> [i32; 3] {
+        match self.data.size {
+            Some(s) => s,
+            None => auto_size(&self.data),
+        }
+    }
+
+    /// World height (in cells) the boundary walls rise to.
+    pub fn boundary_top(&self) -> i32 {
+        if self.data.boundary.height > 0 {
+            self.data.boundary.height
+        } else {
+            self.play_size()[1]
+        }
+    }
+
+    /// Whether `cell` is an invisible boundary solid (floor / walls / ceiling).
+    pub fn boundary_solid(&self, cell: IVec3) -> bool {
+        if cell.y < 0 {
+            return true;
+        }
+        let size = self.play_size();
+        let outside = cell.x.abs() > size[0] || cell.z.abs() > size[2];
+        if self.data.boundary.walls && outside && cell.y <= self.boundary_top() {
+            return true;
+        }
+        if self.data.boundary.ceiling && cell.y > size[1] {
+            return true;
+        }
+        false
+    }
+
+    /// Whether `cell` is solid: either a placed block or the boundary.
+    pub fn is_solid(&self, cell: IVec3) -> bool {
+        self.get_block(cell).map(|b| b.kind.is_solid()).unwrap_or(false)
+            || self.boundary_solid(cell)
+    }
+
+    pub fn water_level(&self) -> Option<i32> {
+        self.data.water_level
+    }
+
+    /// A cell is water-filled when the global plane covers it, when it holds a
+    /// Water block, or when its block is waterlogged.
+    pub fn cell_water(&self, cell: IVec3) -> bool {
+        if self.data.water_level.is_some_and(|wl| cell.y < wl) {
+            return true;
+        }
+        match self.get_block(cell) {
+            Some(b) => b.kind == BlockKind::Water || b.waterlogged,
+            None => false,
+        }
+    }
+
+    pub fn is_underwater_point(&self, p: Vec3) -> bool {
+        if self.data.water_level.is_some_and(|wl| p.y < wl as f32) {
+            return true;
+        }
+        let cell = IVec3::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        self.cell_water(cell)
+    }
+
+    /// AABB of the playable volume `[min, max]` (inclusive cells).
+    pub fn play_bounds(&self) -> (IVec3, IVec3) {
+        let size = self.play_size();
+        (IVec3::new(-size[0], 0, -size[2]), IVec3::new(size[0], self.boundary_top(), size[2]))
     }
 
     pub fn mark_all_dirty(&mut self) {
@@ -235,9 +337,12 @@ impl LevelDocument {
         self.data.blocks = self
             .map
             .iter()
-            .map(|(pos, kind)| BlockData {
+            .map(|(pos, data)| BlockData {
                 position: [pos.x, pos.y, pos.z],
-                kind: *kind,
+                kind: data.kind,
+                shape: data.shape,
+                rot: data.rot,
+                waterlogged: data.waterlogged,
             })
             .collect();
         self.data
@@ -250,7 +355,16 @@ impl LevelDocument {
     pub fn replace_data(&mut self, data: LevelData) {
         self.map.clear();
         for b in &data.blocks {
-            self.map.insert(IVec3::from_array(b.position), b.kind);
+            self.map.insert(
+                IVec3::from_array(b.position),
+                BlockData {
+                    position: b.position,
+                    kind: b.kind,
+                    shape: b.shape,
+                    rot: b.rot,
+                    waterlogged: b.waterlogged,
+                },
+            );
         }
         self.data = data;
         self.next_entity_id = self.data.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
@@ -259,4 +373,19 @@ impl LevelDocument {
         self.mark_all_dirty();
         self.entities_dirty = true;
     }
+}
+
+fn auto_size(data: &LevelData) -> [i32; 3] {
+    if data.blocks.is_empty() {
+        return [AUTO_SIZE_MIN, AUTO_SIZE_MIN, AUTO_SIZE_MIN];
+    }
+    let mut max_abs_xz: i32 = 0;
+    let mut max_y: i32 = 0;
+    for b in &data.blocks {
+        max_abs_xz = max_abs_xz.max(b.position[0].abs()).max(b.position[2].abs());
+        max_y = max_y.max(b.position[1]);
+    }
+    let r = (max_abs_xz + 6).clamp(AUTO_SIZE_MIN, AUTO_SIZE_MAX);
+    let ry = (max_y + 8).clamp(AUTO_SIZE_MIN, AUTO_SIZE_MAX);
+    [r, ry, r]
 }

@@ -93,6 +93,9 @@ pub enum UiAction {
     MakerToggleBrushTab,
     MakerSelectEntity(u8),
     MakerRotateBrush,
+    MakerRotateBrushBlock,
+    MakerCycleShape,
+    MakerToggleWaterlog,
     MakerCycleLinkChannel,
     MakerUndo,
     MakerRedo,
@@ -812,12 +815,13 @@ fn palette_dock(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 5] = [
+    let items: [(u8, RColor); 6] = [
         (0, col(90, 170, 90)),
         (1, col(140, 140, 150)),
         (2, col(210, 70, 70)),
         (3, col(230, 195, 70)),
         (4, col(70, 170, 220)),
+        (5, col(50, 130, 230)),
     ];
     let mut row = Row(Modifier::new().gap(6.0));
     for (idx, color) in items {
@@ -829,6 +833,29 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             move || push_ui(&a, UiAction::MakerSelectBlock(idx)),
         ));
     }
+    let a_shape = actions.clone();
+    let a_rot = actions.clone();
+    let a_log = actions.clone();
+    let shapes = ["Full", "Half", "Top", "Slope", "DSlope", "Corner", "O.Corner", "V.Slope", "V.Slab"];
+    let shape = shapes.get(st.brush_shape as usize).copied().unwrap_or("Full");
+    let log = if st.waterlogged {
+        format!("{} · {}° · wet", shape, st.brush_rot * 90)
+    } else {
+        format!("{} · {}°", shape, st.brush_rot * 90)
+    };
+    row = row
+        .child(mk_pill_button(
+            icon_label(Symbols::REFRESH, format!("{shape} [T]")),
+            move || push_ui(&a_shape, UiAction::MakerCycleShape),
+        ))
+        .child(mk_pill_button(
+            icon_label(Symbols::ROTATE_RIGHT, format!("{}° [R]", st.brush_rot * 90)),
+            move || push_ui(&a_rot, UiAction::MakerRotateBrushBlock),
+        ))
+        .child(mk_pill_button(
+            icon_label(Symbols::CLOUD, format!("{log} [U]")),
+            move || push_ui(&a_log, UiAction::MakerToggleWaterlog),
+        ));
     row
 }
 

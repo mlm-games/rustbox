@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::block::BlockKind;
+use super::block::{BlockKind, BlockShape};
 use super::entity_data::{EntityKind, LevelEntityId};
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -10,12 +10,24 @@ pub enum MakerMode {
     Play,
 }
 
+/// The active block brush: kind (material), voxel shape, yaw rotation and
+/// whether newly placed blocks should be waterlogged.
 #[derive(Resource, Clone, Copy, Debug)]
-pub struct SelectedBlockKind(pub BlockKind);
+pub struct BlockBrush {
+    pub kind: BlockKind,
+    pub shape: BlockShape,
+    pub rot: u8,
+    pub waterlogged: bool,
+}
 
-impl Default for SelectedBlockKind {
+impl Default for BlockBrush {
     fn default() -> Self {
-        Self(BlockKind::Grass)
+        Self {
+            kind: BlockKind::Grass,
+            shape: BlockShape::Full,
+            rot: 0,
+            waterlogged: false,
+        }
     }
 }
 
@@ -92,6 +104,8 @@ pub struct EditorCursor {
 pub struct BlockPlaced {
     pub cell: IVec3,
     pub kind: BlockKind,
+    pub shape: BlockShape,
+    pub rot: u8,
 }
 
 #[derive(Resource, Default)]

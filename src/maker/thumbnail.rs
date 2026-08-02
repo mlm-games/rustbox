@@ -1,6 +1,6 @@
 use bevy::prelude::Color;
 
-use super::block::BlockKindColor;
+use super::block::{BlockKindColor, BlockShape};
 use super::entity_data::EntityKindColor;
 use super::level::{BlockData, LevelData};
 
@@ -30,6 +30,18 @@ pub fn render_preview(level: &LevelData, cols: usize, rows: usize) -> ThumbPrevi
     downsample_to_grid(&img, cols, rows)
 }
 
+/// Vertical extent of a shape inside its cell: (bottom, top) as fractions of
+/// the cell height. Flat/extreme shapes draw as their tallest span; half
+/// slabs and slopes get short drops so thumbnails read the real geometry.
+fn block_heights(shape: BlockShape) -> (f32, f32) {
+    match shape {
+        BlockShape::Half => (0.0, 0.5),
+        BlockShape::TopHalf => (0.5, 1.0),
+        BlockShape::Slope | BlockShape::DSlope => (0.5, 1.0),
+        _ => (0.0, 1.0),
+    }
+}
+
 pub fn render(level: &LevelData) -> ThumbImage {
     let w = RW;
     let h = RH;
@@ -55,9 +67,9 @@ pub fn render(level: &LevelData) -> ThumbImage {
     }
 
     // Occupancy for face culling.
-    let mut occ = std::collections::HashSet::with_capacity(level.blocks.len());
+    let mut occ = std::collections::HashMap::with_capacity(level.blocks.len());
     for b in &level.blocks {
-        occ.insert((b.position[0], b.position[1], b.position[2]));
+        occ.insert((b.position[0], b.position[1], b.position[2]), b);
     }
 
     // Pass 1: fit. Unit projection a=1, b=0.5, c=1. Both axes scale uniformly.
@@ -103,15 +115,22 @@ pub fn render(level: &LevelData) -> ThumbImage {
 
     for b in order {
         let (x, y, z) = (b.position[0], b.position[1], b.position[2]);
-        let up = occ.contains(&(x, y + 1, z));
-        let px = occ.contains(&(x + 1, y, z)); // covers screen-right face
-        let pz = occ.contains(&(x, y, z + 1)); // covers screen-left face
+        let (bot_h, top_h) = block_heights(b.shape);
+        let above = occ.get(&(x, y + 1, z)).is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
+        let px = occ.get(&(x + 1, y, z)).is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
+        let pz = occ.get(&(x, y, z + 1)).is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
+        let up = above && top_h == 1.0;
         if up && px && pz {
             continue; // fully hidden
         }
 
-        let (sx, sy) = project(x, y, z);
-        let base = to_rgba(b.kind.color());
+        let (sx, sy0) = project(x, y, z);
+        let sy = sy0 - (1.0 - top_h) * c;
+        let drop = (top_h - bot_h) * c;
+        let mut base = to_rgba(b.kind.color());
+        if b.waterlogged {
+            base = blend(base, to_rgba(Color::srgb(0.2, 0.55, 0.95)), 0.45);
+        }
 
         let top = (sx, sy - bb);
         let right = (sx + a, sy);
@@ -125,8 +144,8 @@ pub fn render(level: &LevelData) -> ThumbImage {
                 h,
                 left,
                 bot,
-                (bot.0, bot.1 + c),
-                (left.0, left.1 + c),
+                (bot.0, bot.1 + drop),
+                (left.0, left.1 + drop),
                 shade(base, 0.58),
             );
         }
@@ -137,8 +156,8 @@ pub fn render(level: &LevelData) -> ThumbImage {
                 h,
                 bot,
                 right,
-                (right.0, right.1 + c),
-                (bot.0, bot.1 + c),
+                (right.0, right.1 + drop),
+                (bot.0, bot.1 + drop),
                 shade(base, 0.80),
             );
         }
@@ -306,6 +325,16 @@ fn shade(c: Px, f: f32) -> Px {
 }
 
 #[inline]
+fn blend(a: Px, b: Px, t: f32) -> Px {
+    [
+        (lerp(a[0] as f32, b[0] as f32, t)).round() as u8,
+        (lerp(a[1] as f32, b[1] as f32, t)).round() as u8,
+        (lerp(a[2] as f32, b[2] as f32, t)).round() as u8,
+        255,
+    ]
+}
+
+#[inline]
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -313,7 +342,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::maker::block::BlockKind;
+    use crate::maker::block::{BlockKind, BlockShape};
     use crate::maker::entity_data::{EntityData, EntityDataExt, EntityKind};
     use crate::maker::level::BlockData;
 
@@ -325,14 +354,23 @@ mod tests {
                 BlockData {
                     position: [0, 0, 0],
                     kind: BlockKind::Grass,
+                    shape: BlockShape::Full,
+                    rot: 0,
+                    waterlogged: false,
                 },
                 BlockData {
                     position: [1, 0, 0],
                     kind: BlockKind::Stone,
+                    shape: BlockShape::Full,
+                    rot: 0,
+                    waterlogged: false,
                 },
                 BlockData {
                     position: [0, 1, 0],
                     kind: BlockKind::Goal,
+                    shape: BlockShape::Full,
+                    rot: 0,
+                    waterlogged: false,
                 },
             ],
             entities: vec![EntityData::defaults_for(
@@ -349,6 +387,12 @@ mod tests {
             tags: vec![],
             author: String::new(),
             created_at: 0,
+            size: None,
+            water_level: None,
+            theme: rustbox_format::level::Theme::default(),
+            boundary: Default::default(),
+            secret_stars: 0,
+            coin_star: false,
         }
     }
 

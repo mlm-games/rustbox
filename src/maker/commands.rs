@@ -1,20 +1,19 @@
 use bevy::prelude::*;
 
-use super::block::BlockKind;
 use super::entity_data::{EntityData, LevelEntityId};
-use super::level::LevelDocument;
+use super::level::{BlockData, LevelDocument};
 use super::track::{TrackData, TrackId, TrackMode};
 
 #[derive(Clone, Debug)]
 pub enum EditCommand {
     Place {
         position: IVec3,
-        kind: BlockKind,
-        previous: Option<BlockKind>,
+        data: BlockData,
+        previous: Option<BlockData>,
     },
     Remove {
         position: IVec3,
-        previous: BlockKind,
+        previous: BlockData,
     },
     PlaceEntity {
         entity: EntityData,
@@ -72,8 +71,8 @@ pub enum EditCommand {
         track_id: TrackId,
     },
     BoxFill {
-        cells: Vec<(IVec3, Option<BlockKind>)>,
-        kind: BlockKind,
+        cells: Vec<(IVec3, Option<BlockData>)>,
+        data: BlockData,
     },
 }
 
@@ -117,7 +116,9 @@ impl CommandHistory {
 
 pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
     match cmd {
-        EditCommand::Place { position, kind, .. } => level.set_block(*position, Some(*kind)),
+        EditCommand::Place { position, data, .. } => {
+            level.set_block(*position, Some(data.clone()))
+        }
         EditCommand::Remove { position, .. } => level.set_block(*position, None),
         EditCommand::PlaceEntity { entity } => {
             let mut e = entity.clone();
@@ -189,9 +190,11 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
                 t.points.reverse();
             }
         }
-        EditCommand::BoxFill { cells, kind } => {
+        EditCommand::BoxFill { cells, data } => {
             for (pos, _) in cells {
-                level.set_block(*pos, Some(*kind));
+                let mut d = data.clone();
+                d.position = pos.to_array();
+                level.set_block(*pos, Some(d));
             }
         }
     }
@@ -203,10 +206,10 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
     match cmd {
         EditCommand::Place {
             position, previous, ..
-        } => level.set_block(*position, *previous),
+        } => level.set_block(*position, previous.clone()),
         EditCommand::Remove {
             position, previous, ..
-        } => level.set_block(*position, Some(*previous)),
+        } => level.set_block(*position, Some(previous.clone())),
         EditCommand::PlaceEntity { entity } => {
             level.remove_entity(entity.id);
         }
@@ -281,7 +284,7 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         }
         EditCommand::BoxFill { cells, .. } => {
             for (pos, prev) in cells {
-                level.set_block(*pos, *prev);
+                level.set_block(*pos, prev.clone());
             }
         }
     }

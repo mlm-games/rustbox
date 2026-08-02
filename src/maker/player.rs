@@ -15,11 +15,14 @@ use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 const GRAVITY: f32 = -25.0;
+const WATER_GRAVITY: f32 = -4.5;
 const MOVE_SPEED: f32 = 6.0;
 pub const JUMP_SPEED: f32 = 9.0;
 const COYOTE_TIME: f32 = 0.10;
 const JUMP_BUFFER: f32 = 0.12;
 const MAX_FALL: f32 = -40.0;
+const MAX_FALL_WATER: f32 = -8.0;
+const SWIM_SPEED: f32 = 4.5;
 
 #[derive(Component)]
 pub struct Player {
@@ -150,10 +153,16 @@ pub fn player_controller(
         player.coyote = (player.coyote - dt).max(0.0);
         player.jump_buffer = (player.jump_buffer - dt).max(0.0);
         player.launch = (player.launch - dt).max(0.0);
+        let underwater = level.is_underwater_point(transform.translation);
         if kb && keys.just_pressed(KeyCode::Space) {
             player.jump_buffer = JUMP_BUFFER;
         }
-        if player.jump_buffer > 0.0 && player.coyote > 0.0 {
+        if underwater {
+            // Swim: hold jump to rise, light gravity, soft terminal fall.
+            if kb && keys.pressed(KeyCode::Space) {
+                player.velocity.y = SWIM_SPEED;
+            }
+        } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
             player.velocity.y = JUMP_SPEED;
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
@@ -178,7 +187,10 @@ pub fn player_controller(
         }
 
         let he = player.half_extents;
-        player.velocity.y = (player.velocity.y + GRAVITY * dt).max(MAX_FALL);
+        let underwater = level.is_underwater_point(transform.translation);
+        let gravity = if underwater { WATER_GRAVITY } else { GRAVITY };
+        let max_fall = if underwater { MAX_FALL_WATER } else { MAX_FALL };
+        player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
 
         let result = move_and_collide(
             transform.translation,
