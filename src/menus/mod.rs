@@ -150,10 +150,8 @@ pub enum UiAction {
     LevelInfoToggleTag(LevelTag),
     LevelInfoSave,
     LevelInfoClose,
-    /// Toggle the level's solid boundary walls on/off (edit time only).
-    LevelInfoToggleWalls,
-    /// Toggle the level's solid ceiling on/off.
-    LevelInfoToggleCeiling,
+    /// Apply one of the named boundary presets (floor / walls / ceiling).
+    LevelInfoPreset(crate::maker::level::BoundaryPreset),
     /// Adjust the global water plane by `delta` cells (applies immediately).
     LevelInfoWaterDelta(i32),
     /// Grow/shrink the play-size half-extents by `delta` on every axis.
@@ -2389,23 +2387,24 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     }
     let tag_row = Row(Modifier::new().gap(6.0)).child(tag_views);
 
-    // Level Settings: solid walls, solid ceiling, water plane.
-    let a_walls = actions.clone();
-    let a_ceil = actions.clone();
+    // Level Settings: boundary preset, water plane.
+    let mut preset_views: Vec<View> = Vec::new();
+    for p in crate::maker::level::BoundaryPreset::ALL {
+        let a = actions.clone();
+        let selected = st.info_preset == Some(p);
+        let label = RText(p.label()).size(11.0).color(RColor::WHITE);
+        preset_views.push(mk_chip(
+            label,
+            selected,
+            col(90, 90, 120),
+            move || push(&a, UiAction::LevelInfoPreset(p)),
+        ));
+    }
+    let preset_row = Row(Modifier::new().gap(6.0)).child(preset_views);
+
+    // Water plane.
     let a_wup = actions.clone();
     let a_wdn = actions.clone();
-    let walls_chip = mk_chip(
-        RText("Walls").size(12.0).color(RColor::WHITE),
-        st.info_walls,
-        col(60, 110, 160),
-        move || push(&a_walls, UiAction::LevelInfoToggleWalls),
-    );
-    let ceiling_chip = mk_chip(
-        RText("Ceiling").size(12.0).color(RColor::WHITE),
-        st.info_ceiling,
-        col(160, 100, 60),
-        move || push(&a_ceil, UiAction::LevelInfoToggleCeiling),
-    );
     let water_label = RText(match st.info_water {
         Some(level) => "  Water y = ".to_string() + &level.to_string() + "  ",
         None => "  No water  ".to_string(),
@@ -2413,8 +2412,6 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let water_minus = mk_button_sm("-", move || push(&a_wdn, UiAction::LevelInfoWaterDelta(-1)));
     let water_plus = mk_button_sm("+", move || push(&a_wup, UiAction::LevelInfoWaterDelta(1)));
     let settings_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
-        .child(walls_chip)
-        .child(ceiling_chip)
         .child(water_minus)
         .child(water_label)
         .child(water_plus);
@@ -2501,11 +2498,13 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(RText("Level Settings").size(14.0).color(col(180, 180, 190)))
     .child(spacer(6.0))
     .child(
-        RText("Walls & ceiling are solid boundaries (edit-time only).")
+        RText("Boundary presets: floor caught, walls rim, ceiling cap.")
             .size(11.0)
             .color(col(130, 130, 150)),
     )
     .child(spacer(6.0))
+    .child(preset_row)
+    .child(spacer(8.0))
     .child(settings_row)
     .child(spacer(12.0))
     .child(

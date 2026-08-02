@@ -25,5 +25,5 @@ pub use entity::{EntityData, EntityKind, LevelEntityId};
 pub use file::{
     FORMAT_VERSION, LevelFile, decode_level, encode_level, export_code, import_code, validate_level,
 };
-pub use level::{BlockData, BoundaryConfig, LevelData, LevelTag, Theme};
+pub use level::{BlockData, BoundaryConfig, BoundaryPreset, LevelData, LevelTag, Theme};
 pub use track::{TrackData, TrackId, TrackMode};

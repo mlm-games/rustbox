@@ -66,26 +66,147 @@ impl Theme {
     }
 }
 
-/// Auto-generated play-area boundaries (walls / floor / ceiling), mirroring
-/// MB64's `mb64_lopt_boundary*` options.
+/// Auto-generated play-area boundaries (floor / walls / ceiling), mirroring
+/// MB64's `mb64_lopt_boundary*` options and `mb64_boundary_table` presets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundaryConfig {
-    /// Solid walls around the level sides (prevent walking off the edge).
-    pub walls: bool,
+    /// Solid catchable floor beneath the play area (keeps you out of the void).
+    #[serde(default)]
+    pub inner_floor: bool,
+    /// A floor layer ringing the level on the far side of the rim.
+    #[serde(default)]
+    pub outer_floor: bool,
+    /// Solid rim walls around the level sides (prevent walking off the edge).
+    #[serde(default)]
+    pub inner_walls: bool,
+    /// Low perimeter lip (MB64's "Plateau"), a shallow step at the base.
+    #[serde(default)]
+    pub outer_walls: bool,
     /// Solid ceiling above the level (prevents jumping out).
+    #[serde(default)]
     pub ceiling: bool,
-    /// Wall height in cells. 0 = auto (derived from level size/content).
+    /// Wall/room height in cells. 0 = auto (derived from level size/content).
     #[serde(default)]
     pub height: i32,
+}
+
+/// Named boundary presets, matching MB64's boundary table. "Chasm" is renamed
+/// "Warp": an intentional gap/opening you cross (in MB64 a pit with outer floor).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BoundaryPreset {
+    #[default]
+    Void,
+    Plain,
+    Valley,
+    Warp,
+    Plateau,
+    Interior,
+}
+
+impl BoundaryPreset {
+    pub const ALL: [BoundaryPreset; 6] = [
+        BoundaryPreset::Void,
+        BoundaryPreset::Plain,
+        BoundaryPreset::Valley,
+        BoundaryPreset::Warp,
+        BoundaryPreset::Plateau,
+        BoundaryPreset::Interior,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BoundaryPreset::Void => "Void",
+            BoundaryPreset::Plain => "Plain",
+            BoundaryPreset::Valley => "Valley",
+            BoundaryPreset::Warp => "Warp",
+            BoundaryPreset::Plateau => "Plateau",
+            BoundaryPreset::Interior => "Interior",
+        }
+    }
+
+    pub fn config(self) -> BoundaryConfig {
+        match self {
+            BoundaryPreset::Void => BoundaryConfig {
+                inner_floor: false,
+                outer_floor: false,
+                inner_walls: false,
+                outer_walls: false,
+                ceiling: false,
+                height: 0,
+            },
+            BoundaryPreset::Plain => BoundaryConfig {
+                inner_floor: true,
+                outer_floor: false,
+                inner_walls: false,
+                outer_walls: false,
+                ceiling: false,
+                height: 0,
+            },
+            BoundaryPreset::Valley => BoundaryConfig {
+                inner_floor: true,
+                outer_floor: false,
+                inner_walls: true,
+                outer_walls: false,
+                ceiling: false,
+                height: 0,
+            },
+            // MB64 "Chasm": outer floor + inner rim, an open pit you fall into.
+            BoundaryPreset::Warp => BoundaryConfig {
+                inner_floor: false,
+                outer_floor: true,
+                inner_walls: true,
+                outer_walls: false,
+                ceiling: false,
+                height: 0,
+            },
+            BoundaryPreset::Plateau => BoundaryConfig {
+                inner_floor: true,
+                outer_floor: false,
+                inner_walls: false,
+                outer_walls: true,
+                ceiling: false,
+                height: 0,
+            },
+            BoundaryPreset::Interior => BoundaryConfig {
+                inner_floor: true,
+                outer_floor: false,
+                inner_walls: true,
+                outer_walls: false,
+                ceiling: true,
+                height: 0,
+            },
+        }
+    }
 }
 
 impl Default for BoundaryConfig {
     fn default() -> Self {
         Self {
-            walls: true,
+            inner_floor: false,
+            outer_floor: false,
+            inner_walls: true,
+            outer_walls: false,
             ceiling: false,
             height: 0,
         }
+    }
+}
+
+impl BoundaryConfig {
+    /// The preset whose flags match this config, ignoring the independent
+    /// `height`. `None` when the flags are a custom combination.
+    pub fn boundary_preset(self) -> Option<BoundaryPreset> {
+        BoundaryPreset::ALL
+            .into_iter()
+            .find(|&p| p.config().matches_flags(&self))
+    }
+
+    fn matches_flags(&self, other: &BoundaryConfig) -> bool {
+        self.inner_floor == other.inner_floor
+            && self.outer_floor == other.outer_floor
+            && self.inner_walls == other.inner_walls
+            && self.outer_walls == other.outer_walls
+            && self.ceiling == other.ceiling
     }
 }
 

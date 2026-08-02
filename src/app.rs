@@ -252,8 +252,7 @@ pub struct SharedUi {
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
     // Level Settings (mirrors `LevelDocument` boundary / water on open).
-    pub info_walls: bool,
-    pub info_ceiling: bool,
+    pub info_preset: Option<crate::maker::level::BoundaryPreset>,
     pub info_water: Option<i32>,
     pub info_size: [i32; 3],
     pub info_size_auto: bool,
@@ -335,8 +334,7 @@ impl Default for SharedUi {
             info_description: String::new(),
             info_tags: Vec::new(),
             info_focus: 0,
-            info_walls: true,
-            info_ceiling: false,
+            info_preset: None,
             info_water: None,
             info_size: [16, 12, 16],
             info_size_auto: true,
@@ -496,8 +494,7 @@ fn sync_shared_ui(
         ui.info_description = m.info_description.clone();
         ui.info_tags = m.info_tags.clone();
         ui.info_focus = m.info_focus;
-        ui.info_walls = m.info_walls;
-        ui.info_ceiling = m.info_ceiling;
+        ui.info_preset = m.info_preset;
         ui.info_water = m.info_water;
         ui.info_size = m.info_size;
         ui.info_size_auto = m.info_size_auto;
@@ -912,20 +909,9 @@ fn process_ui_actions(
             UiAction::LevelInfoClose => {
                 *overlay = OverlayMenu::None;
             }
-            UiAction::LevelInfoToggleWalls => {
+            UiAction::LevelInfoPreset(preset) => {
                 if let Some(ref mut m) = maker_ui {
-                    m.info_walls = !m.info_walls;
-                    let walls = m.info_walls;
-                    let ceiling = m.info_ceiling;
-                    m.commands.push(UiCommand::SetBoundary { walls, ceiling });
-                }
-            }
-            UiAction::LevelInfoToggleCeiling => {
-                if let Some(ref mut m) = maker_ui {
-                    m.info_ceiling = !m.info_ceiling;
-                    let walls = m.info_walls;
-                    let ceiling = m.info_ceiling;
-                    m.commands.push(UiCommand::SetBoundary { walls, ceiling });
+                    m.commands.push(UiCommand::ApplyPreset(preset));
                 }
             }
             UiAction::LevelInfoWaterDelta(delta) => {

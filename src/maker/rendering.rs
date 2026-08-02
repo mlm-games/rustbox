@@ -53,6 +53,7 @@ pub struct WaterBoundaryState {
     pub water_level: Option<i32>,
     pub size: [i32; 3],
     pub walls: bool,
+    pub floor: bool,
     pub ceiling: bool,
     pub theme: Theme,
     pub edit: bool,
@@ -64,6 +65,7 @@ impl Default for WaterBoundaryState {
             water_level: None,
             size: [0, 0, 0],
             walls: true,
+            floor: false,
             ceiling: false,
             theme: Theme::Grass,
             edit: true,
@@ -891,19 +893,28 @@ pub fn rebuild_water_and_boundary(
 ) {
     let size = level.play_size();
     let water_level = level.water_level();
-    let walls = level.data.boundary.walls;
+    let walls = level.data.boundary.inner_walls || level.data.boundary.outer_walls;
+    let floor = level.data.boundary.inner_floor || level.data.boundary.outer_floor;
     let ceiling = level.data.boundary.ceiling;
     let theme = level.data.theme;
     let edit = *mode == super::mode::MakerMode::Edit;
-    let changed = (water_level, size, walls, ceiling, theme, edit)
-        != (
-            state.water_level,
-            state.size,
-            state.walls,
-            state.ceiling,
-            state.theme,
-            state.edit,
-        );
+    let changed = (
+        water_level,
+        size,
+        walls,
+        floor,
+        ceiling,
+        theme,
+        edit,
+    ) != (
+        state.water_level,
+        state.size,
+        state.walls,
+        state.floor,
+        state.ceiling,
+        state.theme,
+        state.edit,
+    );
 
     if changed {
         // Re-tint chunk geometry (underwater shading) when the water level or
@@ -968,6 +979,24 @@ pub fn rebuild_water_and_boundary(
             }
         }
 
+        if floor && edit {
+            let mut mat = StandardMaterial::from_color(Color::srgba(0.7, 0.3, 0.85, 0.3));
+            mat.alpha_mode = AlphaMode::Blend;
+            mat.perceptual_roughness = 0.6;
+            let handle = materials.add(mat);
+            let len_x = size[0] as f32 * 2.0 + 1.0;
+            let len_z = size[2] as f32 * 2.0 + 1.0;
+            commands
+                .spawn((
+                    Mesh3d(meshes.add(Cuboid::new(len_x, 0.1, len_z).mesh())),
+                    MeshMaterial3d(handle),
+                    Transform::from_xyz(0.0, -0.5, 0.0),
+                    BoundaryWall,
+                    MakerCleanup,
+                ))
+                .insert(Visibility::Visible);
+        }
+
         if ceiling && edit {
             let mut mat = StandardMaterial::from_color(Color::srgba(0.7, 0.3, 0.85, 0.35));
             mat.alpha_mode = AlphaMode::Blend;
@@ -990,6 +1019,7 @@ pub fn rebuild_water_and_boundary(
     state.water_level = water_level;
     state.size = size;
     state.walls = walls;
+    state.floor = floor;
     state.ceiling = ceiling;
     state.theme = theme;
     state.edit = edit;

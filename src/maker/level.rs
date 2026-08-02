@@ -7,7 +7,7 @@ use super::chunk::affected_chunks;
 use super::entity_data::{EntityData, EntityDataExt, EntityKind, LevelEntityId};
 use super::track::{TrackData, TrackDataExt, TrackId, TrackMode};
 
-pub use rustbox_format::level::{BlockData, BoundaryConfig, LevelData, LevelTag, Theme};
+pub use rustbox_format::level::{BlockData, BoundaryConfig, BoundaryPreset, LevelData, LevelTag, Theme};
 
 /// Default fallback half-extents for levels with no explicit size.
 const AUTO_SIZE_MIN: i32 = 8;
@@ -185,14 +185,30 @@ impl LevelDocument {
         }
     }
 
-    /// Whether `cell` is an invisible boundary solid (walls / ceiling).
+    /// Whether `cell` is an invisible boundary solid (floor / walls / ceiling).
     pub fn boundary_solid(&self, cell: IVec3) -> bool {
         let size = self.play_size();
         let outside = cell.x.abs() > size[0] || cell.z.abs() > size[2];
-        if self.data.boundary.walls && outside && cell.y <= self.boundary_top() {
+        let top = self.boundary_top();
+        let b = &self.data.boundary;
+        // Full-height rim walls keep the player inside the play area.
+        if b.inner_walls && outside && cell.y >= 0 && cell.y <= top {
             return true;
         }
-        if self.data.boundary.ceiling && cell.y > self.boundary_top() {
+        // Plateau lip: a low step ringing the level at its base.
+        if b.outer_walls && outside && cell.y >= -1 && cell.y <= 0 {
+            return true;
+        }
+        // Ceiling caps the room at the wall/room height.
+        if b.ceiling && cell.y > top {
+            return true;
+        }
+        // A catchable floor just below the play area, so you (usually) don't
+        // fall into the void.
+        if b.inner_floor && !outside && cell.y == -1 {
+            return true;
+        }
+        if b.outer_floor && outside && cell.y == -1 {
             return true;
         }
         false

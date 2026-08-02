@@ -9,7 +9,7 @@ use super::campaign::{self, LevelSource};
 use super::catalog;
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityKind};
-use super::level::LevelDocument;
+use super::level::{BoundaryPreset, LevelDocument};
 use super::mode::{
     ActiveLinkChannel, BlockBrush, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw,
     SelectedEntity, SelectedEntityKind,
@@ -60,11 +60,8 @@ pub enum UiCommand {
     AddToCollection,
     OpenLevelInfo,
     SaveMetadata,
-    /// Apply the level's boundary flags (solid walls / ceiling).
-    SetBoundary {
-        walls: bool,
-        ceiling: bool,
-    },
+    /// Apply a named boundary preset (floor / walls / ceiling combo).
+    ApplyPreset(BoundaryPreset),
     /// Set the global water plane (None = no water).
     SetWaterLevel(Option<i32>),
     /// Grow/shrink the play-size half-extents by `delta` on every axis
@@ -133,8 +130,8 @@ pub struct MakerUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
-    pub info_walls: bool,
-    pub info_ceiling: bool,
+    /// Which boundary preset the current flags match (`None` = custom combo).
+    pub info_preset: Option<crate::maker::level::BoundaryPreset>,
     pub info_water: Option<i32>,
     pub info_size: [i32; 3],
     pub info_size_auto: bool,
@@ -439,8 +436,7 @@ pub fn drain_ui_commands(
                 ui.info_description = level.data.description.clone();
                 ui.info_tags = level.data.tags.clone();
                 ui.info_focus = 0;
-                ui.info_walls = level.data.boundary.walls;
-                ui.info_ceiling = level.data.boundary.ceiling;
+                ui.info_preset = level.data.boundary.boundary_preset();
                 ui.info_water = level.data.water_level;
                 ui.info_size = level.play_size();
                 ui.info_size_auto = level.data.size.is_none();
@@ -449,15 +445,11 @@ pub fn drain_ui_commands(
                 ui.info_entities = level.data.entities.len();
                 *overlay = OverlayMenu::LevelInfo;
             }
-            UiCommand::SetBoundary { walls, ceiling } => {
-                level.data.boundary.walls = walls;
-                level.data.boundary.ceiling = ceiling;
+            UiCommand::ApplyPreset(preset) => {
+                level.data.boundary = preset.config();
                 level.mark_all_dirty();
-                ui.set_status(if walls {
-                    "Boundary: walls on"
-                } else {
-                    "Boundary: walls off"
-                });
+                ui.info_preset = Some(preset);
+                ui.set_status(format!("Boundary: {}", preset.label()));
             }
             UiCommand::SetWaterLevel(level_) => {
                 level.data.water_level = level_;
