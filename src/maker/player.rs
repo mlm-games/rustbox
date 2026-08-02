@@ -5,7 +5,7 @@ use bevy::world_serialization::WorldAssetRoot;
 
 use super::MakerCleanup;
 use super::camera::CameraRig;
-use super::collision::{ledge_grip, move_and_collide, overlaps_kind, slope_slide};
+use super::collision::{ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide};
 use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
@@ -40,10 +40,18 @@ pub struct Player {
     /// Currently slamming (air-drop strike). Sets a fast downward velocity and
     /// makes the landing a heavy impact.
     pub slamming: bool,
-    /// Currently gripped onto a ledge lip (climbing/cling state).
+    /// Currently gripped onto a ledge lip (climb/cling state).
     pub gripping: bool,
-    /// The world height the player can pull up to while gripping.
+    /// The world height of the lip the player hangs on.
     pub grip_top: f32,
+    /// Validated pull-up center for the ledge climb.
+    pub grip_mantle: Vec3,
+    /// World location of the lip, re-checked each frame while hanging.
+    pub grip_anchor: Vec3,
+    /// Seconds until a new grab is allowed (drop/re-climb jank lock).
+    pub grip_cooldown: f32,
+    /// How long the player has been hanging.
+    pub grip_time: f32,
 }
 
 impl Default for Player {
@@ -60,6 +68,10 @@ impl Default for Player {
             slamming: false,
             gripping: false,
             grip_top: 0.0,
+            grip_mantle: Vec3::ZERO,
+            grip_anchor: Vec3::ZERO,
+            grip_cooldown: 0.0,
+            grip_time: 0.0,
         }
     }
 }
@@ -87,6 +99,10 @@ pub fn reset_player(
     player.slamming = false;
     player.gripping = false;
     player.grip_top = 0.0;
+    player.grip_mantle = Vec3::ZERO;
+    player.grip_anchor = Vec3::ZERO;
+    player.grip_cooldown = 0.0;
+    player.grip_time = 0.0;
 }
 
 pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
@@ -286,31 +302,64 @@ pub fn player_controller(
         }
         transform.translation = pos;
 
+        player.grip_cooldown = (player.grip_cooldown - dt).max(0.0);
         if player.gripping {
+            player.grip_time += dt;
             if kb && (keys.just_pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyW)) {
-                // Climb up onto the ledge.
-                transform.translation.y = player.grip_top + he.y;
+                // Climb onto the ledge only if the mantle is still clear.
+                transform.translation = player.grip_mantle;
                 player.gripping = false;
                 player.grip_top = 0.0;
+                player.velocity = Vec3::ZERO;
                 player.coyote = COYOTE_TIME;
-                player.velocity = Vec3::ZERO;
-            } else if kb && keys.pressed(KeyCode::KeyS) {
+                player.grip_cooldown = 0.15;
+            } else if kb && (keys.pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ControlLeft)) {
+                // Drop off (with a short re-grab lock to avoid jank).
                 player.gripping = false;
                 player.grip_top = 0.0;
-            } else if let Some(g) = ledge_grip(&level, transform.translation, he, player.velocity) {
-                // Keep holding the (still-present) lip.
-                transform.translation.y = g.wall_top - he.y + 0.05;
                 player.velocity = Vec3::ZERO;
+                player.grip_cooldown = 0.35;
             } else {
-                player.gripping = false;
-                player.grip_top = 0.0;
+                // Keep hanging only while the lip is still there.
+                let wt = ground_height(&level, player.grip_anchor.x, player.grip_anchor.z);
+                let above = IVec3::new(
+                    player.grip_anchor.x.floor() as i32,
+                    (player.grip_anchor.y + 1.0).floor() as i32,
+                    player.grip_anchor.z.floor() as i32,
+                );
+                let lip_ok =
+                    wt.is_finite() && (wt - player.grip_top).abs() < 0.55 && !level.is_solid(above);
+                if !lip_ok {
+                    player.gripping = false;
+                    player.grip_top = 0.0;
+                    player.grip_cooldown = 0.2;
+                } else {
+                    transform.translation.y = player.grip_top - he.y + 0.14;
+                    player.velocity = Vec3::ZERO;
+                }
             }
-        } else if false && !result.on_ground && player.velocity.y <= 0.0 && !underwater && !player.slamming {
-            // Ledge grab is disabled for now: leads to buggy interactions with most blocks.
-            if let Some(g) = ledge_grip(&level, transform.translation, he, player.velocity) {
-                transform.translation.y = g.wall_top - he.y + 0.05;
+        } else if false && player.grip_cooldown <= 0.0
+            && !result.on_ground
+            && player.velocity.y <= 0.5
+            && !underwater
+            && !player.slamming
+            && player.launch <= 0.0
+        {
+            // Ledge grab is disabled: leads to buggy interactions with most blocks.
+            if let Some(g) = ledge_grip(
+                &level,
+                transform.translation,
+                he,
+                player.velocity,
+                result.hit_x,
+                result.hit_z,
+            ) {
+                transform.translation = g.hang_pos;
                 player.gripping = true;
                 player.grip_top = g.wall_top;
+                player.grip_mantle = g.mantle_pos;
+                player.grip_anchor = Vec3::new(g.hang_pos.x, g.wall_top, g.hang_pos.z);
+                player.grip_time = 0.0;
                 player.velocity = Vec3::ZERO;
             }
         }

@@ -361,64 +361,162 @@ pub fn slope_slide(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<Vec2
     best.map(|(d, _)| d)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LedgeGrip {
-    /// Unit horizontal direction from the player toward the wall.
+    /// Unit horizontal direction from the player toward the wall (the grabbed face).
     pub face: Vec2,
     /// World height of the ledge lip (top surface) the player hangs on.
     pub wall_top: f32,
+    /// Validated hang center (body just below the lip, clear of solids).
+    pub hang_pos: Vec3,
+    /// Validated pull-up center (feet on top of the lip, body clear).
+    pub mantle_pos: Vec3,
+}
+
+const GRAB_MIN_ABOVE_FEET: f32 = 0.85;
+const GRAB_MAX_ABOVE_FEET: f32 = 1.65;
+/// How far past the capsule we sample for the wall face.
+const WALL_PROBE: f32 = 0.08;
+/// How far below the lip the hang center rests (after the body half-height).
+const HANG_DROP: f32 = 0.14;
+/// How far onto the block the mantle pose sits.
+const MANTLE_INSET: f32 = 0.35;
+
+fn is_grabbable_shape(shape: BlockShape) -> bool {
+    matches!(
+        shape,
+        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf | BlockShape::VerticalSlab
+    )
+}
+
+fn is_grabbable_lip(level: &LevelDocument, cell: IVec3) -> bool {
+    if !level.is_solid(cell) || level.is_solid(cell + IVec3::Y) {
+        return false;
+    }
+    match level.get_block(cell) {
+        Some(b) => is_grabbable_shape(b.shape),
+        // Boundary solids (walls/floor) are always boxy.
+        None => true,
+    }
+}
+
+/// Does the AABB at `center` overlap any solid cell?
+pub fn aabb_hits_solid(level: &LevelDocument, center: Vec3, he: Vec3) -> bool {
+    let min = center - he + Vec3::splat(0.02);
+    let max = center + he - Vec3::splat(0.02);
+    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
+        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
+            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
+                if level.is_solid(IVec3::new(x, y, z)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Nudge `p` away from the wall along `face` until it no longer overlaps solid.
+fn push_out_of_wall(level: &LevelDocument, mut p: Vec3, he: Vec3, face: Vec2) -> Vec3 {
+    for _ in 0..4 {
+        if !aabb_hits_solid(level, p, he) {
+            break;
+        }
+        p.x -= face.x * 0.05;
+        p.z -= face.y * 0.05;
+    }
+    p
+}
+
+fn face_adjacent_solid(level: &LevelDocument, center: Vec3, face: Vec2, he: Vec3) -> bool {
+    let reach_x = he.x.max(he.z);
+    let px = center.x + face.x * (reach_x + 0.01);
+    let pz = center.z + face.y * (reach_x + 0.01);
+    let c = IVec3::new(px.floor() as i32, center.y.floor() as i32, pz.floor() as i32);
+    let y0 = (center.y - 0.2).floor() as i32;
+    let y1 = (center.y + 0.4).floor() as i32;
+    (y0..=y1).any(|y| level.is_solid(IVec3::new(c.x, y, c.z)))
 }
 
 /// When falling into a solid wall whose lip is within the player's reach,
 /// return a place to grab so the fall stops and a grab/climb becomes possible.
-pub fn ledge_grip(level: &LevelDocument, center: Vec3, he: Vec3, mv: Vec3) -> Option<LedgeGrip> {
-    let faces = [
-        Vec2::X,
-        Vec2::NEG_X,
-        Vec2::new(0.0, 1.0),
-        Vec2::new(0.0, -1.0),
-    ];
-    let di = [he.x, he.x, he.z, he.z];
+pub fn ledge_grip(
+    level: &LevelDocument,
+    center: Vec3,
+    he: Vec3,
+    vel: Vec3,
+    hit_x: bool,
+    hit_z: bool,
+) -> Option<LedgeGrip> {
     let feet = center.y - he.y;
-    let head = center.y + he.y;
-    // Horizontal approach for the direction gate.
-    let approach = Vec2::new(mv.x, mv.z);
-    for (f, dist) in faces.iter().zip(di.iter()) {
-        // Only grab the lip we're steering toward (skip moving-away edges).
-        let into_wall = approach.dot(*f);
-        if into_wall >= -0.001 && approach.length_squared() > 0.0001 {
+    let approach = Vec2::new(vel.x, vel.z);
+    let dirs: [(Vec2, f32, bool); 4] = [
+        (Vec2::X, he.x, hit_x),
+        (Vec2::NEG_X, he.x, hit_x),
+        (Vec2::new(0.0, 1.0), he.z, hit_z),
+        (Vec2::new(0.0, -1.0), he.z, hit_z),
+    ];
+
+    for (face, radius, hit_axis) in dirs {
+        // Was this exact face hit this frame while moving into it?
+        let hit_into = (face.x > 0.5 && hit_axis && vel.x >= 0.0)
+            || (face.x < -0.5 && hit_axis && vel.x <= 0.0)
+            || (face.y > 0.5 && hit_axis && vel.z >= 0.0)
+            || (face.y < -0.5 && hit_axis && vel.z <= 0.0);
+        let moving_in = approach.dot(face) > 0.15;
+        let pressed = approach.length_squared() < 0.01
+            && face_adjacent_solid(level, center, face, he);
+        if !(hit_into || moving_in || pressed) {
             continue;
         }
-        let px = center.x + f.x * dist;
-        let pz = center.z + f.y * dist;
-        let wt = ground_height(level, px, pz);
+
+        let probe = Vec3::new(
+            center.x + face.x * (radius + WALL_PROBE),
+            center.y,
+            center.z + face.y * (radius + WALL_PROBE),
+        );
+        let wt = ground_height(level, probe.x, probe.z);
         if !wt.is_finite() {
             continue;
         }
-        if wt < feet + 0.2 || wt > head - 0.55 {
-            continue;
-        }
-        // The lip has to be reachable: above the feet a bit, below the head.
-        if wt < feet + 0.28 || wt > head + 0.25 {
+        let above_feet = wt - feet;
+        if above_feet < GRAB_MIN_ABOVE_FEET || above_feet > GRAB_MAX_ABOVE_FEET {
             continue;
         }
         let lip_cell = IVec3::new(
-            px.floor() as i32,
+            probe.x.floor() as i32,
             (wt - 0.01).floor() as i32,
-            pz.floor() as i32,
+            probe.z.floor() as i32,
         );
-        if !level.is_solid(lip_cell) {
+        if !is_grabbable_lip(level, lip_cell) {
             continue;
         }
-        let above = lip_cell + IVec3::Y;
-        if level.is_solid(above) {
+
+        // Hang: just below the lip, clear of the wall.
+        let hang = Vec3::new(center.x, wt - he.y + HANG_DROP, center.z);
+        let hang = push_out_of_wall(level, hang, he, face);
+        if aabb_hits_solid(level, hang, he) {
             continue;
         }
+
+        // Mantle: standing on top of the block, slightly inset across the face.
+        let mantle = Vec3::new(
+            lip_cell.x as f32 + 0.5 - face.x * MANTLE_INSET,
+            wt + he.y + 0.01,
+            lip_cell.z as f32 + 0.5 - face.y * MANTLE_INSET,
+        );
+        if aabb_hits_solid(level, mantle, he) {
+            continue;
+        }
+
         return Some(LedgeGrip {
-            face: *f,
+            face,
             wall_top: wt,
+            hang_pos: hang,
+            mantle_pos: mantle,
         });
     }
+
     None
 }
 
