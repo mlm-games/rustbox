@@ -185,11 +185,8 @@ impl LevelDocument {
         }
     }
 
-    /// Whether `cell` is an invisible boundary solid (floor / walls / ceiling).
+    /// Whether `cell` is an invisible boundary solid (walls / ceiling).
     pub fn boundary_solid(&self, cell: IVec3) -> bool {
-        if cell.y < 0 {
-            return true;
-        }
         let size = self.play_size();
         let outside = cell.x.abs() > size[0] || cell.z.abs() > size[2];
         if self.data.boundary.walls && outside && cell.y <= self.boundary_top() {

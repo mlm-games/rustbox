@@ -52,7 +52,9 @@ fn local_column_solid(shape: BlockShape, lx: f32, lz: f32) -> bool {
 fn local_from_world(wx: f32, wz: f32, rot: u8) -> (f32, f32) {
     let angle = rot as f32 * std::f32::consts::FRAC_PI_2;
     let (s, c) = angle.sin_cos();
-    (c * wx + s * wz, -s * wx + c * wz)
+    let sx = wx - 0.5;
+    let sz = wz - 0.5;
+    (c * sx - s * sz + 0.5, s * sx + c * sz + 0.5)
 }
 
 /// World-space top-surface height of a block at world position (wx, wz).
@@ -222,7 +224,11 @@ fn resolve_axis(
                         };
                         let feet = p[1] - he[1];
                         let prev_feet = feet - delta;
-                        if column_solid && prev_feet >= top - 0.001 && feet <= top + 0.001 {
+                        const RIDE: f32 = 0.35;
+                        if column_solid
+                            && feet <= top + 0.001
+                            && (prev_feet >= top - 0.001 || prev_feet >= top - RIDE)
+                        {
                             p[1] = top + he[1];
                             collided = true;
                         }

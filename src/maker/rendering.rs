@@ -550,6 +550,11 @@ fn shape_faces(shape: BlockShape) -> Vec<FaceSpec> {
             });
         }
     }
+    for f in &mut faces {
+        for v in f.verts.iter_mut() {
+            *v -= Vec3::splat(0.5);
+        }
+    }
     faces
 }
 
@@ -644,7 +649,9 @@ fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &B
                 continue;
             }
         }
-        let verts = f.verts.map(|p| origin + rotate_y(p, block.rot));
+        let verts = f
+            .verts
+            .map(|p| origin + rotate_y(p, block.rot) + Vec3::splat(0.5));
         push_quad(out, verts, color);
     }
 }
@@ -711,7 +718,7 @@ fn build_water_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
                             continue;
                         }
                     }
-                    let verts = f.verts.map(|p| cell.as_vec3() + p);
+                    let verts = f.verts.map(|p| cell.as_vec3() + p + Vec3::splat(0.5));
                     push_quad(&mut out, verts, color);
                 }
             }
