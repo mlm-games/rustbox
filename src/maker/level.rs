@@ -75,7 +75,10 @@ impl LevelDocument {
 
         for x in -8..=8 {
             for z in -8..=8 {
-                self.set_block(IVec3::new(x, 0, z), Some(BlockData::new([x, 0, z], BlockKind::Grass)));
+                self.set_block(
+                    IVec3::new(x, 0, z),
+                    Some(BlockData::new([x, 0, z], BlockKind::Grass)),
+                );
             }
         }
 
@@ -200,7 +203,9 @@ impl LevelDocument {
 
     /// Whether `cell` is solid: either a placed block or the boundary.
     pub fn is_solid(&self, cell: IVec3) -> bool {
-        self.get_block(cell).map(|b| b.kind.is_solid()).unwrap_or(false)
+        self.get_block(cell)
+            .map(|b| b.kind.is_solid())
+            .unwrap_or(false)
             || self.boundary_solid(cell)
     }
 
@@ -231,7 +236,10 @@ impl LevelDocument {
     /// AABB of the playable volume `[min, max]` (inclusive cells).
     pub fn play_bounds(&self) -> (IVec3, IVec3) {
         let size = self.play_size();
-        (IVec3::new(-size[0], 0, -size[2]), IVec3::new(size[0], self.boundary_top(), size[2]))
+        (
+            IVec3::new(-size[0], 0, -size[2]),
+            IVec3::new(size[0], self.boundary_top(), size[2]),
+        )
     }
 
     pub fn mark_all_dirty(&mut self) {

@@ -229,49 +229,50 @@ pub fn compose_root(
         )),
         AppState::InGame => {
             let hud = ingame_hud(&st, actions.clone());
-            ZStack(Modifier::new().fill_max_size()).child((
-                hud,
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::Pause,
-                    pause_overlay(&st, actions.clone()),
-                    popup_anim_config("pause"),
-                ),
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::Settings,
-                    settings_view.clone(),
-                    popup_anim_config("ingame_settings"),
-                ),
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::Credits,
-                    credits_ui(&st, actions.clone()),
-                    popup_anim_config("ingame_credits"),
-                ),
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::LevelClear,
-                    level_clear_ui(&st, actions.clone()),
-                    popup_anim_config("level_clear"),
-                ),
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::LoadLevel,
-                    load_level_ui(&st, actions.clone()),
-                    popup_anim_config("load_level"),
-                ),
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::Share,
-                    share_overlay_ui(&st, actions.clone()),
-                    popup_anim_config("share"),
-                ),
-                AnimatedVisibility(
-                    st.overlay == OverlayMenu::LevelInfo,
-                    level_info_ui(&st, actions.clone()),
-                    popup_anim_config("level_info"),
-                ),
-            ))
-            .child(AnimatedVisibility(
-                st.overlay == OverlayMenu::Online,
-                online_ui(&st, actions.clone()),
-                popup_anim_config("ingame_online"),
-            ))
+            ZStack(Modifier::new().fill_max_size())
+                .child((
+                    hud,
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::Pause,
+                        pause_overlay(&st, actions.clone()),
+                        popup_anim_config("pause"),
+                    ),
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::Settings,
+                        settings_view.clone(),
+                        popup_anim_config("ingame_settings"),
+                    ),
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::Credits,
+                        credits_ui(&st, actions.clone()),
+                        popup_anim_config("ingame_credits"),
+                    ),
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::LevelClear,
+                        level_clear_ui(&st, actions.clone()),
+                        popup_anim_config("level_clear"),
+                    ),
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::LoadLevel,
+                        load_level_ui(&st, actions.clone()),
+                        popup_anim_config("load_level"),
+                    ),
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::Share,
+                        share_overlay_ui(&st, actions.clone()),
+                        popup_anim_config("share"),
+                    ),
+                    AnimatedVisibility(
+                        st.overlay == OverlayMenu::LevelInfo,
+                        level_info_ui(&st, actions.clone()),
+                        popup_anim_config("level_info"),
+                    ),
+                ))
+                .child(AnimatedVisibility(
+                    st.overlay == OverlayMenu::Online,
+                    online_ui(&st, actions.clone()),
+                    popup_anim_config("ingame_online"),
+                ))
         }
     };
 
@@ -360,11 +361,17 @@ fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .align_items(AlignItems::CENTER)
             .background(col(8, 8, 12)),
     )
-    .child(RText(t(tr, "app-title", "My Ecosystem Bevy")).size(56.0).color(RColor::WHITE))
+    .child(
+        RText(t(tr, "app-title", "My Ecosystem Bevy"))
+            .size(56.0)
+            .color(RColor::WHITE),
+    )
     .child(spacer(24.0))
-    .child(mk_button(&t(tr, "create", "Create"), col(60, 120, 200), move || {
-        push(&a_create, UiAction::StartGame)
-    }))
+    .child(mk_button(
+        &t(tr, "create", "Create"),
+        col(60, 120, 200),
+        move || push(&a_create, UiAction::StartGame),
+    ))
     .child(mk_button(
         &t(tr, "play-levels", "Play Levels"),
         col(80, 170, 120),
@@ -376,15 +383,21 @@ fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(mk_button("Online Levels", col(90, 160, 210), move || {
         push(&a_online, UiAction::OnlineOpen)
     }))
-    .child(mk_button(&t(tr, "settings", "Settings"), col(70, 70, 90), move || {
-        push(&a2, UiAction::OpenSettings)
-    }))
-    .child(mk_button(&t(tr, "credits", "Credits"), col(70, 70, 90), move || {
-        push(&a3, UiAction::OpenCredits)
-    }))
-    .child(mk_button(&t(tr, "quit", "Quit"), col(180, 60, 60), move || {
-        push(&a4, UiAction::QuitApp)
-    }))
+    .child(mk_button(
+        &t(tr, "settings", "Settings"),
+        col(70, 70, 90),
+        move || push(&a2, UiAction::OpenSettings),
+    ))
+    .child(mk_button(
+        &t(tr, "credits", "Credits"),
+        col(70, 70, 90),
+        move || push(&a3, UiAction::OpenCredits),
+    ))
+    .child(mk_button(
+        &t(tr, "quit", "Quit"),
+        col(180, 60, 60),
+        move || push(&a4, UiAction::QuitApp),
+    ))
 }
 
 fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -836,8 +849,13 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_shape = actions.clone();
     let a_rot = actions.clone();
     let a_log = actions.clone();
-    let shapes = ["Full", "Half", "Top", "Slope", "DSlope", "Corner", "O.Corner", "V.Slope", "V.Slab"];
-    let shape = shapes.get(st.brush_shape as usize).copied().unwrap_or("Full");
+    let shapes = [
+        "Full", "Half", "Top", "Slope", "DSlope", "Corner", "O.Corner", "V.Slope", "V.Slab",
+    ];
+    let shape = shapes
+        .get(st.brush_shape as usize)
+        .copied()
+        .unwrap_or("Full");
     let log = if st.waterlogged {
         format!("{} · {}° · wet", shape, st.brush_rot * 90)
     } else {
@@ -1810,11 +1828,9 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 
     let levels = &st.online_levels;
 
-    let header = Row(
-        Modifier::new()
-            .fill_max_size()
-            .align_items(AlignItems::CENTER),
-    )
+    let header = Row(Modifier::new()
+        .fill_max_size()
+        .align_items(AlignItems::CENTER))
     .child((
         RText("Online Levels").size(28.0).color(RColor::WHITE),
         Column(Modifier::new().fill_max_size()),
@@ -1858,7 +1874,8 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         move || push(&a_query_focus, UiAction::OnlineFocusQuery),
         ButtonConfig::default(),
         move || {
-            Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child(search_children.clone())
+            Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
+                .child(search_children.clone())
         },
     );
 
@@ -1882,18 +1899,19 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         move || {
             Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
                 Icon(Symbols::LINK).size(16.0).color(col(150, 150, 170)),
-                RText(token_display.clone()).size(13.0).color(if st.online_token.is_empty() {
-                    col(130, 130, 150)
-                } else {
-                    RColor::WHITE
-                }),
+                RText(token_display.clone())
+                    .size(13.0)
+                    .color(if st.online_token.is_empty() {
+                        col(130, 130, 150)
+                    } else {
+                        RColor::WHITE
+                    }),
             ))
         },
     );
-    let token_set = mk_pill_button(
-        icon_label(Symbols::CHECK, "Set".into()),
-        move || push(&a_set_token, UiAction::OnlineSetToken),
-    );
+    let token_set = mk_pill_button(icon_label(Symbols::CHECK, "Set".into()), move || {
+        push(&a_set_token, UiAction::OnlineSetToken)
+    });
     let token_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
         .child((token_field, token_set));
 

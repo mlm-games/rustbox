@@ -60,7 +60,8 @@ pub fn surface_top_height(block: &BlockData, wx: f32, wz: f32) -> f32 {
     let wx = (wx - block.position[0] as f32).clamp(0.0, 1.0);
     let wz = (wz - block.position[2] as f32).clamp(0.0, 1.0);
     let (lx, lz) = local_from_world(wx, wz, block.rot);
-    block.position[1] as f32 + local_surface_height(block.shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
+    block.position[1] as f32
+        + local_surface_height(block.shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
 }
 
 /// A horizontal direction expressed in the world frame, converted into the
@@ -189,8 +190,8 @@ fn resolve_axis(
                 // Boundary cells with no block (or a non-solid block like a
                 // spawn marker) are still solid, so invisible walls/floor
                 // actually stop the player.
-                let boundary = block.map(|b| !b.kind.is_solid()).unwrap_or(true)
-                    && level.boundary_solid(cell);
+                let boundary =
+                    block.map(|b| !b.kind.is_solid()).unwrap_or(true) && level.boundary_solid(cell);
                 let solid = block.is_some_and(|b| b.kind.is_solid()) || boundary;
                 if !solid {
                     continue;
@@ -201,9 +202,7 @@ fn resolve_axis(
                     // shaped top surface instead of a flat cell top.
                     if delta < 0.0 {
                         let top = match block {
-                            Some(b) if b.kind.is_solid() => {
-                                surface_top_height(b, v.x, v.z)
-                            }
+                            Some(b) if b.kind.is_solid() => surface_top_height(b, v.x, v.z),
                             _ => cell.y as f32 + 1.0,
                         };
                         // Only snap when the column under the player is solid

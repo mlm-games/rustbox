@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 
 use bevy::prelude::*;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use rustbox_format::api::{ApiError, LevelListResponse, LevelMeta, UploadMetadata, UploadResponse};
 use rustbox_format::file::decode_level;
@@ -23,22 +23,51 @@ pub fn api_base() -> &'static str {
 /// `ehttp` fetch and forwards the outcome onto the event channel.
 #[derive(Debug)]
 pub enum OnlineRequest {
-    List { query: String, limit: u64, offset: u64 },
-    Upload { meta: UploadMetadata, data: LevelData },
-    Download { meta: LevelMeta, play: bool },
-    Like { id: u64 },
-    Report { id: u64 },
-    Delete { id: u64 },
+    List {
+        query: String,
+        limit: u64,
+        offset: u64,
+    },
+    Upload {
+        meta: UploadMetadata,
+        data: LevelData,
+    },
+    Download {
+        meta: LevelMeta,
+        play: bool,
+    },
+    Like {
+        id: u64,
+    },
+    Report {
+        id: u64,
+    },
+    Delete {
+        id: u64,
+    },
 }
 
 #[derive(Debug)]
 pub enum OnlineEvent {
     Listed(Result<LevelListResponse, String>),
     Uploaded(Result<UploadResponse, String>),
-    Downloaded { meta: LevelMeta, result: Result<LevelData, String>, play: bool },
-    Liked { id: u64, result: Result<(), String> },
-    Reported { id: u64, result: Result<(), String> },
-    Deleted { id: u64, result: Result<(), String> },
+    Downloaded {
+        meta: LevelMeta,
+        result: Result<LevelData, String>,
+        play: bool,
+    },
+    Liked {
+        id: u64,
+        result: Result<(), String>,
+    },
+    Reported {
+        id: u64,
+        result: Result<(), String>,
+    },
+    Deleted {
+        id: u64,
+        result: Result<(), String>,
+    },
 }
 
 /// Optional upload token (never compiled into the binary). Only uploads and
@@ -136,17 +165,17 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
     let base = base_url(cfg);
     let ev_tx = ev_tx.clone();
     match req {
-        OnlineRequest::List { query, limit, offset } => {
+        OnlineRequest::List {
+            query,
+            limit,
+            offset,
+        } => {
             let mut url = format!("{base}/v1/levels?limit={limit}&offset={offset}");
             if !query.is_empty() {
                 url.push_str("&q=");
                 url.push_str(&urlencode(&query));
             }
-            send(
-                ehttp::Request::get(url),
-                ev_tx,
-                |r| OnlineEvent::Listed(r),
-            );
+            send(ehttp::Request::get(url), ev_tx, |r| OnlineEvent::Listed(r));
         }
         OnlineRequest::Upload { meta, data } => {
             let url = format!("{base}/v1/levels");
@@ -199,19 +228,15 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
         }
         OnlineRequest::Like { id } => {
             let url = format!("{base}/v1/levels/{id}/like");
-            send_empty(
-                ehttp::Request::post(url, Vec::new()),
-                ev_tx,
-                move |r| OnlineEvent::Liked { id, result: r },
-            );
+            send_empty(ehttp::Request::post(url, Vec::new()), ev_tx, move |r| {
+                OnlineEvent::Liked { id, result: r }
+            });
         }
         OnlineRequest::Report { id } => {
             let url = format!("{base}/v1/levels/{id}/report");
-            send_empty(
-                ehttp::Request::post(url, Vec::new()),
-                ev_tx,
-                move |r| OnlineEvent::Reported { id, result: r },
-            );
+            send_empty(ehttp::Request::post(url, Vec::new()), ev_tx, move |r| {
+                OnlineEvent::Reported { id, result: r }
+            });
         }
         OnlineRequest::Delete { id } => {
             let url = format!("{base}/v1/levels/{id}");

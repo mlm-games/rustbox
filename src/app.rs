@@ -724,8 +724,11 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     m.browse_confirm_delete = None;
                     let query = m.online_query.clone();
-                    m.online_pending
-                        .push(OnlineRequest::List { query, limit: 50, offset: 0 });
+                    m.online_pending.push(OnlineRequest::List {
+                        query,
+                        limit: 50,
+                        offset: 0,
+                    });
                     m.set_status("Loading online levels...");
                 }
                 *overlay = OverlayMenu::Online;
@@ -733,8 +736,11 @@ fn process_ui_actions(
             UiAction::OnlineRefresh => {
                 if let Some(ref mut m) = maker_ui {
                     let query = m.online_query.clone();
-                    m.online_pending
-                        .push(OnlineRequest::List { query, limit: 50, offset: 0 });
+                    m.online_pending.push(OnlineRequest::List {
+                        query,
+                        limit: 50,
+                        offset: 0,
+                    });
                     m.set_status("Loading online levels...");
                 }
             }
@@ -760,7 +766,8 @@ fn process_ui_actions(
                             created_at: String::new(),
                             updated_at: String::new(),
                         });
-                    m.online_pending.push(OnlineRequest::Download { meta, play: true });
+                    m.online_pending
+                        .push(OnlineRequest::Download { meta, play: true });
                 }
             }
             UiAction::OnlineLike(id) => {
@@ -1191,7 +1198,10 @@ fn handle_pause_input(
             *overlay = OverlayMenu::None;
             pending_unpause.0 = Some(Timer::from_seconds(0.2, TimerMode::Once));
         }
-        OverlayMenu::LevelClear | OverlayMenu::LoadLevel | OverlayMenu::LevelInfo | OverlayMenu::Online => {
+        OverlayMenu::LevelClear
+        | OverlayMenu::LoadLevel
+        | OverlayMenu::LevelInfo
+        | OverlayMenu::Online => {
             *overlay = OverlayMenu::None;
             paused.0 = false;
             virtual_time.unpause();

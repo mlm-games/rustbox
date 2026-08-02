@@ -116,9 +116,15 @@ pub fn render(level: &LevelData) -> ThumbImage {
     for b in order {
         let (x, y, z) = (b.position[0], b.position[1], b.position[2]);
         let (bot_h, top_h) = block_heights(b.shape);
-        let above = occ.get(&(x, y + 1, z)).is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
-        let px = occ.get(&(x + 1, y, z)).is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
-        let pz = occ.get(&(x, y, z + 1)).is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
+        let above = occ
+            .get(&(x, y + 1, z))
+            .is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
+        let px = occ
+            .get(&(x + 1, y, z))
+            .is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
+        let pz = occ
+            .get(&(x, y, z + 1))
+            .is_some_and(|nb| block_heights(nb.shape).0 == 0.0);
         let up = above && top_h == 1.0;
         if up && px && pz {
             continue; // fully hidden

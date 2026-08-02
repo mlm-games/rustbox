@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use super::block::{BlockKind, BlockShape, ALL_BLOCK_SHAPES};
+use super::block::{ALL_BLOCK_SHAPES, BlockKind, BlockShape};
 use super::camera::WorldCamera;
 use super::collision::raycast_present;
 use super::commands::{CommandHistory, EditCommand};
@@ -239,7 +239,13 @@ fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
     out
 }
 
-fn build_block_data(kind: BlockKind, shape: BlockShape, rot: u8, waterlogged: bool, cell: IVec3) -> BlockData {
+fn build_block_data(
+    kind: BlockKind,
+    shape: BlockShape,
+    rot: u8,
+    waterlogged: bool,
+    cell: IVec3,
+) -> BlockData {
     // Water is always a full, unlogged cell fill.
     let shape = if kind == BlockKind::Water {
         BlockShape::Full
@@ -422,11 +428,15 @@ pub fn update_preview_and_edit(
                                     for z in min.z..=max.z {
                                         let c = IVec3::new(x, y, z);
                                         let prev = level.get_block(c).cloned();
-                                        let same = prev
-                                            .as_ref()
-                                            .is_some_and(|b| {
-                                                (b.kind, b.shape, b.rot, b.waterlogged) == (brush.kind, brush.shape, brush.rot, brush.waterlogged)
-                                            });
+                                        let same = prev.as_ref().is_some_and(|b| {
+                                            (b.kind, b.shape, b.rot, b.waterlogged)
+                                                == (
+                                                    brush.kind,
+                                                    brush.shape,
+                                                    brush.rot,
+                                                    brush.waterlogged,
+                                                )
+                                        });
                                         if !same {
                                             cells.push((c, prev));
                                         }
@@ -438,7 +448,13 @@ pub fn update_preview_and_edit(
                                     &mut level,
                                     EditCommand::BoxFill {
                                         cells,
-                                        data: build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, place_cell),
+                                        data: build_block_data(
+                                            brush.kind,
+                                            brush.shape,
+                                            brush.rot,
+                                            brush.waterlogged,
+                                            place_cell,
+                                        ),
                                     },
                                 );
                             }
@@ -451,25 +467,31 @@ pub fn update_preview_and_edit(
                                 &mut level,
                                 EditCommand::Place {
                                     position: cell,
-                                    data: build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell),
+                                    data: build_block_data(
+                                        brush.kind,
+                                        brush.shape,
+                                        brush.rot,
+                                        brush.waterlogged,
+                                        cell,
+                                    ),
                                     previous: None,
                                 },
                             );
                             stats.blocks_placed += 1;
                             placed.write(BlockPlaced {
-                            cell,
-                            kind: brush.kind,
-                            shape: if brush.kind == BlockKind::Water {
-                                BlockShape::Full
-                            } else {
-                                brush.shape
-                            },
-                            rot: if brush.kind == BlockKind::Water {
-                                0
-                            } else {
-                                brush.rot
-                            },
-                        });
+                                cell,
+                                kind: brush.kind,
+                                shape: if brush.kind == BlockKind::Water {
+                                    BlockShape::Full
+                                } else {
+                                    brush.shape
+                                },
+                                rot: if brush.kind == BlockKind::Water {
+                                    0
+                                } else {
+                                    brush.rot
+                                },
+                            });
                         }
                     }
                     box_start.last_paint = Some(place_cell);
@@ -593,7 +615,13 @@ pub fn update_preview_and_edit(
                             &mut level,
                             EditCommand::Place {
                                 position: cell,
-                                data: build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell),
+                                data: build_block_data(
+                                    brush.kind,
+                                    brush.shape,
+                                    brush.rot,
+                                    brush.waterlogged,
+                                    cell,
+                                ),
                                 previous: None,
                             },
                         );

@@ -457,7 +457,12 @@ pub fn drain_ui_commands(
                 let meta = UploadMetadata {
                     name: level.data.name.clone(),
                     description: level.data.description.clone(),
-                    tags: level.data.tags.iter().map(|t| t.label().to_string()).collect(),
+                    tags: level
+                        .data
+                        .tags
+                        .iter()
+                        .map(|t| t.label().to_string())
+                        .collect(),
                     format_version: FORMAT_VERSION,
                     game_version: env!("CARGO_PKG_VERSION").to_string(),
                 };
@@ -645,8 +650,11 @@ pub fn online_text_input(
         } else if ev.key_code == KeyCode::Enter {
             if ui.online_focus == 0 {
                 let query = ui.online_query.clone();
-                ui.online_pending
-                    .push(OnlineRequest::List { query, limit: 50, offset: 0 });
+                ui.online_pending.push(OnlineRequest::List {
+                    query,
+                    limit: 50,
+                    offset: 0,
+                });
                 ui.set_status("Loading online levels...");
             } else {
                 let token = ui.online_token.trim().to_string();

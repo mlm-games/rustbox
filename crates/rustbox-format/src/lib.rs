@@ -17,10 +17,10 @@ pub mod level;
 pub mod track;
 
 pub use api::{
-    API_VERSION, MAX_TAGS, MAX_UPLOAD_BYTES, ApiError, LevelListResponse, LevelMeta,
+    API_VERSION, ApiError, LevelListResponse, LevelMeta, MAX_TAGS, MAX_UPLOAD_BYTES,
     UploadMetadata, UploadResponse,
 };
-pub use block::{ALL_BLOCK_SHAPES, ALL_BLOCK_KINDS, BlockKind, BlockShape};
+pub use block::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockKind, BlockShape};
 pub use entity::{EntityData, EntityKind, LevelEntityId};
 pub use file::{
     FORMAT_VERSION, LevelFile, decode_level, encode_level, export_code, import_code, validate_level,

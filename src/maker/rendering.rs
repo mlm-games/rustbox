@@ -564,7 +564,10 @@ fn face_occluded(shape: BlockShape, neighbor: Option<&BlockData>) -> bool {
     // A box-shaped neighbor with a full footprint covers an axis-aligned box
     // face. Sloped/cut shapes keep their side walls (culling them would punch
     // holes), so only boxes cull boxes.
-    let boxy = matches!(nb.shape, BlockShape::Full | BlockShape::Half | BlockShape::TopHalf);
+    let boxy = matches!(
+        nb.shape,
+        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf
+    );
     match shape {
         BlockShape::Full | BlockShape::Half | BlockShape::TopHalf => boxy,
         BlockShape::VerticalSlab => false,
@@ -592,7 +595,8 @@ fn push_quad(out: &mut MeshOut, v: [Vec3; 4], color: [f32; 4]) {
         out.normals.push(n.to_array());
         out.colors.push(color);
     }
-    out.indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
+    out.indices
+        .extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
 }
 
 fn build_shape_mesh(shape: BlockShape) -> Mesh {
@@ -610,7 +614,10 @@ fn build_shape_mesh(shape: BlockShape) -> Mesh {
 }
 
 fn finish_mesh(out: MeshOut) -> Mesh {
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, out.positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, out.normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, out.colors);
@@ -619,23 +626,13 @@ fn finish_mesh(out: MeshOut) -> Mesh {
 }
 
 /// Append the geometry for a single block at `cell` into `out`.
-fn append_block(
-    out: &mut MeshOut,
-    level: &LevelDocument,
-    cell: IVec3,
-    block: &BlockData,
-) {
+fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &BlockData) {
     if block.kind == BlockKind::Water {
         return;
     }
     let color = block.kind.color().to_linear().to_f32_array();
     let color = if level.cell_water(cell) {
-        [
-            color[0] * 0.55,
-            color[1] * 0.62,
-            color[2] * 0.78,
-            color[3],
-        ]
+        [color[0] * 0.55, color[1] * 0.62, color[2] * 0.78, color[3]]
     } else {
         color
     };
@@ -647,9 +644,7 @@ fn append_block(
                 continue;
             }
         }
-        let verts = f
-            .verts
-            .map(|p| origin + rotate_y(p, block.rot));
+        let verts = f.verts.map(|p| origin + rotate_y(p, block.rot));
         push_quad(out, verts, color);
     }
 }
@@ -693,7 +688,10 @@ fn build_water_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
     };
 
     let origin = cpos * CHUNK_SIZE;
-    let water = theme::theme_env(level.data.theme).water.to_linear().to_f32_array();
+    let water = theme::theme_env(level.data.theme)
+        .water
+        .to_linear()
+        .to_f32_array();
     let color = [water[0], water[1], water[2], 0.72];
 
     for lx in 0..CHUNK_SIZE {
@@ -810,13 +808,12 @@ pub fn rebuild_dirty_chunks(
     let has_water = |level: &LevelDocument, cpos: IVec3| -> bool {
         let origin = cpos * CHUNK_SIZE;
         level.map.iter().any(|(k, b)| {
-            b.kind == BlockKind::Water
-                && {
-                    let d = *k - origin;
-                    (0..CHUNK_SIZE).contains(&d.x)
-                        && (0..CHUNK_SIZE).contains(&d.y)
-                        && (0..CHUNK_SIZE).contains(&d.z)
-                }
+            b.kind == BlockKind::Water && {
+                let d = *k - origin;
+                (0..CHUNK_SIZE).contains(&d.x)
+                    && (0..CHUNK_SIZE).contains(&d.y)
+                    && (0..CHUNK_SIZE).contains(&d.z)
+            }
         })
     };
 
@@ -848,7 +845,9 @@ pub fn spawn_place_ghost(
             Mesh3d(mesh),
             MeshMaterial3d(assets.ghost_mats[&kind].clone()),
             Transform::from_translation(cell.as_vec3() + Vec3::splat(0.5))
-                .with_rotation(Quat::from_rotation_y(rot as f32 * std::f32::consts::FRAC_PI_2))
+                .with_rotation(Quat::from_rotation_y(
+                    rot as f32 * std::f32::consts::FRAC_PI_2,
+                ))
                 .with_scale(Vec3::splat(1.04)),
             GhostTimer(0.25),
             MakerCleanup,
@@ -889,14 +888,15 @@ pub fn rebuild_water_and_boundary(
     let ceiling = level.data.boundary.ceiling;
     let theme = level.data.theme;
     let edit = *mode == super::mode::MakerMode::Edit;
-    let changed = (water_level, size, walls, ceiling, theme, edit) != (
-        state.water_level,
-        state.size,
-        state.walls,
-        state.ceiling,
-        state.theme,
-        state.edit,
-    );
+    let changed = (water_level, size, walls, ceiling, theme, edit)
+        != (
+            state.water_level,
+            state.size,
+            state.walls,
+            state.ceiling,
+            state.theme,
+            state.edit,
+        );
 
     if changed {
         // Re-tint chunk geometry (underwater shading) when the water level or

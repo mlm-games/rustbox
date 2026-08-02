@@ -116,9 +116,7 @@ impl CommandHistory {
 
 pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
     match cmd {
-        EditCommand::Place { position, data, .. } => {
-            level.set_block(*position, Some(data.clone()))
-        }
+        EditCommand::Place { position, data, .. } => level.set_block(*position, Some(data.clone())),
         EditCommand::Remove { position, .. } => level.set_block(*position, None),
         EditCommand::PlaceEntity { entity } => {
             let mut e = entity.clone();
