@@ -103,7 +103,10 @@ impl Plugin for MakerPlugin {
                 )
                     .chain(),
             )
-            .add_systems(OnExit(AppState::InGame), cleanup_maker)
+            .add_systems(
+                OnExit(AppState::InGame),
+                (cleanup_maker, cursor::restore_cursor),
+            )
             .add_systems(
                 Update,
                 (
