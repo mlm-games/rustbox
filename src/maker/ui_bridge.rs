@@ -67,6 +67,9 @@ pub enum UiCommand {
     },
     /// Set the global water plane (None = no water).
     SetWaterLevel(Option<i32>),
+    /// Grow/shrink the play-size half-extents by `delta` on every axis
+    /// (clamped so it never cuts off existing blocks).
+    SizeDelta(i32),
     OnlineUpload,
 }
 
@@ -129,6 +132,8 @@ pub struct MakerUi {
     pub info_walls: bool,
     pub info_ceiling: bool,
     pub info_water: Option<i32>,
+    pub info_size: [i32; 3],
+    pub info_size_auto: bool,
 
     /// Online level-sharing state.
     pub online_levels: Vec<LevelMeta>,
@@ -428,11 +433,14 @@ pub fn drain_ui_commands(
                 ui.info_walls = level.data.boundary.walls;
                 ui.info_ceiling = level.data.boundary.ceiling;
                 ui.info_water = level.data.water_level;
+                ui.info_size = level.play_size();
+                ui.info_size_auto = level.data.size.is_none();
                 *overlay = OverlayMenu::LevelInfo;
             }
             UiCommand::SetBoundary { walls, ceiling } => {
                 level.data.boundary.walls = walls;
                 level.data.boundary.ceiling = ceiling;
+                level.mark_all_dirty();
                 ui.set_status(if walls {
                     "Boundary: walls on"
                 } else {
@@ -441,10 +449,30 @@ pub fn drain_ui_commands(
             }
             UiCommand::SetWaterLevel(level_) => {
                 level.data.water_level = level_;
+                level.mark_all_dirty();
                 ui.set_status(match level_ {
                     Some(y) => format!("Water plane at y={y}"),
                     None => "Water: off".to_string(),
                 });
+            }
+            UiCommand::SizeDelta(delta) => {
+                let base = level.data.size.unwrap_or_else(|| level.play_size());
+                let mut next = [base[0] + delta, base[1] + delta, base[2] + delta];
+                // Never let the box cut off placed blocks (or dip below 1).
+                let mut need = [1, 1, 1];
+                for b in level.map.values() {
+                    need[0] = need[0].max(b.position[0].abs());
+                    need[1] = need[1].max(b.position[1]);
+                    need[2] = need[2].max(b.position[2].abs());
+                }
+                for i in 0..3 {
+                    next[i] = next[i].max(need[i]);
+                }
+                level.data.size = Some(next);
+                level.mark_all_dirty();
+                ui.info_size = next;
+                ui.info_size_auto = false;
+                ui.set_status(format!("Size {}×{}×{}", next[0], next[1], next[2]));
             }
             UiCommand::SaveMetadata => {
                 level.data.name = ui.info_name.clone();

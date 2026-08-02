@@ -156,6 +156,8 @@ pub enum UiAction {
     LevelInfoToggleCeiling,
     /// Adjust the global water plane by `delta` cells (applies immediately).
     LevelInfoWaterDelta(i32),
+    /// Grow/shrink the play-size half-extents by `delta` on every axis.
+    LevelInfoSizeDelta(i32),
     SetPointerOverUi(bool),
 }
 
@@ -2411,6 +2413,25 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .child(water_label)
         .child(water_plus);
 
+    // Size control (radius half-extents rx × rz wide, ry tall).
+    let a_sup = actions.clone();
+    let a_sdn = actions.clone();
+    let size_auto = st.info_size_auto;
+    let size_label = RText(if size_auto {
+        "  Size: auto  ".to_string()
+    } else {
+        format!(
+            "  Size {}×{}×{}  ",
+            st.info_size[0], st.info_size[1], st.info_size[2]
+        )
+    });
+    let size_minus = mk_button_sm("-", move || push(&a_sdn, UiAction::LevelInfoSizeDelta(-1)));
+    let size_plus = mk_button_sm("+", move || push(&a_sup, UiAction::LevelInfoSizeDelta(1)));
+    let size_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
+        .child(size_minus)
+        .child(size_label)
+        .child(size_plus);
+
     let inner = Column(
         Modifier::new()
             .width(480.0)
@@ -2446,6 +2467,14 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     )
     .child(spacer(6.0))
     .child(settings_row)
+    .child(spacer(12.0))
+    .child(
+        RText("Type size: shrink from auto box, grow to enlarge.")
+            .size(11.0)
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(size_row)
     .child(spacer(12.0))
     .child(
         RText("Saving metadata does not reset verification.")

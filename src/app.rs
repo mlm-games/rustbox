@@ -255,6 +255,8 @@ pub struct SharedUi {
     pub info_walls: bool,
     pub info_ceiling: bool,
     pub info_water: Option<i32>,
+    pub info_size: [i32; 3],
+    pub info_size_auto: bool,
     // Online level sharing
     pub online_levels: Vec<rustbox_format::api::LevelMeta>,
     pub online_query: String,
@@ -331,6 +333,8 @@ impl Default for SharedUi {
             info_walls: true,
             info_ceiling: false,
             info_water: None,
+            info_size: [16, 12, 16],
+            info_size_auto: true,
             online_levels: Vec::new(),
             online_query: String::new(),
             online_token: String::new(),
@@ -487,6 +491,8 @@ fn sync_shared_ui(
         ui.info_walls = m.info_walls;
         ui.info_ceiling = m.info_ceiling;
         ui.info_water = m.info_water;
+        ui.info_size = m.info_size;
+        ui.info_size_auto = m.info_size_auto;
         ui.online_levels = sort_online(&m.online_levels, m.online_sort);
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
@@ -923,6 +929,11 @@ fn process_ui_actions(
                     };
                     m.info_water = next;
                     m.commands.push(UiCommand::SetWaterLevel(next));
+                }
+            }
+            UiAction::LevelInfoSizeDelta(delta) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::SizeDelta(delta));
                 }
             }
             UiAction::PlayBundledLevel(i) => {
