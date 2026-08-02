@@ -354,7 +354,7 @@ impl Plugin for AppPlugin {
                 ReposePluginSettings {
                     clear_alpha: 0.0,
                     compose_every_frame: true,
-                    msaa_samples: 4,
+                    msaa_samples: if cfg!(debug_assertions) { 1 } else { 4 },
                     overlay: true,
                 },
                 move |_s, _c| {
