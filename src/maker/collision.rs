@@ -372,23 +372,33 @@ pub struct LedgeGrip {
     pub wall_top: f32,
 }
 
-/// When falling next to a solid wall whose lip is within the player's reach,
-/// return a place to grip so the fall stops and a grab/climb becomes possible.
-pub fn ledge_grip(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<LedgeGrip> {
+/// When falling into a solid wall whose lip is within the player's reach,
+/// return a place to grab so the fall stops and a grab/climb becomes possible.
+pub fn ledge_grip(level: &LevelDocument, center: Vec3, he: Vec3, mv: Vec3) -> Option<LedgeGrip> {
     let faces = [
         Vec2::X,
         Vec2::NEG_X,
         Vec2::new(0.0, 1.0),
         Vec2::new(0.0, -1.0),
     ];
-    let dists = [he.x, he.x, he.z, he.z];
+    let di = [he.x, he.x, he.z, he.z];
     let feet = center.y - he.y;
     let head = center.y + he.y;
-    for (f, dist) in faces.iter().zip(dists.iter()) {
+    // Horizontal approach for the direction gate.
+    let approach = Vec2::new(mv.x, mv.z);
+    for (f, dist) in faces.iter().zip(di.iter()) {
+        // Only grab the lip we're steering toward (skip moving-away edges).
+        let into_wall = approach.dot(*f);
+        if into_wall >= -0.001 && approach.length_squared() > 0.0001 {
+            continue;
+        }
         let px = center.x + f.x * dist;
         let pz = center.z + f.y * dist;
         let wt = ground_height(level, px, pz);
         if !wt.is_finite() {
+            continue;
+        }
+        if wt < feet + 0.2 || wt > head - 0.55 {
             continue;
         }
         // The lip has to be reachable: above the feet a bit, below the head.

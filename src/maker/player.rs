@@ -293,7 +293,7 @@ pub fn player_controller(
             } else if kb && keys.pressed(KeyCode::KeyS) {
                 player.gripping = false;
                 player.grip_top = 0.0;
-            } else if let Some(g) = ledge_grip(&level, transform.translation, he) {
+            } else if let Some(g) = ledge_grip(&level, transform.translation, he, player.velocity) {
                 // Keep holding the (still-present) lip.
                 transform.translation.y = g.wall_top - he.y + 0.05;
                 player.velocity = Vec3::ZERO;
@@ -306,7 +306,7 @@ pub fn player_controller(
             && !underwater
             && !player.slamming
         {
-            if let Some(g) = ledge_grip(&level, transform.translation, he) {
+            if let Some(g) = ledge_grip(&level, transform.translation, he, player.velocity) {
                 transform.translation.y = g.wall_top - he.y + 0.05;
                 player.gripping = true;
                 player.grip_top = g.wall_top;
