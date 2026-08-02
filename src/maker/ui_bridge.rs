@@ -129,6 +129,8 @@ pub struct MakerUi {
     pub browse_difficulty: Option<u8>,
     pub browse_sort: u8,
     pub browse_confirm_delete: Option<String>,
+    /// Key of the currently selected level card (identity-only grid).
+    pub browse_selected: Option<String>,
 
     /// Key the current level is saved under (slot / collection entry), used by
     /// the Level Info metadata editor so it persists to the browsable copy.
@@ -153,8 +155,14 @@ pub struct MakerUi {
     pub online_levels: Vec<LevelMeta>,
     pub online_query: String,
     pub online_token: String,
-    /// 0 = by created_at, 1 = name, 2 = likes, 3 = plays (client-side ordering).
+    /// 0 = new, 1 = name, 2 = likes, 3 = plays (client-side secondary ordering).
     pub online_sort: u8,
+    /// Online shelf tab: 0 = New, 1 = Popular, 2 = Hot (recency-weighted).
+    pub online_shelf: u8,
+    /// Id of the currently selected online level card (detail panel).
+    pub online_selected: Option<u64>,
+    /// Dedicated "Level / Maker ID" search field, distinct from the query box.
+    pub online_id_query: String,
     pub online_loading: bool,
     /// Requests the flush system turns into fetches (kept here so
     /// `drain_ui_commands` stays under Bevy's 16-param system limit).

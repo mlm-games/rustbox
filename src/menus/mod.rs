@@ -12,8 +12,10 @@ use repose_core::prelude::{
 };
 use repose_core::{ImeAction, KeyboardOptions, KeyboardType, TextFieldLineLimits};
 use repose_material::material3::{
-    ButtonConfig, DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem,
-    FilledTonalButton, FilledTonalIconButton, IconButtonColors, IconButtonConfig, MenuState,
+    ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, DropdownMenu,
+    DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem, FilledTonalButton,
+    FilledTonalIconButton, IconButtonColors, IconButtonConfig, InputChip, MenuState,
+    OutlinedTextField, OutlinedTextFieldConfig,
 };
 use repose_material::{Icon, Symbol, material_symbols};
 use repose_ui::anim_ext::{
@@ -126,6 +128,8 @@ pub enum UiAction {
     BrowseDelete(String),
     BrowseConfirmDelete(String),
     BrowseCancelDelete,
+    BrowseSelect(String),
+    BrowseClearSelection,
     BrowseToggleTag(LevelTag),
     BrowseToggleVerified,
     BrowseSetDifficulty(Option<u8>),
@@ -140,6 +144,11 @@ pub enum UiAction {
     OnlineReport(u64),
     OnlineDelete(u64),
     OnlineUpload,
+    OnlineSelect(u64),
+    OnlineClearSelection,
+    OnlineSetShelf(u8),
+    OnlineSetIdQuery(String),
+    OnlineSearchId,
     OnlineSetToken(String),
     OnlineSetQuery(String),
     OnlineSearch,
@@ -1671,168 +1680,56 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let sort_row = Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER))
         .child((sort_button, count_text));
 
-    let card = |s: &LevelSummary| -> View {
-        let a_play = actions.clone();
-        let a_edit = actions.clone();
-        let a_del = actions.clone();
-        let a_yes = actions.clone();
-        let a_no = actions.clone();
-        let k_play = s.key.clone();
-        let k_edit = s.key.clone();
-        let k_del = s.key.clone();
-        let confirming = st.browse_confirm_delete.as_deref() == Some(s.key.as_str());
-
-        let mut name_children: Vec<View> =
-            vec![RText(s.name.clone()).size(16.0).color(RColor::WHITE)];
-        if s.verified {
-            name_children.push(Icon(Symbols::CHECK).size(15.0).color(col(220, 210, 120)));
-        }
-        if s.source == LevelSourceKind::Collection {
-            name_children.push(
-                Icon(Symbols::FOLDER_OPEN)
-                    .size(14.0)
-                    .color(col(150, 150, 170)),
-            );
-        }
-
-        let mut tag_pills: Vec<View> = Vec::new();
-        for tag in &s.tags {
-            tag_pills.push(
-                Column(
-                    Modifier::new()
-                        .padding(6.0)
-                        .background(tag_color(*tag))
-                        .clip_rounded(8.0),
-                )
-                .child(RText(tag.label()).size(11.0).color(col(170, 170, 190))),
-            );
-        }
-        let mut stats = format!("{} blocks · {} ents", s.block_count, s.entity_count);
-        if s.track_count > 0 {
-            stats.push_str(&format!(" · {} tracks", s.track_count));
-        }
-        tag_pills.push(RText(stats).size(11.0).color(col(140, 140, 160)));
-
-        let mut meta: Vec<View> = vec![
-            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(name_children),
-            icon_text(
-                Symbols::AUTO_AWESOME,
-                format!(
-                    "{} · {} · {}",
-                    if s.author.is_empty() {
-                        "Unknown".to_string()
-                    } else {
-                        s.author.clone()
-                    },
-                    difficulty_label(s.difficulty),
-                    s.record_ms
-                        .map(|t| format!("{:.2}s", t as f32 / 1000.0))
-                        .unwrap_or_else(|| "· no record".to_string())
-                ),
-                12.0,
-                col(150, 150, 170),
-            ),
-        ];
-        if !s.description.is_empty() {
-            let desc = if s.description.chars().count() > 120 {
-                let mut d: String = s.description.chars().take(120).collect();
-                d.push_str("...");
-                d
-            } else {
-                s.description.clone()
-            };
-            meta.push(RText(desc).size(13.0).color(col(190, 190, 205)));
-        }
-        meta.push(Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(tag_pills));
-
-        let mut rows: Vec<View> = Vec::new();
-        rows.push(
-            Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
-                Column(
-                    Modifier::new()
-                        .width(76.0)
-                        .height(56.0)
-                        .align_items(AlignItems::CENTER)
-                        .justify_content(JustifyContent::CENTER)
-                        .background(col(30, 30, 42))
-                        .clip_rounded(8.0),
-                )
-                .child(thumb_grid_view(&s.preview)),
-                Column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .gap(6.0)
-                        .align_items(AlignItems::FLEX_START),
-                )
-                .child(meta),
-            )),
-        );
-
-        let action_row: View = if confirming {
-            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
-                RText("Delete?").size(13.0).color(col(230, 140, 140)),
-                mk_button_sm("Yes", move || {
-                    push(&a_yes, UiAction::BrowseConfirmDelete(k_del.clone()))
-                }),
-                mk_button_sm("No", move || push(&a_no, UiAction::BrowseCancelDelete)),
-            ))
-        } else {
-            Row(Modifier::new().gap(6.0)).child((
-                mk_icon_button(Symbols::PLAY_ARROW, true, move || {
-                    push(&a_play, UiAction::BrowsePlay(k_play.clone()))
-                }),
-                mk_icon_button(Symbols::EDIT, true, move || {
-                    push(&a_edit, UiAction::BrowseEdit(k_edit.clone()))
-                }),
-                mk_icon_button(Symbols::REMOVE, true, move || {
-                    push(&a_del, UiAction::BrowseDelete(k_del.clone()))
-                }),
-            ))
-        };
-        rows.push(action_row);
-
-        Column(
-            Modifier::new()
-                .fill_max_size()
-                .background(col(40, 40, 52))
-                .clip_rounded(10.0)
-                .padding(10.0)
-                .gap(6.0),
-        )
-        .child(rows)
-    };
-
-    let mut list: Vec<View> = Vec::new();
+    let mut grid_children: Vec<View> = Vec::new();
     if st.browse_levels.is_empty() {
-        list.push(
+        grid_children.push(
             RText("Import a share code or save to your collection from Share.")
                 .size(14.0)
                 .color(col(180, 180, 190)),
         );
     } else if levels.is_empty() {
-        list.push(
+        grid_children.push(
             RText("No matches. Try author:, tag:puzzle, has:gate, verified:1.")
                 .size(14.0)
                 .color(col(180, 180, 190)),
         );
     } else {
         for s in levels {
-            list.push(card(s));
+            grid_children.push(browse_card(s, st, &actions));
         }
     }
 
     let scroll_state = remember_scroll_state("browse_list");
-    let list_column = Column(Modifier::new().fill_max_width().gap(6.0)).with_children(list);
-    let scroll_list = ScrollArea(
-        Modifier::new().fill_max_width().height(360.0),
-        scroll_state,
-        list_column,
+    let grid_view = repose_ui::Grid(
+        3,
+        Modifier::new().fill_max_width(),
+        grid_children,
+        10.0,
+        10.0,
     );
+    let scroll_list = ScrollArea(
+        Modifier::new().fill_max_width().weight(1.0),
+        scroll_state,
+        grid_view,
+    );
+
+    // Detail panel: identity + actions, rendered when a card is selected.
+    let detail: View = match st
+        .browse_visible
+        .iter()
+        .find(|s| st.browse_selected.as_deref() == Some(s.key.as_str()))
+    {
+        Some(sd) => local_detail_panel(sd, &actions),
+        None => BrowseSelectPanel(vec![
+            RText("Select a level").size(14.0).color(col(150, 150, 170)),
+        ]),
+    };
 
     let inner = Column(
         Modifier::new()
-            .width(600.0)
-            .max_height(680.0)
+            .fill_max_width()
+            .width(760.0)
+            .max_height(720.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -1850,9 +1747,222 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(spacer(10.0))
     .child(sort_row)
     .child(spacer(12.0))
-    .child(scroll_list);
+    .child(
+        Row(Modifier::new().fill_max_width().align_items(AlignItems::CENTER)).child((
+            Column(Modifier::new().fill_max_width().weight(1.0)).child(scroll_list),
+            detail,
+        )),
+    );
 
     modal_shell(inner)
+}
+
+fn diff_strip_color(difficulty: u8) -> RColor {
+    match difficulty {
+        0 => col(100, 180, 140),
+        1 => col(150, 170, 90),
+        2 => col(220, 150, 90),
+        _ => col(220, 90, 90),
+    }
+}
+
+fn browse_card(
+    s: &LevelSummary,
+    st: &SharedUi,
+    actions: &Arc<Mutex<Vec<UiAction>>>,
+) -> View {
+    let b_sel = actions.clone();
+    let k = s.key.clone();
+    let selected = st.browse_selected.as_deref() == Some(s.key.as_str());
+
+    let mut name_children: Vec<View> =
+        vec![RText(s.name.clone()).size(16.0).color(RColor::WHITE)];
+    if s.verified {
+        name_children.push(Icon(Symbols::CHECK).size(15.0).color(col(220, 210, 120)));
+    }
+    if s.source == LevelSourceKind::Collection {
+        name_children.push(
+            Icon(Symbols::FOLDER_OPEN).size(14.0).color(col(150, 150, 170)),
+        );
+    }
+
+    let card_config = CardConfig {
+        border: Some((if selected { 2.0 } else { 1.0 }, if selected {
+            col(255, 217, 59)
+        } else {
+            RColor::from_rgba(255, 255, 255, 40)
+        })),
+        shape_radius: 12.0,
+        ..Default::default()
+    };
+
+    ClickableOutlinedCard(
+        move || push(&b_sel, UiAction::BrowseSelect(k.clone())),
+        Modifier::new().fill_max_width(),
+        card_config,
+        move || {
+            Column(Modifier::new().gap(6.0).align_items(AlignItems::FLEX_START)).child((
+                // Thumbnail as the card's face (identity only).
+                Column(
+                    Modifier::new()
+                        .fill_max_width()
+                        .align_items(AlignItems::CENTER)
+                        .justify_content(JustifyContent::CENTER)
+                        .background(col(30, 30, 42))
+                        .clip_rounded(8.0)
+                        .height(96.0),
+                )
+                .child(thumb_grid_view(&s.preview)),
+                Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER))
+                    .child(name_children),
+                Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
+                    Column(
+                        Modifier::new()
+                            .width(46.0)
+                            .height(18.0)
+                            .background(diff_strip_color(s.difficulty))
+                            .clip_rounded(9.0)
+                            .align_items(AlignItems::CENTER),
+                    )
+                    .child(
+                        RText(difficulty_label(s.difficulty))
+                            .size(11.0)
+                            .color(RColor::from_rgba(0, 0, 0, 230)),
+                    ),
+                    RText(
+                        if s.author.is_empty() {
+                            "Unknown".to_string()
+                        } else {
+                            s.author.clone()
+                        },
+                    )
+                    .size(12.0)
+                    .color(col(150, 150, 170)),
+                )),
+            ))
+        },
+    )
+}
+
+fn local_detail_panel(
+    s: &LevelSummary,
+    actions: &Arc<Mutex<Vec<UiAction>>>,
+) -> View {
+    let a_play = actions.clone();
+    let a_edit = actions.clone();
+    let a_del = actions.clone();
+    let k_play = s.key.clone();
+    let k_edit = s.key.clone();
+    let k_del = s.key.clone();
+
+    let mut name_children: Vec<View> =
+        vec![RText(s.name.clone()).size(20.0).color(RColor::WHITE)];
+    if s.verified {
+        name_children.push(Icon(Symbols::CHECK).size(16.0).color(col(220, 210, 120)));
+    }
+
+    let mut tag_pills: Vec<View> = Vec::new();
+    for tag in &s.tags {
+        tag_pills.push(
+            Column(
+                Modifier::new()
+                    .padding(6.0)
+                    .background(tag_color(*tag))
+                    .clip_rounded(8.0),
+            )
+            .child(RText(tag.label()).size(11.0).color(col(170, 170, 190))),
+        );
+    }
+
+    let mut stats = format!("{} blocks · {} ents", s.block_count, s.entity_count);
+    if s.track_count > 0 {
+        stats.push_str(&format!(" · {} tracks", s.track_count));
+    }
+    tag_pills.push(RText(stats).size(11.0).color(col(140, 140, 160)));
+
+    let action_row: View = Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER))
+        .child((
+            FilledTonalButton(
+                Modifier::new().height(34.0),
+                move || push(&a_play, UiAction::BrowsePlay(k_play.clone())),
+                ButtonConfig::default(),
+                move || {
+                    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                        Icon(Symbols::PLAY_ARROW).size(18.0).color(RColor::WHITE),
+                        RText("Play").size(14.0).color(RColor::WHITE),
+                    ))
+                },
+            ),
+            FilledTonalButton(
+                Modifier::new().height(34.0),
+                move || push(&a_edit, UiAction::BrowseEdit(k_edit.clone())),
+                ButtonConfig::default(),
+                move || {
+                    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                        Icon(Symbols::EDIT).size(16.0).color(RColor::WHITE),
+                        RText("Edit").size(14.0).color(RColor::WHITE),
+                    ))
+                },
+            ),
+            FilledTonalButton(
+                Modifier::new().height(34.0),
+                move || push(&a_del, UiAction::BrowseDelete(k_del.clone())),
+                ButtonConfig::default(),
+                move || {
+                    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                        Icon(Symbols::DELETE).size(16.0).color(col(232, 120, 120)),
+                        RText("Delete").size(14.0).color(col(232, 120, 120)),
+                    ))
+                },
+            ),
+        ));
+
+    Column(
+        Modifier::new()
+            .width(280.0)
+            .fill_max_height()
+            .background(col(24, 24, 34))
+            .clip_rounded(12.0)
+            .padding(14.0)
+            .gap(8.0),
+    )
+    .child((
+        // Large preview
+        Column(
+            Modifier::new()
+                .fill_max_width()
+                .align_items(AlignItems::CENTER)
+                .justify_content(JustifyContent::CENTER)
+                .background(col(30, 30, 42))
+                .clip_rounded(8.0)
+                .height(120.0),
+        )
+        .child(thumb_grid_view(&s.preview)),
+        Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(name_children),
+        RText(
+            if s.author.is_empty() {
+                "Unknown".to_string()
+            } else {
+                s.author.clone()
+            },
+        )
+        .size(12.0)
+        .color(col(150, 150, 170)),
+        Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(tag_pills),
+        action_row,
+    ))
+}
+
+/// Right-side detail panel shown before any card is selected.
+#[allow(non_snake_case)]
+fn BrowseSelectPanel(views: Vec<View>) -> View {
+    Column(
+        Modifier::new()
+            .width(280.0)
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER),
+    )
+    .with_children(views)
 }
 
 fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -2042,130 +2152,109 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .size(12.0)
             .color(col(150, 150, 170))
     };
-    let sort_row = Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER))
-        .child((sort_button, count_text));
+    let _sort_row: ();
 
-    let card = |m: &LevelMeta| -> View {
-        let a_play = actions.clone();
-        let a_like = actions.clone();
-        let a_report = actions.clone();
-        let a_del = actions.clone();
-        let id = m.id;
-
-        let mut meta: Vec<View> = vec![
-            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
-                RText(m.name.clone()).size(16.0).color(RColor::WHITE),
-                RText(format!("#{}", m.id))
-                    .size(12.0)
-                    .color(col(130, 130, 150)),
-            )),
-            icon_text(
-                Symbols::AUTO_AWESOME,
-                format!(
-                    "{} · {} likes · {} plays · {:.1} KB",
-                    if m.author.is_empty() {
-                        "Unknown".to_string()
-                    } else {
-                        m.author.clone()
-                    },
-                    m.likes,
-                    m.plays,
-                    m.size_bytes as f32 / 1024.0,
-                ),
-                12.0,
-                col(150, 150, 170),
-            ),
-        ];
-        if !m.created_at.is_empty() {
-            let date: String = m.created_at.chars().take(10).collect();
-            meta.push(RText(date).size(11.0).color(col(130, 130, 150)));
-        }
-        if !m.description.is_empty() {
-            let desc = if m.description.chars().count() > 120 {
-                let mut d: String = m.description.chars().take(120).collect();
-                d.push_str("...");
-                d
+    // Shelf tabs (MM2 category shelves): New / Popular / Hot.
+    let shelf_labels = ["New", "Popular", "Hot"];
+    let mut shelf_row_children: Vec<View> = Vec::new();
+    for (i, name) in shelf_labels.iter().enumerate() {
+        let a = actions.clone();
+        let idx = i as u8;
+        let selected = st.online_shelf == idx;
+        shelf_row_children.push(InputChip(
+            selected,
+            move || push(&a, UiAction::OnlineSetShelf(idx)),
+            RText(*name).size(13.0).color(if selected {
+                RColor::WHITE
             } else {
-                m.description.clone()
-            };
-            meta.push(RText(desc).size(13.0).color(col(190, 190, 205)));
-        }
-        if !m.tags.is_empty() {
-            let mut tag_pills: Vec<View> = Vec::new();
-            for tag in &m.tags {
-                tag_pills.push(
-                    Column(
-                        Modifier::new()
-                            .padding(6.0)
-                            .background(col(60, 60, 80))
-                            .clip_rounded(8.0),
-                    )
-                    .child(RText(tag.clone()).size(11.0).color(col(170, 170, 190))),
-                );
-            }
-            meta.push(Row(Modifier::new().gap(6.0)).child(tag_pills));
-        }
-
-        let action_row = Row(Modifier::new().gap(6.0)).child((
-            mk_icon_button(Symbols::PLAY_ARROW, true, move || {
-                push(&a_play, UiAction::OnlinePlay(id))
+                col(160, 160, 175)
             }),
-            mk_icon_button(Symbols::THUMB_UP, true, move || {
-                push(&a_like, UiAction::OnlineLike(id))
-            }),
-            mk_icon_button(Symbols::FLAG, true, move || {
-                push(&a_report, UiAction::OnlineReport(id))
-            }),
-            mk_icon_button(Symbols::DELETE, true, move || {
-                push(&a_del, UiAction::OnlineDelete(id))
-            }),
+            None,
+            None,
+            None,
+            ChipConfig {
+                shape_radius: 10.0,
+                ..Default::default()
+            },
         ));
+    }
+    let shelf_row = Row(Modifier::new().gap(6.0)).child(shelf_row_children);
 
-        Column(
-            Modifier::new()
-                .fill_max_size()
-                .background(col(40, 40, 52))
-                .clip_rounded(10.0)
-                .padding(10.0)
-                .gap(6.0),
-        )
-        .child((
-            Column(
-                Modifier::new()
-                    .fill_max_width()
-                    .gap(6.0)
-                    .align_items(AlignItems::FLEX_START),
-            )
-            .child(meta),
-            action_row,
-        ))
-    };
+    // Dedicated "Search with ID" field (always visible, MM2 pattern).
+    let id_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
+    let id_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if !id_focus.get() && id_state.borrow().text != st.online_id_query {
+        id_state.borrow_mut().text = st.online_id_query.clone();
+    }
+    let id_change = actions.clone();
+    let id_submit = actions.clone();
+    let a_id_go = actions.clone();
+    let id_field = OutlinedTextField(
+        Modifier::new().width(170.0),
+        st.online_id_query.clone(),
+        move |v: String| push(&id_change, UiAction::OnlineSetIdQuery(v)),
+        OutlinedTextFieldConfig {
+            label: Some("Level ID".into()),
+            placeholder: None,
+            single_line: true,
+            on_submit: Some(Rc::new(move |_v: String| push(&id_submit, UiAction::OnlineSearchId))),
+            ..Default::default()
+        },
+    );
+    let id_row = Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+        id_field,
+        FilledTonalButton(
+            Modifier::new().height(36.0),
+            move || push(&a_id_go, UiAction::OnlineSearchId),
+            ButtonConfig::default(),
+            move || {
+                Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                    Icon(Symbols::SEARCH).size(16.0).color(RColor::WHITE),
+                    RText("Go").size(13.0).color(RColor::WHITE),
+                ))
+            },
+        ),
+    ));
 
-    let mut list: Vec<View> = Vec::new();
+    // A 3-across grid of identity-only cards.
+    let mut grid_children: Vec<View> = Vec::new();
     if levels.is_empty() {
-        list.push(
-            RText("No levels online yet. Publish one, or search / press refresh to re-fetch.")
+        grid_children.push(
+            RText("No levels online yet. Publish one, or search / refresh to re-fetch.")
                 .size(14.0)
                 .color(col(180, 180, 190)),
         );
     } else {
         for m in levels {
-            list.push(card(m));
+            grid_children.push(online_card(m, st, &actions));
         }
     }
 
     let scroll_state = remember_scroll_state("online_list");
-    let list_column = Column(Modifier::new().fill_max_width().gap(6.0)).with_children(list);
+    let grid_view = repose_ui::Grid(3, Modifier::new().fill_max_width(), grid_children, 10.0, 10.0);
     let scroll_list = ScrollArea(
-        Modifier::new().fill_max_width().height(340.0),
+        Modifier::new().fill_max_width().weight(1.0),
         scroll_state,
-        list_column,
+        grid_view,
     );
+
+    // Detail panel: identity + actions, shown when a card is selected.
+    let detail: View = match st
+        .online_levels
+        .iter()
+        .find(|m| st.online_selected == Some(m.id))
+    {
+        Some(m) => online_detail_panel(m, &actions),
+        None => BrowseSelectPanel(vec![
+            RText("Select a level").size(14.0).color(col(150, 150, 170)),
+        ]),
+    };
 
     let inner = Column(
         Modifier::new()
-            .width(640.0)
-            .max_height(680.0)
+            .fill_max_width()
+            .width(760.0)
+            .max_height(720.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -2182,17 +2271,197 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             upload_button,
             verified_hint,
             Column(Modifier::new().fill_max_width()),
-            RText(st.maker_status.clone())
-                .size(12.0)
-                .color(col(150, 150, 170)),
+            id_row,
         )),
     )
     .child(spacer(12.0))
-    .child(sort_row)
+    .child(
+        Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
+            shelf_row,
+            Column(Modifier::new().fill_max_width()),
+            sort_button,
+            count_text,
+        )),
+    )
     .child(spacer(12.0))
-    .child(scroll_list);
+    .child(
+        Row(Modifier::new().fill_max_width().align_items(AlignItems::CENTER)).child((
+            Column(Modifier::new().fill_max_width().weight(1.0)).child(scroll_list),
+            detail,
+        )),
+    );
 
     modal_shell(inner)
+}
+
+/// An identity-only online card: thumbnail-accent, name, author, stats. No
+/// actions on the tile; click selects it and opens the detail panel.
+fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>) -> View {
+    let b_sel = actions.clone();
+    let id = m.id;
+    let selected = st.online_selected == Some(m.id);
+
+    let card_config = CardConfig {
+        border: Some((if selected { 2.0 } else { 1.0 }, if selected {
+            col(255, 217, 59)
+        } else {
+            RColor::from_rgba(255, 255, 255, 40)
+        })),
+        shape_radius: 12.0,
+        ..Default::default()
+    };
+
+    ClickableOutlinedCard(
+        move || push(&b_sel, UiAction::OnlineSelect(id)),
+        Modifier::new().fill_max_width(),
+        card_config,
+        move || {
+            let date: String = m.created_at.chars().take(10).collect();
+            let children: Vec<View> = vec![
+                // Thumbnail-accent band (identity only; no stored image yet).
+                Row(Modifier::new()
+                    .fill_max_width()
+                    .height(84.0)
+                    .align_items(AlignItems::CENTER)
+                    .justify_content(JustifyContent::CENTER)
+                    .background(col(30, 30, 42))
+                    .clip_rounded(8.0))
+                .child(
+                    RText("#id")
+                        .size(13.0)
+                        .color(col(120, 120, 140)),
+                ),
+                Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                    RText(m.name.clone()).size(15.0).color(RColor::WHITE),
+                    RText(format!("#{}", m.id)).size(11.0).color(col(130, 130, 150)),
+                )),
+                RText(
+                    if m.author.is_empty() {
+                        "Unknown".to_string()
+                    } else {
+                        m.author.clone()
+                    },
+                )
+                .size(12.0)
+                .color(col(150, 150, 170)),
+                RText(format!("♥ {}  ▶ {} · {}", m.likes, m.plays, date))
+                    .size(11.0)
+                    .color(col(140, 140, 160)),
+            ];
+            Column(Modifier::new().gap(6.0).align_items(AlignItems::FLEX_START))
+                .with_children(children)
+        },
+    )
+}
+
+/// Right-side detail panel for a selected online level with its actions.
+fn online_detail_panel(m: &LevelMeta, actions: &Arc<Mutex<Vec<UiAction>>>) -> View {
+    let a_play = actions.clone();
+    let a_like = actions.clone();
+    let a_delete = actions.clone();
+    let a_report = actions.clone();
+    let id = m.id;
+
+    let action_row: View = Column(Modifier::new().gap(6.0)).child((
+        FilledTonalButton(
+            Modifier::new().height(36.0).fill_max_width(),
+            move || push(&a_play, UiAction::OnlinePlay(id)),
+            ButtonConfig::default(),
+            move || {
+                Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                    Icon(Symbols::PLAY_ARROW).size(18.0).color(RColor::WHITE),
+                    RText("Play").size(14.0).color(RColor::WHITE),
+                ))
+            },
+        ),
+        Row(Modifier::new().gap(6.0)).child((
+            FilledTonalButton(
+                Modifier::new().height(34.0),
+                move || push(&a_like, UiAction::OnlineLike(id)),
+                ButtonConfig::default(),
+                move || {
+                    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                        Icon(Symbols::THUMB_UP).size(16.0).color(RColor::WHITE),
+                        RText("Like").size(13.0).color(RColor::WHITE),
+                    ))
+                },
+            ),
+            FilledTonalButton(
+                Modifier::new().height(34.0),
+                move || push(&a_delete, UiAction::OnlineDelete(id)),
+                ButtonConfig::default(),
+                move || {
+                    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                        Icon(Symbols::DELETE).size(16.0).color(col(232, 120, 120)),
+                        RText("Delete").size(13.0).color(col(232, 120, 120)),
+                    ))
+                },
+            ),
+            FilledTonalButton(
+                Modifier::new().height(34.0),
+                move || push(&a_report, UiAction::OnlineReport(id)),
+                ButtonConfig::default(),
+                move || {
+                    Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                        Icon(Symbols::FLAG).size(16.0).color(RColor::WHITE),
+                        RText("Report").size(13.0).color(RColor::WHITE),
+                    ))
+                },
+            ),
+        )),
+    ));
+
+    let mut tag_pills: Vec<View> = Vec::new();
+    for tag in &m.tags {
+        tag_pills.push(
+            Column(Modifier::new().padding(6.0).background(col(60, 60, 80)).clip_rounded(8.0))
+                .child(RText(tag.clone()).size(11.0).color(col(170, 170, 190))),
+        );
+    }
+
+    Column(
+        Modifier::new()
+            .width(280.0)
+            .fill_max_height()
+            .background(col(24, 24, 34))
+            .clip_rounded(12.0)
+            .padding(14.0)
+            .gap(8.0),
+    )
+    .child((
+        Row(Modifier::new()
+            .fill_max_width()
+            .height(100.0)
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER)
+            .background(col(30, 30, 42))
+            .clip_rounded(8.0))
+        .child(RText(format!("#{}", m.id)).size(18.0).color(col(140, 140, 160))),
+        RText(m.name.clone()).size(19.0).color(RColor::WHITE),
+        RText(
+            if m.author.is_empty() {
+                "Unknown".to_string()
+            } else {
+                m.author.clone()
+            },
+        )
+        .size(13.0)
+        .color(col(150, 150, 170)),
+        if m.tags.is_empty() {
+            RText("").size(0.0)
+        } else {
+            Row(Modifier::new().gap(6.0)).child(tag_pills)
+        },
+        RText(format!(
+            "{} likes · {} plays · {:.1} KB",
+            m.likes,
+            m.plays,
+            m.size_bytes as f32 / 1024.0
+        ))
+        .size(12.0)
+        .color(col(140, 140, 160)),
+        action_row,
+    ))
 }
 
 /// Renders an isometric preview as a grid of colored boxes (Repose primitives

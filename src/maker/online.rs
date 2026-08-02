@@ -28,6 +28,8 @@ pub enum OnlineRequest {
         limit: u64,
         offset: u64,
     },
+    /// Fetch a single level's metadata by server id (MM2-style "Search with ID").
+    FetchById(u64),
     Upload {
         meta: UploadMetadata,
         data: LevelData,
@@ -50,6 +52,11 @@ pub enum OnlineRequest {
 #[derive(Debug)]
 pub enum OnlineEvent {
     Listed(Result<LevelListResponse, String>),
+    /// A single `GET /v1/levels/:id` lookup for the "Search with ID" field.
+    FetchedById {
+        id: u64,
+        result: Result<LevelMeta, String>,
+    },
     Uploaded(Result<UploadResponse, String>),
     Downloaded {
         meta: LevelMeta,
@@ -176,6 +183,12 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
                 url.push_str(&urlencode(&query));
             }
             send(ehttp::Request::get(url), ev_tx, |r| OnlineEvent::Listed(r));
+        }
+        OnlineRequest::FetchById(id) => {
+            let url = format!("{base}/v1/levels/{id}");
+            send(ehttp::Request::get(url), ev_tx, move |r| {
+                OnlineEvent::FetchedById { id, result: r }
+            });
         }
         OnlineRequest::Upload { meta, data } => {
             let url = format!("{base}/v1/levels");
@@ -383,6 +396,18 @@ pub fn poll_online_events(
                 Err(e) => {
                     ui.online_loading = false;
                     ui.set_status(format!("Browse failed: {e}"));
+                }
+            },
+            OnlineEvent::FetchedById { id, result } => match result {
+                Ok(meta) => {
+                    ui.online_loading = false;
+                    ui.online_levels = vec![meta];
+                    ui.online_selected = Some(id);
+                    ui.set_status(format!("Found #{id}"));
+                }
+                Err(e) => {
+                    ui.online_loading = false;
+                    ui.set_status(format!("ID search ({id}): {e}"));
                 }
             },
             OnlineEvent::Uploaded(result) => match result {

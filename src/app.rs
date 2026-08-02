@@ -252,6 +252,8 @@ pub struct SharedUi {
     pub browse_difficulty: Option<u8>,
     pub browse_sort: u8,
     pub browse_confirm_delete: Option<String>,
+    /// Selected local level key (detail panel).
+    pub browse_selected: Option<String>,
     // Level Info metadata editor
     pub info_name: String,
     pub info_author: String,
@@ -274,6 +276,12 @@ pub struct SharedUi {
     pub online_token: String,
     pub online_sort: u8,
     pub online_loading: bool,
+    /// Selected online level id (detail panel).
+    pub online_selected: Option<u64>,
+    /// Shelf tab: 0 = New, 1 = Popular, 2 = Hot.
+    pub online_shelf: u8,
+    /// Dedicated Level/Maker ID search string.
+    pub online_id_query: String,
 }
 
 impl Default for SharedUi {
@@ -339,6 +347,7 @@ impl Default for SharedUi {
             browse_difficulty: None,
             browse_sort: 0,
             browse_confirm_delete: None,
+            browse_selected: None,
             info_name: String::new(),
             info_author: String::new(),
             info_description: String::new(),
@@ -356,6 +365,9 @@ impl Default for SharedUi {
             online_token: String::new(),
             online_sort: 0,
             online_loading: false,
+            online_selected: None,
+            online_shelf: 0,
+            online_id_query: String::new(),
         }
     }
 }
@@ -502,6 +514,7 @@ fn sync_shared_ui(
         ui.browse_difficulty = m.browse_difficulty;
         ui.browse_sort = m.browse_sort;
         ui.browse_confirm_delete = m.browse_confirm_delete.clone();
+        ui.browse_selected = m.browse_selected.clone();
         ui.info_name = m.info_name.clone();
         ui.info_author = m.info_author.clone();
         ui.info_description = m.info_description.clone();
@@ -514,10 +527,13 @@ fn sync_shared_ui(
         ui.info_height = m.info_height;
         ui.info_blocks = m.info_blocks;
         ui.info_entities = m.info_entities;
-        ui.online_levels = sort_online(&m.online_levels, m.online_sort);
+        ui.online_levels = sort_online(&m.online_levels, m.online_sort, m.online_shelf);
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
         ui.online_sort = m.online_sort;
+        ui.online_shelf = m.online_shelf;
+        ui.online_selected = m.online_selected;
+        ui.online_id_query = m.online_id_query.clone();
         ui.online_loading = m.online_loading;
         ui.brush_entities = m.brush_entities;
         ui.selected_entity = m.selected_entity;
@@ -612,12 +628,20 @@ fn set_vol(bridge: &UiBridge, field: impl Fn(&mut SharedUi) -> &mut f32, v: f32)
     }
 }
 
-/// Client-side ordering for the online listing (the server returns raw order).
 fn sort_online(
     levels: &[rustbox_format::api::LevelMeta],
     mode: u8,
+    shelf: u8,
 ) -> Vec<rustbox_format::api::LevelMeta> {
     let mut v = levels.to_vec();
+    if shelf == 1 {
+        v.sort_by(|a, b| b.likes.cmp(&a.likes));
+        return v;
+    }
+    if shelf == 2 {
+        v.sort_by(|a, b| hot_of(b).total_cmp(&hot_of(a)));
+        return v;
+    }
     match mode % 4 {
         0 => v.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
         1 => v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
@@ -625,6 +649,12 @@ fn sort_online(
         _ => v.sort_by(|a, b| b.plays.cmp(&a.plays)),
     }
     v
+}
+
+fn hot_of(m: &rustbox_format::api::LevelMeta) -> f64 {
+    let engagement = m.likes as f64 * 4.0 + m.plays as f64;
+    let recency = m.created_at.bytes().map(|b| b as f64).sum::<f64>();
+    engagement * (1.0 + (recency % 97.0) / 97.0)
 }
 
 fn process_ui_actions(
@@ -731,6 +761,18 @@ fn process_ui_actions(
                     m.browse_confirm_delete = None;
                 }
             }
+            UiAction::BrowseSelect(key) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_selected = Some(key);
+                    m.browse_confirm_delete = None;
+                }
+            }
+            UiAction::BrowseClearSelection => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_selected = None;
+                    m.browse_confirm_delete = None;
+                }
+            }
             UiAction::BrowseToggleTag(tag) => {
                 if let Some(ref mut m) = maker_ui {
                     if let Some(pos) = m.browse_include_tags.iter().position(|t| *t == tag) {
@@ -799,6 +841,38 @@ fn process_ui_actions(
                         offset: 0,
                     });
                     m.set_status("Loading online levels...");
+                }
+            }
+            UiAction::OnlineSelect(id) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_selected = Some(id);
+                }
+            }
+            UiAction::OnlineClearSelection => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_selected = None;
+                }
+            }
+            UiAction::OnlineSetShelf(shelf) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_shelf = shelf;
+                }
+            }
+            UiAction::OnlineSetIdQuery(q) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_id_query = q;
+                }
+            }
+            UiAction::OnlineSearchId => {
+                if let Some(ref mut m) = maker_ui {
+                    let id: u64 = m.online_id_query.trim().parse().unwrap_or(0);
+                    if id == 0 {
+                        m.set_status("Enter a numeric level ID.");
+                    } else {
+                        m.online_loading = true;
+                        m.online_pending.push(OnlineRequest::FetchById(id));
+                        m.set_status(format!("Searching #{id}"));
+                    }
                 }
             }
             UiAction::OnlinePlay(id) => {
