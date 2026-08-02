@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockKind, BlockShape};
 use crate::entity::EntityData;
-use crate::level::{BlockData, LevelData, Theme};
+use crate::level::{BlockData, BoundaryConfig, LevelData, LevelTag, Theme};
 use crate::track::TrackData;
 
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 
 /// Upper bound for inflating untrusted levels (tiny compressed input must not
 /// explode into gigabytes of memory).
@@ -25,6 +25,153 @@ pub const MAX_COORD: i32 = 512;
 pub struct LevelFile {
     pub version: u32,
     pub level: LevelData,
+}
+
+/// Layout of version-3 levels (before times moved to milliseconds).
+#[derive(Serialize, Deserialize)]
+pub struct LevelFileV3 {
+    pub version: u32,
+    pub level: LevelDataV3,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelDataV3 {
+    pub name: String,
+    pub spawn: [i32; 3],
+    pub blocks: Vec<BlockData>,
+    #[serde(default)]
+    pub entities: Vec<EntityData>,
+    #[serde(default)]
+    pub tracks: Vec<TrackData>,
+    #[serde(default)]
+    pub entities_version: u32,
+    #[serde(default)]
+    pub author_time: Option<f32>,
+    #[serde(default)]
+    pub author_deaths: u32,
+    #[serde(default)]
+    pub record_seconds: Option<f32>,
+    #[serde(default)]
+    pub is_verified: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<LevelTag>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub size: Option<[i32; 3]>,
+    #[serde(default)]
+    pub water_level: Option<i32>,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub boundary: BoundaryConfig,
+    #[serde(default)]
+    pub secret_stars: u8,
+    #[serde(default)]
+    pub coin_star: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelFileV3Pre {
+    pub version: u32,
+    pub level: LevelDataV3Pre,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelDataV3Pre {
+    pub name: String,
+    pub spawn: [i32; 3],
+    pub blocks: Vec<BlockData>,
+    #[serde(default)]
+    pub entities: Vec<EntityData>,
+    #[serde(default)]
+    pub tracks: Vec<TrackData>,
+    #[serde(default)]
+    pub entities_version: u32,
+    #[serde(default)]
+    pub author_time: Option<f32>,
+    #[serde(default)]
+    pub author_deaths: u32,
+    #[serde(default)]
+    pub is_verified: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<LevelTag>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub size: Option<[i32; 3]>,
+    #[serde(default)]
+    pub water_level: Option<i32>,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub boundary: BoundaryConfig,
+    #[serde(default)]
+    pub secret_stars: u8,
+    #[serde(default)]
+    pub coin_star: bool,
+}
+
+fn secs_to_ms(t: Option<f32>) -> Option<u32> {
+    t.map(|s| (s * 1000.0).round() as u32)
+}
+
+pub fn upgrade_v3(old: LevelDataV3) -> LevelData {
+    LevelData {
+        name: old.name,
+        spawn: old.spawn,
+        blocks: old.blocks,
+        entities: old.entities,
+        tracks: old.tracks,
+        entities_version: old.entities_version,
+        author_time: secs_to_ms(old.author_time),
+        author_deaths: old.author_deaths,
+        record_ms: secs_to_ms(old.record_seconds),
+        is_verified: old.is_verified,
+        description: old.description,
+        tags: old.tags,
+        author: old.author,
+        created_at: old.created_at,
+        size: old.size,
+        water_level: old.water_level,
+        theme: old.theme,
+        boundary: old.boundary,
+        secret_stars: old.secret_stars,
+        coin_star: old.coin_star,
+    }
+}
+
+pub fn upgrade_v3pre(old: LevelDataV3Pre) -> LevelData {
+    LevelData {
+        name: old.name,
+        spawn: old.spawn,
+        blocks: old.blocks,
+        entities: old.entities,
+        tracks: old.tracks,
+        entities_version: old.entities_version,
+        author_time: secs_to_ms(old.author_time),
+        author_deaths: old.author_deaths,
+        record_ms: None,
+        is_verified: old.is_verified,
+        description: old.description,
+        tags: old.tags,
+        author: old.author,
+        created_at: old.created_at,
+        size: old.size,
+        water_level: old.water_level,
+        theme: old.theme,
+        boundary: old.boundary,
+        secret_stars: old.secret_stars,
+        coin_star: old.coin_star,
+    }
 }
 
 /// Layout of version-2 levels (before size/water/theme were added). Only
@@ -117,8 +264,9 @@ fn upgrade_v2(old: LevelDataV2) -> LevelData {
         entities: old.entities,
         tracks: old.tracks,
         entities_version: old.entities_version,
-        author_time: old.author_time,
+        author_time: secs_to_ms(old.author_time),
         author_deaths: old.author_deaths,
+        record_ms: None,
         is_verified: old.is_verified,
         description: old.description,
         tags: old.tags,
@@ -168,28 +316,40 @@ pub fn decode_level(compressed: &[u8]) -> anyhow::Result<LevelData> {
     let bytes =
         miniz_oxide::inflate::decompress_to_vec_with_limit(compressed, MAX_DECOMPRESSED_LEVEL_SIZE)
             .map_err(|_| anyhow::anyhow!("corrupted level (inflate failed)"))?;
-    match bincode::deserialize::<LevelFile>(&bytes) {
-        Ok(file) => match file.version {
-            1 | 2 | 3 => Ok(file.level),
-            v => bail!("unknown level format version {v}"),
-        },
-        Err(_) => match bincode::deserialize::<LevelFileV2>(&bytes) {
-            Ok(old) => {
-                if old.version != 2 {
-                    bail!("unknown level format version {}", old.version);
-                }
-                Ok(upgrade_v2(old.level))
-            }
-            Err(_) => {
-                // Oldest codes were produced with an even smaller struct.
-                let old: LevelFileV1 =
+    let version = {
+        let head: [u8; 4] = bytes
+            .get(..4)
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| anyhow::anyhow!("corrupted level"))?;
+        u32::from_le_bytes(head)
+    };
+    match version {
+        4 => {
+            let file: LevelFile =
+                bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
+            Ok(file.level)
+        }
+        3 => {
+            // v3 levels exist in two layouts (before/after record_seconds).
+            if let Ok(old) = bincode::deserialize::<LevelFileV3>(&bytes) {
+                Ok(upgrade_v3(old.level))
+            } else {
+                let old: LevelFileV3Pre =
                     bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
-                if old.version != 1 {
-                    bail!("unknown level format version {}", old.version);
-                }
-                Ok(upgrade_v1(old.level))
+                Ok(upgrade_v3pre(old.level))
             }
-        },
+        }
+        2 => {
+            let old: LevelFileV2 =
+                bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
+            Ok(upgrade_v2(old.level))
+        }
+        1 => {
+            let old: LevelFileV1 =
+                bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
+            Ok(upgrade_v1(old.level))
+        }
+        v => bail!("unknown level format version {v}"),
     }
 }
 
@@ -258,9 +418,6 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
             }
         }
     }
-    if level.author_time.is_some_and(|t| !t.is_finite()) {
-        bail!("author time is not finite");
-    }
     if let Some(w) = level.water_level {
         if w.abs() > MAX_COORD {
             bail!("water level out of bounds");
@@ -305,6 +462,7 @@ mod tests {
             entities_version: 1,
             author_time: None,
             author_deaths: 0,
+            record_ms: None,
             is_verified: true,
             description: String::new(),
             tags: vec![],

@@ -119,11 +119,19 @@ impl Plugin for MakerPlugin {
                 Update,
                 (
                     editor::toggle_mode,
-                    editor::block_palette_hotkeys.run_if(in_edit),
-                    editor::entity_palette_hotkeys.run_if(in_edit),
-                    editor::track_tool_hotkeys.run_if(in_edit),
+                    editor::block_palette_hotkeys
+                        .run_if(in_edit)
+                        .run_if(not_in_paste_preview),
+                    editor::entity_palette_hotkeys
+                        .run_if(in_edit)
+                        .run_if(not_in_paste_preview),
+                    editor::track_tool_hotkeys
+                        .run_if(in_edit)
+                        .run_if(not_in_paste_preview),
                     editor::undo_redo_hotkeys.run_if(in_edit),
-                    editor::mirror_hotkey.run_if(in_edit),
+                    editor::mirror_hotkey
+                        .run_if(in_edit)
+                        .run_if(not_in_paste_preview),
                     editor::update_preview_and_edit
                         .run_if(in_edit)
                         .run_if(not_in_paste_preview),

@@ -21,8 +21,9 @@ pub struct LevelSummary {
     pub track_count: u32,
     pub verified: bool,
     pub created_at: u64,
-    pub author_time: Option<f32>,
-    pub author_deaths: u32,
+    /// World record in ms (fastest non-author clear); distinct from the maker's
+    /// internal verification time, which is never surfaced in the UI.
+    pub record_ms: Option<u32>,
     /// Soft "difficulty" 0..=3 from content heuristics (not player ratings).
     pub difficulty: u8,
     /// Bitset of which entity kinds appear in the level (`KIND_*` flags).
@@ -74,8 +75,7 @@ fn summarize(key: String, data: &LevelData, source: LevelSourceKind) -> LevelSum
         track_count: data.tracks.len() as u32,
         verified: data.is_verified,
         created_at: data.created_at,
-        author_time: data.author_time,
-        author_deaths: data.author_deaths,
+        record_ms: data.record_ms,
         difficulty: estimate_difficulty(data),
         kind_flags,
         source,
@@ -100,9 +100,9 @@ pub fn estimate_difficulty(data: &LevelData) -> u8 {
         .count() as u32;
     score += data.tracks.len() as u32;
     if let Some(t) = data.author_time {
-        if t > 90.0 {
+        if t > 90_000 {
             score += 2;
-        } else if t > 45.0 {
+        } else if t > 45_000 {
             score += 1;
         }
     }
@@ -320,8 +320,8 @@ pub fn filter_catalog(
         1 => out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
         2 => out.sort_by_key(|l| l.block_count),
         3 => out.sort_by_key(|l| std::cmp::Reverse(l.block_count)),
-        4 => out.sort_by(|a, b| match (a.author_time, b.author_time) {
-            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        4 => out.sort_by(|a, b| match (a.record_ms, b.record_ms) {
+            (Some(x), Some(y)) => x.cmp(&y),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             _ => b.created_at.cmp(&a.created_at),

@@ -208,6 +208,14 @@ pub struct SharedUi {
     // Level clear
     pub clear_time_secs: f32,
     pub clear_deaths: u32,
+    /// True when this run created the level's first record (own/first clear).
+    pub first_clear: bool,
+    /// True when the current player's clear set/beat the world record.
+    pub new_record: bool,
+    /// True when the current player is the level's author.
+    pub player_is_author: bool,
+    /// World record in ms (fastest non-author clear). Distinct from author_time.
+    pub record_ms: Option<u32>,
     // Named slots
     pub level_slots: Vec<String>,
     pub level_name: String,
@@ -233,7 +241,6 @@ pub struct SharedUi {
     pub mirror: u8,
     pub link_channel: u32,
     // Campaign / bundled levels
-    pub author_time: Option<f32>,
     pub is_bundled: bool,
     pub campaign_levels: Vec<crate::maker::campaign::CampaignLevelUi>,
     // Browse
@@ -299,6 +306,10 @@ impl Default for SharedUi {
             pointer_over_ui: false,
             clear_time_secs: 0.0,
             clear_deaths: 0,
+            first_clear: false,
+            new_record: false,
+            player_is_author: false,
+            record_ms: None,
             level_slots: vec![],
             level_name: "Untitled Level".to_string(),
             brush_entities: false,
@@ -318,7 +329,6 @@ impl Default for SharedUi {
             track_ids: Vec::new(),
             mirror: 0,
             link_channel: 1,
-            author_time: None,
             is_bundled: false,
             campaign_levels: Vec::new(),
             browse_levels: Vec::new(),
@@ -473,6 +483,9 @@ fn sync_shared_ui(
         ui.maker_status = m.status.clone();
         ui.clear_time_secs = m.clear_time_secs;
         ui.clear_deaths = m.clear_deaths;
+        ui.first_clear = m.first_clear;
+        ui.new_record = m.new_record;
+        ui.player_is_author = m.player_is_author;
         ui.level_slots = m.level_slots.clone();
         ui.browse_levels = m.catalog.clone();
         ui.browse_visible = crate::maker::catalog::filter_catalog(
@@ -531,7 +544,7 @@ fn sync_shared_ui(
     }
     if let Some(l) = level {
         ui.level_name = l.data.name.clone();
-        ui.author_time = l.data.author_time;
+        ui.record_ms = l.data.record_ms;
     }
     if let Some(s) = source {
         use crate::maker::campaign::LevelSource;

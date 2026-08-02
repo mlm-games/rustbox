@@ -1352,24 +1352,49 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .color(RColor::WHITE),
     ];
 
-    if let Some(author) = st.author_time {
-        let beat = st.clear_time_secs <= author;
+    if st.player_is_author {
         body.push(icon_text(
             Symbols::STAR,
-            if beat {
-                format!(
-                    "{} ({author:.2}s)",
-                    t(tr, "maker-beat-author", "Beat the author!")
-                )
-            } else {
-                format!("Author: {author:.2}s - try again?")
-            },
+            format!(
+                "{} ({:.2}s)",
+                t(tr, "maker-cleared", "Cleared!"),
+                st.clear_time_secs
+            ),
             16.0,
-            if beat {
-                col(120, 230, 140)
-            } else {
-                col(255, 200, 90)
-            },
+            col(120, 230, 140),
+        ));
+    } else if st.new_record {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{} ({:.2}s)",
+                t(tr, "maker-new-record", "New record!"),
+                st.clear_time_secs
+            ),
+            16.0,
+            col(120, 230, 140),
+        ));
+    } else if let Some(record) = st.record_ms {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{}: {:.2}s",
+                t(tr, "maker-record", "Record"),
+                record as f32 / 1000.0
+            ),
+            16.0,
+            col(255, 200, 90),
+        ));
+    } else if st.first_clear {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{} ({:.2}s)",
+                t(tr, "maker-first-clear", "First clear!"),
+                st.clear_time_secs
+            ),
+            16.0,
+            col(120, 230, 140),
         ));
     }
 
@@ -1700,9 +1725,9 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                         s.author.clone()
                     },
                     difficulty_label(s.difficulty),
-                    s.author_time
-                        .map(|t| format!("{t:.1}s"))
-                        .unwrap_or_else(|| "-".to_string())
+                    s.record_ms
+                        .map(|t| format!("{:.2}s", t as f32 / 1000.0))
+                        .unwrap_or_else(|| "· no record".to_string())
                 ),
                 12.0,
                 col(150, 150, 170),

@@ -451,7 +451,6 @@ fn paste_clipboard(
 
         let mut entity = item.data.clone();
         let old_cell = entity.cell_i();
-        let delta = pos - old_cell;
 
         entity.id = level.alloc_id();
         entity.cell = pos.to_array();
@@ -459,7 +458,9 @@ fn paste_clipboard(
 
         // Move legacy paired-cell data with the pasted entity.
         if let Some(cell_b) = entity.cell_b {
-            entity.cell_b = Some((IVec3::from_array(cell_b) + delta).to_array());
+            let relative_b = IVec3::from_array(cell_b) - old_cell;
+            let rotated_b = transformed_cell(relative_b, IVec3::ZERO, yaw);
+            entity.cell_b = Some((pos + rotated_b).to_array());
         }
 
         entities.push(entity);
@@ -497,6 +498,7 @@ fn paste_clipboard(
 pub fn update_paste_preview(
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
+    capture: Res<InputCapture>,
     cursor: Res<EditorCursor>,
     mut preview: ResMut<PastePreview>,
     mut selection: ResMut<SelectionSet>,
@@ -507,6 +509,14 @@ pub fn update_paste_preview(
     mut box_select: ResMut<SelectionBoxStart>,
 ) {
     if !preview.active {
+        return;
+    }
+
+    if capture.ui_wants_keyboard {
+        return;
+    }
+
+    if capture.ui_wants_pointer {
         return;
     }
 
@@ -568,8 +578,8 @@ pub fn draw_box_fill_preview(
     let max = a.max(b);
 
     // World bounds covering every cell from `min` to `max` inclusive.
-    let lo = min.as_vec3() - Vec3::splat(0.5);
-    let hi = max.as_vec3() + Vec3::new(0.5, 0.5, 0.5) + Vec3::ONE;
+    let lo = min.as_vec3();
+    let hi = (max + IVec3::ONE).as_vec3();
     let center = (lo + hi) * 0.5;
     let size = hi - lo;
 
@@ -669,6 +679,10 @@ pub fn selection_hotkeys(
     mut preview: ResMut<PastePreview>,
 ) {
     if capture.ui_wants_keyboard {
+        return;
+    }
+
+    if preview.active {
         return;
     }
 

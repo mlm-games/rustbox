@@ -106,6 +106,14 @@ pub struct MakerUi {
     pub glimmers_total: u32,
     pub score: u32,
     pub level_verified: bool,
+    /// True when this run's clear created the level's first record, so the clear screen can
+    /// show a "first clear" instead of a "beat the author" comparison.
+    pub first_clear: bool,
+    /// True when the current player cleared and set/beat the world record.
+    pub new_record: bool,
+    /// True when the current player is the level's author (maker). Author
+    /// clear times never count toward the world record.
+    pub player_is_author: bool,
     pub export_code: String,
     pub import_code: String,
     pub export_error: Option<String>,

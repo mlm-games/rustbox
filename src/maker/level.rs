@@ -37,6 +37,7 @@ impl Default for LevelDocument {
                 entities_version: 1,
                 author_time: None,
                 author_deaths: 0,
+                record_ms: None,
                 is_verified: false,
                 description: String::new(),
                 tags: vec![],

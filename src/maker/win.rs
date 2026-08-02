@@ -32,6 +32,9 @@ pub fn detect_goal(
             ui.goal_latched = true;
             ui.clear_time_secs = ui.play_timer;
             ui.clear_deaths = ui.deaths;
+            let clear_ms = (ui.play_timer * 1000.0).round() as u32;
+            let is_author = source.as_deref() == Some(&LevelSource::Editor);
+            ui.player_is_author = is_author;
 
             if let (Some(s), Some(p)) = (&source, progress.as_deref_mut())
                 && let LevelSource::Bundled(i) = **s
@@ -42,9 +45,28 @@ pub fn detect_goal(
 
             if !level.data.is_verified {
                 level.data.is_verified = true;
-                level.data.author_time = Some(ui.play_timer);
-                level.data.author_deaths = ui.deaths;
-                ui.set_status("Level verified!");
+                if is_author {
+                    // The maker's verification clear is recorded internally for verification.
+                    level.data.author_time = Some(clear_ms);
+                    level.data.author_deaths = ui.deaths;
+                    ui.first_clear = true;
+                    ui.new_record = false;
+                    ui.set_status("Level verified! First clear recorded.");
+                } else {
+                    level.data.record_ms = Some(clear_ms);
+                    ui.first_clear = true;
+                    ui.new_record = true;
+                    ui.set_status("First clear! You set the world record.");
+                }
+            } else if !is_author {
+                let better = level.data.record_ms.is_none_or(|r| clear_ms < r);
+                if better {
+                    level.data.record_ms = Some(clear_ms);
+                    ui.new_record = true;
+                } else {
+                    ui.new_record = false;
+                }
+                ui.first_clear = false;
             }
 
             ScreenEffects::add_trauma(&mut trauma, 0.45);
@@ -82,6 +104,9 @@ pub fn on_mode_changed(
     if *mode == MakerMode::Play {
         ui.play_timer = 0.0;
         ui.goal_latched = false;
+        ui.first_clear = false;
+        ui.new_record = false;
+        ui.player_is_author = false;
         ui.glimmers_collected = 0;
         ui.score = 0;
         level.entities_dirty = true;

@@ -221,10 +221,15 @@ pub struct LevelData {
     pub tracks: Vec<TrackData>,
     #[serde(default = "level_format_entities")]
     pub entities_version: u32,
+    /// Maker's verification clear time in milliseconds. Recorded internally on
+    /// the author's clear and never surfaced as a beatable world record.
     #[serde(default)]
-    pub author_time: Option<f32>,
+    pub author_time: Option<u32>,
     #[serde(default)]
     pub author_deaths: u32,
+    /// Fastest clear time in milliseconds held by a **non-author** player.
+    #[serde(default)]
+    pub record_ms: Option<u32>,
     #[serde(default)]
     pub is_verified: bool,
     #[serde(default)]

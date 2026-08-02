@@ -388,6 +388,7 @@ mod tests {
             entities_version: 1,
             author_time: None,
             author_deaths: 0,
+            record_ms: None,
             is_verified: true,
             description: String::new(),
             tags: vec![],

@@ -23,7 +23,9 @@ pub use api::{
 pub use block::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockKind, BlockShape};
 pub use entity::{EntityData, EntityKind, LevelEntityId};
 pub use file::{
-    FORMAT_VERSION, LevelFile, decode_level, encode_level, export_code, import_code, validate_level,
+    FORMAT_VERSION, LevelDataV3, LevelDataV3Pre, LevelFile, LevelFileV3, LevelFileV3Pre,
+    decode_level, encode_level, export_code, import_code, upgrade_v3, upgrade_v3pre,
+    validate_level,
 };
 pub use level::{BlockData, BoundaryConfig, BoundaryPreset, LevelData, LevelTag, Theme};
 pub use track::{TrackData, TrackId, TrackMode};

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use rustbox_format::file::{FORMAT_VERSION, LevelFile};
+use rustbox_format::file::{FORMAT_VERSION, LevelFile, LevelFileV3, upgrade_v3};
 use rustbox_format::level::LevelData;
 
 use super::commands::CommandHistory;
@@ -241,9 +241,23 @@ pub fn serialize_level(level: &LevelData) -> anyhow::Result<String> {
 }
 
 pub fn deserialize_level(text: &str) -> anyhow::Result<LevelData> {
-    let file: LevelFile = ron::from_str(text)?;
-    match file.version {
-        1 | 2 => Ok(file.level),
+    #[derive(serde::Deserialize)]
+    struct LevelHeader {
+        version: u32,
+    }
+    let header: LevelHeader =
+        ron::from_str(text).map_err(|_| anyhow::anyhow!("could not read level file"))?;
+    match header.version {
+        4 => {
+            let file: LevelFile =
+                ron::from_str(text).map_err(|_| anyhow::anyhow!("corrupted level file"))?;
+            Ok(file.level)
+        }
+        1 | 2 | 3 => {
+            let file: LevelFileV3 =
+                ron::from_str(text).map_err(|_| anyhow::anyhow!("corrupted level file"))?;
+            Ok(upgrade_v3(file.level))
+        }
         v => anyhow::bail!("unknown level format version {v}"),
     }
 }
