@@ -70,6 +70,8 @@ pub enum UiCommand {
     /// Grow/shrink the play-size half-extents by `delta` on every axis
     /// (clamped so it never cuts off existing blocks).
     SizeDelta(i32),
+    /// Revert the play-size to auto (derived from content).
+    SizeAuto,
     OnlineUpload,
 }
 
@@ -473,6 +475,13 @@ pub fn drain_ui_commands(
                 ui.info_size = next;
                 ui.info_size_auto = false;
                 ui.set_status(format!("Size {}×{}×{}", next[0], next[1], next[2]));
+            }
+            UiCommand::SizeAuto => {
+                level.data.size = None;
+                level.mark_all_dirty();
+                ui.info_size = level.play_size();
+                ui.info_size_auto = true;
+                ui.set_status("Size: auto (from content)");
             }
             UiCommand::SaveMetadata => {
                 level.data.name = ui.info_name.clone();

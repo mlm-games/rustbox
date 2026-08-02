@@ -936,6 +936,11 @@ fn process_ui_actions(
                     m.commands.push(UiCommand::SizeDelta(delta));
                 }
             }
+            UiAction::LevelInfoSizeAuto => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::SizeAuto);
+                }
+            }
             UiAction::PlayBundledLevel(i) => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::PlayBundled(i as usize));

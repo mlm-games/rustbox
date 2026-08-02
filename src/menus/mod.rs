@@ -158,6 +158,8 @@ pub enum UiAction {
     LevelInfoWaterDelta(i32),
     /// Grow/shrink the play-size half-extents by `delta` on every axis.
     LevelInfoSizeDelta(i32),
+    /// Revert the play-size back to auto (derived from content).
+    LevelInfoSizeAuto,
     SetPointerOverUi(bool),
 }
 
@@ -2427,10 +2429,15 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     });
     let size_minus = mk_button_sm("-", move || push(&a_sdn, UiAction::LevelInfoSizeDelta(-1)));
     let size_plus = mk_button_sm("+", move || push(&a_sup, UiAction::LevelInfoSizeDelta(1)));
+    let a_sauto = actions.clone();
+    let size_auto_btn = mk_button_sm("Auto", move || {
+        push_ui(&a_sauto, UiAction::LevelInfoSizeAuto)
+    });
     let size_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
         .child(size_minus)
         .child(size_label)
-        .child(size_plus);
+        .child(size_plus)
+        .child(size_auto_btn);
 
     let inner = Column(
         Modifier::new()
