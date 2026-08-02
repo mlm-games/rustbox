@@ -239,6 +239,18 @@ fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
     out
 }
 
+/// Minimum screen-space movement (pixels squared) before hold-drag may
+/// place/erase another cell. Blocks raycast extrusion while the pointer stays.
+const DRAG_POINTER_EPSILON_SQ: f32 = 1.0; // 1px
+
+fn pointer_moved_since(last: Option<Vec2>, now: Option<Vec2>) -> bool {
+    match (last, now) {
+        (Some(a), Some(b)) => a.distance_squared(b) > DRAG_POINTER_EPSILON_SQ,
+        // No anchor yet → not a continuation of a drag stroke.
+        _ => false,
+    }
+}
+
 fn build_block_data(
     kind: BlockKind,
     shape: BlockShape,
@@ -313,6 +325,7 @@ pub fn update_editor_cursor(
         *cursor = EditorCursor::default();
         return;
     };
+    cursor.pointer = Some(pos);
     cursor.hit = None;
     cursor.place = None;
     if let Some((hit, normal)) = raycast_present(&level, ray.origin, *ray.direction, 200.0) {
@@ -388,14 +401,18 @@ pub fn update_preview_and_edit(
     };
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    let pointer = cursor.pointer;
 
-    // Reset paint chaining when the mouse button isn't held, so a fresh
-    // click always starts a new chain instead of resuming the old one.
+    // End stroke when the button is released so the next click is a fresh
+    // single place.
     if !buttons.pressed(MouseButton::Left) {
         box_start.last_paint = None;
     }
     if !buttons.pressed(MouseButton::Right) {
         box_start.last_erase = None;
+    }
+    if !buttons.pressed(MouseButton::Left) && !buttons.pressed(MouseButton::Right) {
+        box_start.last_pointer = None;
     }
 
     // Eyedropper: middle-click picks the block/entity under the cursor.
@@ -494,7 +511,9 @@ pub fn update_preview_and_edit(
                             });
                         }
                     }
+                    // Anchor stroke: one block this click; drag needs pointer motion.
                     box_start.last_paint = Some(place_cell);
+                    box_start.last_pointer = pointer;
                 }
             }
             BrushTab::Entities => {
@@ -595,6 +614,9 @@ pub fn update_preview_and_edit(
                     stats.blocks_placed = stats.blocks_placed.saturating_sub(1);
                 }
             }
+            // Anchor erase stroke (prevents tunneling while held still).
+            box_start.last_erase = Some(hit_cell);
+            box_start.last_pointer = pointer;
         } else if let Some(ent) = level.entity_at_cell(hit_cell).cloned() {
             let removed_id = ent.id;
             history.apply(&mut level, EditCommand::RemoveEntity { entity: ent });
@@ -604,47 +626,55 @@ pub fn update_preview_and_edit(
         }
     }
 
-    // Drag paint: hold LMB to chain blocks as the cursor moves across cells;
-    // a stationary click (even a long hold) only places one block per cell.
+    // Drag paint/erase: only when the pointer actually moved since last click.
     if *tab == BrushTab::Blocks && !shift {
-        if buttons.pressed(MouseButton::Left) {
-            if box_start.last_paint != Some(place_cell) {
-                for cell in mirror_cells(place_cell, mirror.0) {
-                    if level.get_block(cell).is_none() && !level.boundary_solid(cell) {
-                        history.apply(
-                            &mut level,
-                            EditCommand::Place {
-                                position: cell,
-                                data: build_block_data(
-                                    brush.kind,
-                                    brush.shape,
-                                    brush.rot,
-                                    brush.waterlogged,
-                                    cell,
-                                ),
-                                previous: None,
-                            },
-                        );
-                        stats.blocks_placed += 1;
-                        placed.write(BlockPlaced {
-                            cell,
-                            kind: brush.kind,
-                            shape: if brush.kind == BlockKind::Water {
-                                BlockShape::Full
-                            } else {
-                                brush.shape
-                            },
-                            rot: if brush.kind == BlockKind::Water {
-                                0
-                            } else {
-                                brush.rot
-                            },
-                        });
-                    }
+        let drag_ok = pointer_moved_since(box_start.last_pointer, pointer);
+
+        if buttons.pressed(MouseButton::Left)
+            && !buttons.just_pressed(MouseButton::Left)
+            && drag_ok
+            && box_start.last_paint != Some(place_cell)
+        {
+            for cell in mirror_cells(place_cell, mirror.0) {
+                if level.get_block(cell).is_none() && !level.boundary_solid(cell) {
+                    history.apply(
+                        &mut level,
+                        EditCommand::Place {
+                            position: cell,
+                            data: build_block_data(
+                                brush.kind,
+                                brush.shape,
+                                brush.rot,
+                                brush.waterlogged,
+                                cell,
+                            ),
+                            previous: None,
+                        },
+                    );
+                    stats.blocks_placed += 1;
+                    placed.write(BlockPlaced {
+                        cell,
+                        kind: brush.kind,
+                        shape: if brush.kind == BlockKind::Water {
+                            BlockShape::Full
+                        } else {
+                            brush.shape
+                        },
+                        rot: if brush.kind == BlockKind::Water {
+                            0
+                        } else {
+                            brush.rot
+                        },
+                    });
                 }
-                box_start.last_paint = Some(place_cell);
             }
-        } else if buttons.pressed(MouseButton::Right) && box_start.last_erase != Some(hit_cell) {
+            box_start.last_paint = Some(place_cell);
+            box_start.last_pointer = pointer;
+        } else if buttons.pressed(MouseButton::Right)
+            && !buttons.just_pressed(MouseButton::Right)
+            && drag_ok
+            && box_start.last_erase != Some(hit_cell)
+        {
             for cell in mirror_cells(hit_cell, mirror.0) {
                 if let Some(k) = level.get_block(cell).cloned() {
                     history.apply(
@@ -658,6 +688,7 @@ pub fn update_preview_and_edit(
                 }
             }
             box_start.last_erase = Some(hit_cell);
+            box_start.last_pointer = pointer;
         }
     }
 }

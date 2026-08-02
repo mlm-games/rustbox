@@ -73,13 +73,14 @@ pub struct MirrorMode(pub u8);
 
 /// Editor paint state: `start` is the first corner of an in-progress
 /// Shift+click box fill; `last_paint`/`last_erase` track the last cell of a
-/// hold-drag so a stationary click places exactly one block and chaining only
-/// happens when the cursor moves to a new cell.
+/// hold-drag.
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct BoxFillStart {
     pub start: Option<IVec3>,
     pub last_paint: Option<IVec3>,
     pub last_erase: Option<IVec3>,
+    /// Pointer position when we last painted or erased in this stroke.
+    pub last_pointer: Option<Vec2>,
 }
 
 /// Active link channel stamped onto newly placed orbs/gates (1-9).
@@ -97,6 +98,8 @@ impl Default for ActiveLinkChannel {
 pub struct EditorCursor {
     pub hit: Option<IVec3>,
     pub place: Option<IVec3>,
+    /// Current screen-space cursor position (for drag-paint gating).
+    pub pointer: Option<Vec2>,
 }
 
 /// Emitted when a block is placed so the pop-in ghost can spawn.
