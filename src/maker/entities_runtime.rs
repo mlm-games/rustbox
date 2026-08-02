@@ -18,7 +18,7 @@ use super::collision::is_solid;
 use super::entity_data::{EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
-use super::player::{JUMP_SPEED, Player, spawn_center};
+use super::player::{ActionState, JUMP_SPEED, MoveState, Player, spawn_center};
 use super::track::{TrackDataExt, TrackId};
 use super::ui_bridge::MakerUi;
 #[cfg(feature = "physics")]
@@ -414,15 +414,19 @@ pub fn apply_model_anims(
 /// walks while the game is in Play (its facing is driven by `move_prowlers`).
 pub fn tick_model_anims(
     mode: Res<MakerMode>,
-    players: Query<(&Player, &Children)>,
+    players: Query<(&Player, Option<&MoveState>, &Children)>,
     level_ents: Query<(&LevelEnt, &Children)>,
     mut anims: Query<&mut AnimationPlayer>,
     mut model_anims: Query<(&mut ModelAnim, &mut Transform)>,
 ) {
     let playing = *mode == MakerMode::Play;
-    for (player, children) in &players {
+    for (player, move_state, children) in &players {
         let horizontal = player.velocity.xz().length();
-        let airborne = !player.on_ground;
+        let action = move_state.map(|m| m.action).unwrap_or(ActionState::Run);
+        let airborne = matches!(
+            action,
+            ActionState::Air | ActionState::Slam | ActionState::Launch
+        ) || !player.on_ground;
         let dir = player.velocity.xz();
         let moving = dir.length_squared() > 0.01;
         for child in children.iter() {
@@ -433,7 +437,13 @@ pub fn tick_model_anims(
                 let d = dir.normalize();
                 tf.rotation = Quat::from_rotation_y((-d.x).atan2(-d.y));
             }
-            let target = if airborne && let Some(air) = anim.air {
+            let target = if matches!(action, ActionState::Swim) {
+                if horizontal > 0.6 {
+                    anim.run.unwrap_or(anim.idle)
+                } else {
+                    anim.idle
+                }
+            } else if airborne && let Some(air) = anim.air {
                 air
             } else if !airborne
                 && horizontal > 1.0

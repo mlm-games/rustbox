@@ -87,6 +87,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<rendering::WaterChunkEntities>()
             .init_resource::<EntityEntities>()
             .init_resource::<RuntimeSolids>()
+            .init_resource::<player::MoveTuning>()
             .init_resource::<storage::LevelStorage>()
             .init_resource::<ui_bridge::MakerUi>()
             .init_resource::<entities_runtime::ClipLibrary>()

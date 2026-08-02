@@ -293,6 +293,10 @@ pub struct MoveResult {
     pub hit_y: bool,
     pub hit_z: bool,
     pub on_ground: bool,
+    /// Unit normal of the supporting surface when grounded; else +Y.
+    pub floor_normal: Vec3,
+    /// Unit normal of the last horizontal wall hit (zero if none).
+    pub wall_normal: Vec3,
 }
 
 pub fn move_and_collide(
@@ -302,17 +306,159 @@ pub fn move_and_collide(
     level: &LevelDocument,
     extras: &[(Vec3, Vec3)],
 ) -> MoveResult {
+    let mut wall_normal = Vec3::ZERO;
     let hit_x = resolve_axis(&mut pos, he, delta.x, 0, level, extras);
+    if hit_x {
+        wall_normal = if delta.x > 0.0 { Vec3::NEG_X } else { Vec3::X };
+    }
     let hit_z = resolve_axis(&mut pos, he, delta.z, 2, level, extras);
+    if hit_z {
+        wall_normal = if delta.z > 0.0 { Vec3::NEG_Z } else { Vec3::Z };
+    }
     let hit_y = resolve_axis(&mut pos, he, delta.y, 1, level, extras);
     let on_ground = hit_y && delta.y < 0.0;
+    let floor_normal = if on_ground {
+        floor_normal_at(level, pos.x, pos.z)
+    } else {
+        Vec3::Y
+    };
     MoveResult {
         pos,
         hit_x,
         hit_y,
         hit_z,
         on_ground,
+        floor_normal,
+        wall_normal,
     }
+}
+
+/// Formal floor normal from a small finite-difference of surface height.
+pub fn floor_normal_at(level: &LevelDocument, wx: f32, wz: f32) -> Vec3 {
+    const EPS: f32 = 0.25;
+    let h = ground_height(level, wx, wz);
+    if !h.is_finite() {
+        return Vec3::Y;
+    }
+    let hx_p = ground_height(level, wx + EPS, wz);
+    let hx_m = ground_height(level, wx - EPS, wz);
+    let hz_p = ground_height(level, wx, wz + EPS);
+    let hz_m = ground_height(level, wx, wz - EPS);
+
+    let dx = match (hx_p.is_finite(), hx_m.is_finite()) {
+        (true, true) => (hx_p - hx_m) / (2.0 * EPS),
+        (true, false) => (hx_p - h) / EPS,
+        (false, true) => (h - hx_m) / EPS,
+        _ => 0.0,
+    };
+    let dz = match (hz_p.is_finite(), hz_m.is_finite()) {
+        (true, true) => (hz_p - hz_m) / (2.0 * EPS),
+        (true, false) => (hz_p - h) / EPS,
+        (false, true) => (h - hz_m) / EPS,
+        _ => 0.0,
+    };
+
+    let n = Vec3::new(-dx, 1.0, -dz);
+    let len = n.length();
+    if len > 1e-5 { n / len } else { Vec3::Y }
+}
+
+fn sphere_aabb_hit(center: Vec3, radius: f32, bmin: Vec3, bmax: Vec3) -> bool {
+    let q = center.clamp(bmin, bmax);
+    center.distance_squared(q) <= radius * radius
+}
+
+/// True if a sphere overlaps any solid cell or extra box.
+pub fn sphere_hits_world(
+    level: &LevelDocument,
+    center: Vec3,
+    radius: f32,
+    extras: &[(Vec3, Vec3)],
+) -> bool {
+    let min = center - Vec3::splat(radius);
+    let max = center + Vec3::splat(radius);
+    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
+        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
+            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
+                let cell = IVec3::new(x, y, z);
+                if !level.is_solid(cell) {
+                    continue;
+                }
+                // Conservative full-cell AABB (good enough for camera pull-in).
+                let bmin = Vec3::new(x as f32, y as f32, z as f32);
+                let bmax = bmin + Vec3::ONE;
+                if sphere_aabb_hit(center, radius, bmin, bmax) {
+                    return true;
+                }
+            }
+        }
+    }
+    for (ec, ehe) in extras {
+        if sphere_aabb_hit(center, radius, *ec - *ehe, *ec + *ehe) {
+            return true;
+        }
+    }
+    false
+}
+
+/// March a sphere from `origin` along `dir` up to `max_dist`. Returns free
+/// distance.
+pub fn sphere_cast_distance(
+    level: &LevelDocument,
+    origin: Vec3,
+    dir: Vec3,
+    max_dist: f32,
+    radius: f32,
+    extras: &[(Vec3, Vec3)],
+) -> f32 {
+    let dir = dir.normalize_or_zero();
+    if dir == Vec3::ZERO || max_dist <= 0.0 {
+        return 0.0;
+    }
+    let mut t = 0.0;
+    let step = (radius * 0.4).clamp(0.08, 0.25);
+    let mut last_free = 0.0;
+    while t <= max_dist {
+        let p = origin + dir * t;
+        if sphere_hits_world(level, p, radius, extras) {
+            let mut lo = last_free;
+            let mut hi = t;
+            for _ in 0..6 {
+                let mid = (lo + hi) * 0.5;
+                if sphere_hits_world(level, origin + dir * mid, radius, extras) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            return lo;
+        }
+        last_free = t;
+        t += step;
+    }
+    max_dist
+}
+
+/// Pull a desired camera eye in along the focus->eye segment so the sphere
+/// stays free.
+pub fn collide_camera_eye(
+    level: &LevelDocument,
+    focus: Vec3,
+    desired_eye: Vec3,
+    radius: f32,
+    skin: f32,
+    extras: &[(Vec3, Vec3)],
+) -> Vec3 {
+    let offset = desired_eye - focus;
+    let dist = offset.length();
+    if dist < 1e-4 {
+        return desired_eye;
+    }
+    let dir = offset / dist;
+    let origin = focus + Vec3::Y * 0.35;
+    let free = sphere_cast_distance(level, origin, dir, dist, radius, extras);
+    let use_dist = (free - skin).clamp(0.6, dist);
+    focus + dir * use_dist
 }
 
 /// World-space height of the topmost solid surface at horizontal point
@@ -432,7 +578,11 @@ fn face_adjacent_solid(level: &LevelDocument, center: Vec3, face: Vec2, he: Vec3
     let reach_x = he.x.max(he.z);
     let px = center.x + face.x * (reach_x + 0.01);
     let pz = center.z + face.y * (reach_x + 0.01);
-    let c = IVec3::new(px.floor() as i32, center.y.floor() as i32, pz.floor() as i32);
+    let c = IVec3::new(
+        px.floor() as i32,
+        center.y.floor() as i32,
+        pz.floor() as i32,
+    );
     let y0 = (center.y - 0.2).floor() as i32;
     let y1 = (center.y + 0.4).floor() as i32;
     (y0..=y1).any(|y| level.is_solid(IVec3::new(c.x, y, c.z)))
@@ -464,8 +614,8 @@ pub fn ledge_grip(
             || (face.y > 0.5 && hit_axis && vel.z >= 0.0)
             || (face.y < -0.5 && hit_axis && vel.z <= 0.0);
         let moving_in = approach.dot(face) > 0.15;
-        let pressed = approach.length_squared() < 0.01
-            && face_adjacent_solid(level, center, face, he);
+        let pressed =
+            approach.length_squared() < 0.01 && face_adjacent_solid(level, center, face, he);
         if !(hit_into || moving_in || pressed) {
             continue;
         }

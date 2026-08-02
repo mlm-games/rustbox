@@ -5,7 +5,9 @@ use bevy::world_serialization::WorldAssetRoot;
 
 use super::MakerCleanup;
 use super::camera::CameraRig;
-use super::collision::{ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide};
+use super::collision::{
+    floor_normal_at, ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide,
+};
 use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
@@ -14,18 +16,109 @@ use super::rendering::MakerAssets;
 use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
-const GRAVITY: f32 = -25.0;
-const WATER_GRAVITY: f32 = -4.5;
-const MOVE_SPEED: f32 = 6.0;
-const SLIDE_SPEED: f32 = 4.0;
+/// Default jump impulse (shared with stomp bounce etc.).
 pub const JUMP_SPEED: f32 = 9.0;
-const SLIDE_JUMP_SPEED: f32 = 11.5;
-const COYOTE_TIME: f32 = 0.10;
-const JUMP_BUFFER: f32 = 0.12;
-const MAX_FALL: f32 = -40.0;
-const MAX_FALL_WATER: f32 = -8.0;
-const SWIM_SPEED: f32 = 4.5;
-const SLAM_SPEED: f32 = -34.0;
+
+/// Central movement tunables (Bevy resource). Tune here instead of scattering
+/// magic numbers.
+#[derive(Resource, Clone, Debug)]
+pub struct MoveTuning {
+    pub gravity: f32,
+    pub water_gravity: f32,
+    pub move_speed: f32,
+    pub crouch_speed: f32,
+    pub slide_speed: f32,
+    pub jump_speed: f32,
+    pub slide_jump_speed: f32,
+    pub coyote_time: f32,
+    pub jump_buffer: f32,
+    pub max_fall: f32,
+    pub max_fall_water: f32,
+    pub swim_speed: f32,
+    pub slam_speed: f32,
+    /// Quake-style accel coefficients (higher = snappier).
+    pub ground_accel: f32,
+    pub ground_friction: f32,
+    pub air_accel: f32,
+    pub air_friction: f32,
+    pub swim_accel: f32,
+    pub swim_friction: f32,
+    /// Friction never treats speed below this as "already stopped".
+    pub stop_speed: f32,
+    /// Min floor-normal.y to count as walkable (else slide).
+    pub walkable_normal_y: f32,
+    pub half_extents: Vec3,
+    pub launch_lock: f32,
+    pub cam_collision_radius: f32,
+    pub cam_skin: f32,
+}
+
+impl Default for MoveTuning {
+    fn default() -> Self {
+        Self {
+            gravity: -25.0,
+            water_gravity: -4.5,
+            move_speed: 6.0,
+            crouch_speed: 3.25,
+            slide_speed: 4.0,
+            jump_speed: JUMP_SPEED,
+            slide_jump_speed: 11.5,
+            coyote_time: 0.10,
+            jump_buffer: 0.12,
+            max_fall: -40.0,
+            max_fall_water: -8.0,
+            swim_speed: 4.5,
+            slam_speed: -34.0,
+            // ~full speed in a few frames on ground; softer in air.
+            ground_accel: 14.0,
+            ground_friction: 10.0,
+            air_accel: 3.5,
+            air_friction: 0.35,
+            swim_accel: 8.0,
+            swim_friction: 4.0,
+            stop_speed: 1.5,
+            walkable_normal_y: 0.65,
+            half_extents: Vec3::new(0.3, 0.9, 0.3),
+            launch_lock: 0.9,
+            cam_collision_radius: 0.35,
+            cam_skin: 0.12,
+        }
+    }
+}
+
+/// Coarse locomotion / ability state (not a full action graph).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ActionState {
+    #[default]
+    Run,
+    Air,
+    Swim,
+    Slam,
+    Launch,
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct MoveState {
+    pub action: ActionState,
+    pub floor_normal: Vec3,
+    pub wall_normal: Vec3,
+    pub grounded: bool,
+    pub sliding: bool,
+    pub wish_dir: Vec3,
+}
+
+impl Default for MoveState {
+    fn default() -> Self {
+        Self {
+            action: ActionState::Run,
+            floor_normal: Vec3::Y,
+            wall_normal: Vec3::ZERO,
+            grounded: false,
+            sliding: false,
+            wish_dir: Vec3::ZERO,
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct Player {
@@ -56,12 +149,13 @@ pub struct Player {
 
 impl Default for Player {
     fn default() -> Self {
+        let t = MoveTuning::default();
         Self {
             velocity: Vec3::ZERO,
             on_ground: false,
             coyote: 0.0,
             jump_buffer: 0.0,
-            half_extents: Vec3::new(0.3, 0.9, 0.3),
+            half_extents: t.half_extents,
             was_on_ground: true,
             fall_speed: 0.0,
             launch: 0.0,
@@ -84,6 +178,7 @@ pub fn spawn_center(level: &LevelDocument) -> Vec3 {
 pub fn reset_player(
     transform: &mut Transform,
     player: &mut Player,
+    move_state: &mut MoveState,
     vis: &mut Visibility,
     level: &LevelDocument,
 ) {
@@ -103,6 +198,7 @@ pub fn reset_player(
     player.grip_anchor = Vec3::ZERO;
     player.grip_cooldown = 0.0;
     player.grip_time = 0.0;
+    *move_state = MoveState::default();
 }
 
 pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
@@ -111,6 +207,7 @@ pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &Level
             Transform::from_translation(spawn_center(level)),
             Visibility::Hidden,
             Player::default(),
+            MoveState::default(),
             MakerCleanup,
         ))
         .id();
@@ -134,6 +231,47 @@ pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &Level
     });
 }
 
+/// Quake-style accelerate + friction on XZ. `wish_dir` is horizontal unit (or
+/// zero).
+fn apply_accel_friction(
+    vel: &mut Vec3,
+    wish_dir: Vec3,
+    max_speed: f32,
+    accel: f32,
+    friction: f32,
+    stop_speed: f32,
+    dt: f32,
+) {
+    let mut h = Vec3::new(vel.x, 0.0, vel.z);
+    let speed = h.length();
+
+    // Friction
+    if speed > 1e-5 {
+        let control = speed.max(stop_speed);
+        let drop = control * friction * dt;
+        let new_speed = (speed - drop).max(0.0);
+        h *= new_speed / speed;
+    } else {
+        h = Vec3::ZERO;
+    }
+
+    // Accelerate toward wish
+    let wish_len = wish_dir.length();
+    if wish_len > 1e-5 && max_speed > 0.0 {
+        let wdir = wish_dir / wish_len;
+        let wish_speed = max_speed;
+        let current_along = h.dot(wdir);
+        let add_speed = wish_speed - current_along;
+        if add_speed > 0.0 {
+            let accel_speed = (accel * dt * wish_speed).min(add_speed);
+            h += wdir * accel_speed;
+        }
+    }
+
+    vel.x = h.x;
+    vel.z = h.z;
+}
+
 pub fn player_controller(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -141,19 +279,21 @@ pub fn player_controller(
     level: Res<LevelDocument>,
     rig: Res<CameraRig>,
     solids: Res<RuntimeSolids>,
+    tuning: Res<MoveTuning>,
     mut commands: Commands,
     mut trauma: ResMut<Trauma>,
     pads: Query<(&Transform, &LaunchPad), Without<Player>>,
     plates: Query<(&Transform, &DriftPlate), Without<Player>>,
-    mut q: Query<(Entity, &mut Transform, &mut Player)>,
+    mut q: Query<(Entity, &mut Transform, &mut Player, &mut MoveState)>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
     let kb = !capture.ui_wants_keyboard;
+    let tuning = &*tuning;
 
-    for (entity, mut transform, mut player) in &mut q {
+    for (entity, mut transform, mut player, mut move_state) in &mut q {
         let mut wish = Vec2::ZERO;
         if kb {
             if keys.pressed(KeyCode::KeyW) {
@@ -177,47 +317,108 @@ pub fn player_controller(
         if horiz.length_squared() > 1.0 {
             horiz = horiz.normalize();
         }
+        move_state.wish_dir = horiz;
+
         let crouching = kb && keys.pressed(KeyCode::ShiftLeft);
-        let crouch_pressed = kb && keys.just_pressed(KeyCode::ShiftLeft);
+        let crouch_pressed = keys.just_pressed(KeyCode::ShiftLeft);
         let he = player.half_extents;
+
+        // Formal floor normal (sampled surface gradient).
+        if player.on_ground {
+            let sampled_n =
+                floor_normal_at(&level, transform.translation.x, transform.translation.z);
+            if sampled_n.length_squared() > 0.0 {
+                move_state.floor_normal = sampled_n;
+            }
+        }
+
         let slope = if player.on_ground {
             slope_slide(&level, transform.translation, he)
         } else {
             None
         };
-        let mut sliding = slope.is_some();
-        if player.launch <= 0.0 && !sliding {
-            player.velocity.x = horiz.x * MOVE_SPEED;
-            player.velocity.z = horiz.z * MOVE_SPEED;
-        }
-        if let Some(dir) = slope {
-            if player.launch <= 0.0 {
-                player.velocity.x = dir.x * SLIDE_SPEED;
-                player.velocity.z = dir.y * SLIDE_SPEED;
+        // Prefer normal-based steepness when we have a good sample.
+        let steep = player.on_ground && move_state.floor_normal.y < tuning.walkable_normal_y;
+        let mut sliding = slope.is_some() || steep;
+
+        let underwater = level.is_underwater_point(transform.translation);
+        let launch_locked = player.launch > 0.0;
+
+        // Horizontal control: accel/friction (not instant wish velocity).
+        if player.slamming {
+            player.velocity.x = 0.0;
+            player.velocity.z = 0.0;
+        } else if sliding && !launch_locked && !underwater {
+            if let Some(dir) = slope {
+                player.velocity.x = dir.x * tuning.slide_speed;
+                player.velocity.z = dir.y * tuning.slide_speed;
+            } else {
+                // Steep normal but no discrete slope dir: slide along -floor_xz.
+                let mut d = Vec3::new(move_state.floor_normal.x, 0.0, move_state.floor_normal.z);
+                if d.length_squared() > 1e-6 {
+                    d = d.normalize();
+                    player.velocity.x = d.x * tuning.slide_speed;
+                    player.velocity.z = d.z * tuning.slide_speed;
+                } else {
+                    sliding = false;
+                }
             }
+        } else if !launch_locked {
+            let (accel, friction, max_speed) = if underwater {
+                (tuning.swim_accel, tuning.swim_friction, tuning.swim_speed)
+            } else if player.on_ground {
+                (
+                    tuning.ground_accel,
+                    tuning.ground_friction,
+                    if crouching {
+                        tuning.crouch_speed
+                    } else {
+                        tuning.move_speed
+                    },
+                )
+            } else {
+                (tuning.air_accel, tuning.air_friction, tuning.move_speed)
+            };
+            apply_accel_friction(
+                &mut player.velocity,
+                horiz,
+                max_speed,
+                accel,
+                friction,
+                tuning.stop_speed,
+                dt,
+            );
         } else {
-            sliding = false;
+            // Light air steer while launched.
+            apply_accel_friction(
+                &mut player.velocity,
+                horiz,
+                tuning.move_speed * 0.85,
+                tuning.air_accel * 0.65,
+                0.0,
+                tuning.stop_speed,
+                dt,
+            );
         }
+
+        move_state.sliding = sliding;
 
         player.coyote = (player.coyote - dt).max(0.0);
         player.jump_buffer = (player.jump_buffer - dt).max(0.0);
         player.launch = (player.launch - dt).max(0.0);
-        let underwater = level.is_underwater_point(transform.translation);
-        if kb && keys.just_pressed(KeyCode::Space) {
-            player.jump_buffer = JUMP_BUFFER;
+
+        if keys.just_pressed(KeyCode::Space) {
+            player.jump_buffer = tuning.jump_buffer;
         }
         if underwater {
-            // Swim: hold jump to rise, light gravity, soft terminal fall.
-            if kb && keys.pressed(KeyCode::Space) {
-                player.velocity.y = SWIM_SPEED;
+            if keys.pressed(KeyCode::Space) {
+                player.velocity.y = tuning.swim_speed;
             }
         } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
-            // A slide-jump launches off the slope with extra height while
-            // keeping the slide's horizontal momentum.
             player.velocity.y = if sliding {
-                SLIDE_JUMP_SPEED
+                tuning.slide_jump_speed
             } else {
-                JUMP_SPEED
+                tuning.jump_speed
             };
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
@@ -225,7 +426,7 @@ pub fn player_controller(
         }
 
         if !underwater && crouch_pressed && !player.on_ground && player.velocity.y <= 2.0 {
-            player.velocity.y = SLAM_SPEED;
+            player.velocity.y = tuning.slam_speed;
             player.velocity.x = 0.0;
             player.velocity.z = 0.0;
             player.slamming = true;
@@ -241,17 +442,25 @@ pub fn player_controller(
             if on_pad {
                 let dir = Quat::from_rotation_y(pad.yaw_rad) * Vec3::NEG_Z;
                 player.velocity = dir * pad.impulse + Vec3::Y * (pad.impulse * 0.35);
-                player.launch = 0.9;
+                player.launch = tuning.launch_lock;
                 player.on_ground = false;
                 player.coyote = 0.0;
+                player.slamming = false;
                 ScreenEffects::add_trauma(&mut trauma, 0.2);
             }
         }
 
-        let he = player.half_extents;
         let underwater = level.is_underwater_point(transform.translation);
-        let gravity = if underwater { WATER_GRAVITY } else { GRAVITY };
-        let max_fall = if underwater { MAX_FALL_WATER } else { MAX_FALL };
+        let gravity = if underwater {
+            tuning.water_gravity
+        } else {
+            tuning.gravity
+        };
+        let max_fall = if underwater {
+            tuning.max_fall_water
+        } else {
+            tuning.max_fall
+        };
         player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
 
         let move_he = if crouching {
@@ -275,6 +484,12 @@ pub fn player_controller(
         if result.hit_y {
             player.velocity.y = 0.0;
         }
+        if result.wall_normal != Vec3::ZERO {
+            move_state.wall_normal = result.wall_normal;
+        }
+        if result.on_ground {
+            move_state.floor_normal = result.floor_normal;
+        }
 
         // One-way plate riding: probe the plate top under our feet after the
         // move and carry the player with the plate's motion.
@@ -297,6 +512,7 @@ pub fn player_controller(
                 pos.y = top + he.y;
                 player.velocity.y = 0.0;
                 on_plate = true;
+                move_state.floor_normal = Vec3::Y;
                 break;
             }
         }
@@ -304,23 +520,20 @@ pub fn player_controller(
 
         player.grip_cooldown = (player.grip_cooldown - dt).max(0.0);
         if player.gripping {
-            player.grip_time += dt;
-            if kb && (keys.just_pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyW)) {
-                // Climb onto the ledge only if the mantle is still clear.
+            if keys.just_pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyW) {
                 transform.translation = player.grip_mantle;
                 player.gripping = false;
                 player.grip_top = 0.0;
                 player.velocity = Vec3::ZERO;
-                player.coyote = COYOTE_TIME;
+                player.coyote = tuning.coyote_time;
                 player.grip_cooldown = 0.15;
-            } else if kb && (keys.pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ControlLeft)) {
-                // Drop off (with a short re-grab lock to avoid jank).
+            } else if keys.pressed(KeyCode::KeyS) {
                 player.gripping = false;
                 player.grip_top = 0.0;
                 player.velocity = Vec3::ZERO;
+                player.grip_top = 0.0;
                 player.grip_cooldown = 0.35;
             } else {
-                // Keep hanging only while the lip is still there.
                 let wt = ground_height(&level, player.grip_anchor.x, player.grip_anchor.z);
                 let above = IVec3::new(
                     player.grip_anchor.x.floor() as i32,
@@ -338,14 +551,16 @@ pub fn player_controller(
                     player.velocity = Vec3::ZERO;
                 }
             }
-        } else if false && player.grip_cooldown <= 0.0
+        } else if false
+            && player.grip_cooldown <= 0.0
             && !result.on_ground
             && player.velocity.y <= 0.5
             && !underwater
             && !player.slamming
             && player.launch <= 0.0
         {
-            // Ledge grab is disabled: leads to buggy interactions with most blocks.
+            // Ledge grab is disabled: leads to buggy interactions with most
+            // blocks. The rally is left in so it can be re-enabled cleanly (far-future).
             if let Some(g) = ledge_grip(
                 &level,
                 transform.translation,
@@ -368,7 +583,6 @@ pub fn player_controller(
         if was_grounded && !player.was_on_ground {
             let impact = (-player.fall_speed).max(0.0);
             if player.slamming {
-                // A slam landing is always a heavy impact.
                 let amount = (impact / 40.0).clamp(0.15, 0.4);
                 Juice::squash_stretch(&mut commands, entity, Vec2::new(1.4, 0.6), 0.15);
                 ScreenEffects::add_trauma(&mut trauma, amount);
@@ -389,11 +603,24 @@ pub fn player_controller(
 
         if was_grounded {
             player.on_ground = true;
-            player.coyote = COYOTE_TIME;
+            player.coyote = tuning.coyote_time;
             player.launch = 0.0;
         } else {
             player.on_ground = false;
         }
+
+        move_state.grounded = player.on_ground;
+        move_state.action = if underwater {
+            ActionState::Swim
+        } else if player.slamming {
+            ActionState::Slam
+        } else if player.launch > 0.0 {
+            ActionState::Launch
+        } else if !player.on_ground {
+            ActionState::Air
+        } else {
+            ActionState::Run
+        };
     }
 }
 
@@ -401,9 +628,9 @@ pub fn play_hazard_goal(
     keys: Res<ButtonInput<KeyCode>>,
     level: Res<LevelDocument>,
     mut ui: ResMut<super::ui_bridge::MakerUi>,
-    mut q: Query<(&mut Transform, &mut Player)>,
+    mut q: Query<(&mut Transform, &mut Player, &mut MoveState, &mut Visibility)>,
 ) {
-    for (mut transform, mut player) in &mut q {
+    for (mut transform, mut player, mut move_state, mut vis) in &mut q {
         let he = player.half_extents;
         let hit_hazard = overlaps_kind(
             transform.translation,
@@ -418,9 +645,13 @@ pub fn play_hazard_goal(
             if hit_hazard || fell_off {
                 ui.deaths += 1;
             }
-            transform.translation = spawn_center(&level);
-            player.velocity = Vec3::ZERO;
-            continue;
+            reset_player(
+                &mut transform,
+                &mut player,
+                &mut move_state,
+                &mut vis,
+                &level,
+            );
         }
     }
 }
@@ -428,14 +659,20 @@ pub fn play_hazard_goal(
 pub fn sync_mode(
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
-    mut q: Query<(&mut Transform, &mut Player, &mut Visibility)>,
+    mut q: Query<(&mut Transform, &mut Player, &mut MoveState, &mut Visibility)>,
 ) {
     if !mode.is_changed() {
         return;
     }
-    for (mut transform, mut player, mut vis) in &mut q {
+    for (mut transform, mut player, mut move_state, mut vis) in &mut q {
         match *mode {
-            MakerMode::Play => reset_player(&mut transform, &mut player, &mut vis, &level),
+            MakerMode::Play => reset_player(
+                &mut transform,
+                &mut player,
+                &mut move_state,
+                &mut vis,
+                &level,
+            ),
             MakerMode::Edit => {
                 *vis = Visibility::Hidden;
             }
