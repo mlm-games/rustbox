@@ -251,6 +251,10 @@ pub struct SharedUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
+    // Level Settings (mirrors `LevelDocument` boundary / water on open).
+    pub info_walls: bool,
+    pub info_ceiling: bool,
+    pub info_water: Option<i32>,
     // Online level sharing
     pub online_levels: Vec<rustbox_format::api::LevelMeta>,
     pub online_query: String,
@@ -324,6 +328,9 @@ impl Default for SharedUi {
             info_description: String::new(),
             info_tags: Vec::new(),
             info_focus: 0,
+            info_walls: true,
+            info_ceiling: false,
+            info_water: None,
             online_levels: Vec::new(),
             online_query: String::new(),
             online_token: String::new(),
@@ -477,6 +484,9 @@ fn sync_shared_ui(
         ui.info_description = m.info_description.clone();
         ui.info_tags = m.info_tags.clone();
         ui.info_focus = m.info_focus;
+        ui.info_walls = m.info_walls;
+        ui.info_ceiling = m.info_ceiling;
+        ui.info_water = m.info_water;
         ui.online_levels = sort_online(&m.online_levels, m.online_sort);
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
@@ -884,6 +894,36 @@ fn process_ui_actions(
             }
             UiAction::LevelInfoClose => {
                 *overlay = OverlayMenu::None;
+            }
+            UiAction::LevelInfoToggleWalls => {
+                if let Some(ref mut m) = maker_ui {
+                    m.info_walls = !m.info_walls;
+                    let walls = m.info_walls;
+                    let ceiling = m.info_ceiling;
+                    m.commands.push(UiCommand::SetBoundary { walls, ceiling });
+                }
+            }
+            UiAction::LevelInfoToggleCeiling => {
+                if let Some(ref mut m) = maker_ui {
+                    m.info_ceiling = !m.info_ceiling;
+                    let walls = m.info_walls;
+                    let ceiling = m.info_ceiling;
+                    m.commands.push(UiCommand::SetBoundary { walls, ceiling });
+                }
+            }
+            UiAction::LevelInfoWaterDelta(delta) => {
+                if let Some(ref mut m) = maker_ui {
+                    let next = match m.info_water {
+                        Some(level) if delta > 0 => Some(level + delta),
+                        // Turning water off requires stepping it below 0.
+                        Some(level) if level + delta < 0 => None,
+                        Some(level) => Some((level + delta).max(0)),
+                        None if delta > 0 => Some(1),
+                        None => None,
+                    };
+                    m.info_water = next;
+                    m.commands.push(UiCommand::SetWaterLevel(next));
+                }
             }
             UiAction::PlayBundledLevel(i) => {
                 if let Some(ref mut m) = maker_ui {

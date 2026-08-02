@@ -60,6 +60,13 @@ pub enum UiCommand {
     AddToCollection,
     OpenLevelInfo,
     SaveMetadata,
+    /// Apply the level's boundary flags (solid walls / ceiling).
+    SetBoundary {
+        walls: bool,
+        ceiling: bool,
+    },
+    /// Set the global water plane (None = no water).
+    SetWaterLevel(Option<i32>),
     OnlineUpload,
 }
 
@@ -119,6 +126,9 @@ pub struct MakerUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
+    pub info_walls: bool,
+    pub info_ceiling: bool,
+    pub info_water: Option<i32>,
 
     /// Online level-sharing state.
     pub online_levels: Vec<LevelMeta>,
@@ -415,7 +425,26 @@ pub fn drain_ui_commands(
                 ui.info_description = level.data.description.clone();
                 ui.info_tags = level.data.tags.clone();
                 ui.info_focus = 0;
+                ui.info_walls = level.data.boundary.walls;
+                ui.info_ceiling = level.data.boundary.ceiling;
+                ui.info_water = level.data.water_level;
                 *overlay = OverlayMenu::LevelInfo;
+            }
+            UiCommand::SetBoundary { walls, ceiling } => {
+                level.data.boundary.walls = walls;
+                level.data.boundary.ceiling = ceiling;
+                ui.set_status(if walls {
+                    "Boundary: walls on"
+                } else {
+                    "Boundary: walls off"
+                });
+            }
+            UiCommand::SetWaterLevel(level_) => {
+                level.data.water_level = level_;
+                ui.set_status(match level_ {
+                    Some(y) => format!("Water plane at y={y}"),
+                    None => "Water: off".to_string(),
+                });
             }
             UiCommand::SaveMetadata => {
                 level.data.name = ui.info_name.clone();

@@ -150,6 +150,12 @@ pub enum UiAction {
     LevelInfoToggleTag(LevelTag),
     LevelInfoSave,
     LevelInfoClose,
+    /// Toggle the level's solid boundary walls on/off (edit time only).
+    LevelInfoToggleWalls,
+    /// Toggle the level's solid ceiling on/off.
+    LevelInfoToggleCeiling,
+    /// Adjust the global water plane by `delta` cells (applies immediately).
+    LevelInfoWaterDelta(i32),
     SetPointerOverUi(bool),
 }
 
@@ -2375,6 +2381,36 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     }
     let tag_row = Row(Modifier::new().gap(6.0)).child(tag_views);
 
+    // Level Settings: solid walls, solid ceiling, water plane.
+    let a_walls = actions.clone();
+    let a_ceil = actions.clone();
+    let a_wup = actions.clone();
+    let a_wdn = actions.clone();
+    let walls_chip = mk_chip(
+        RText("Walls").size(12.0).color(RColor::WHITE),
+        st.info_walls,
+        col(60, 110, 160),
+        move || push(&a_walls, UiAction::LevelInfoToggleWalls),
+    );
+    let ceiling_chip = mk_chip(
+        RText("Ceiling").size(12.0).color(RColor::WHITE),
+        st.info_ceiling,
+        col(160, 100, 60),
+        move || push(&a_ceil, UiAction::LevelInfoToggleCeiling),
+    );
+    let water_label = RText(match st.info_water {
+        Some(level) => "  Water y = ".to_string() + &level.to_string() + "  ",
+        None => "  No water  ".to_string(),
+    });
+    let water_minus = mk_button_sm("-", move || push(&a_wdn, UiAction::LevelInfoWaterDelta(-1)));
+    let water_plus = mk_button_sm("+", move || push(&a_wup, UiAction::LevelInfoWaterDelta(1)));
+    let settings_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
+        .child(walls_chip)
+        .child(ceiling_chip)
+        .child(water_minus)
+        .child(water_label)
+        .child(water_plus);
+
     let inner = Column(
         Modifier::new()
             .width(480.0)
@@ -2400,6 +2436,16 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(RText("Tags").size(14.0).color(col(180, 180, 190)))
     .child(spacer(6.0))
     .child(tag_row)
+    .child(spacer(16.0))
+    .child(RText("Level Settings").size(14.0).color(col(180, 180, 190)))
+    .child(spacer(6.0))
+    .child(
+        RText("Walls & ceiling are solid boundaries (edit-time only).")
+            .size(11.0)
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(settings_row)
     .child(spacer(12.0))
     .child(
         RText("Saving metadata does not reset verification.")
