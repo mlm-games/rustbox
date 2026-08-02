@@ -72,6 +72,8 @@ pub enum UiCommand {
     SizeDelta(i32),
     /// Revert the play-size to auto (derived from content).
     SizeAuto,
+    /// Set the boundary wall/room height in cells (0 = auto from size).
+    SetBoundaryHeight(i32),
     OnlineUpload,
 }
 
@@ -136,6 +138,11 @@ pub struct MakerUi {
     pub info_water: Option<i32>,
     pub info_size: [i32; 3],
     pub info_size_auto: bool,
+    /// Boundary wall/room height in cells (0 = auto from level size).
+    pub info_height: i32,
+    /// Level stats shown in the panel: placed blocks / entities.
+    pub info_blocks: usize,
+    pub info_entities: usize,
 
     /// Online level-sharing state.
     pub online_levels: Vec<LevelMeta>,
@@ -437,6 +444,9 @@ pub fn drain_ui_commands(
                 ui.info_water = level.data.water_level;
                 ui.info_size = level.play_size();
                 ui.info_size_auto = level.data.size.is_none();
+                ui.info_height = level.data.boundary.height;
+                ui.info_blocks = level.map.len();
+                ui.info_entities = level.data.entities.len();
                 *overlay = OverlayMenu::LevelInfo;
             }
             UiCommand::SetBoundary { walls, ceiling } => {
@@ -482,6 +492,17 @@ pub fn drain_ui_commands(
                 ui.info_size = level.play_size();
                 ui.info_size_auto = true;
                 ui.set_status("Size: auto (from content)");
+            }
+            UiCommand::SetBoundaryHeight(h) => {
+                let h = h.max(0);
+                level.data.boundary.height = h;
+                level.mark_all_dirty();
+                ui.info_height = h;
+                ui.set_status(if h == 0 {
+                    "Wall height: auto (from size)".to_string()
+                } else {
+                    format!("Wall height: {h} cells")
+                });
             }
             UiCommand::SaveMetadata => {
                 level.data.name = ui.info_name.clone();

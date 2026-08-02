@@ -192,7 +192,7 @@ impl LevelDocument {
         if self.data.boundary.walls && outside && cell.y <= self.boundary_top() {
             return true;
         }
-        if self.data.boundary.ceiling && cell.y > size[1] {
+        if self.data.boundary.ceiling && cell.y > self.boundary_top() {
             return true;
         }
         false

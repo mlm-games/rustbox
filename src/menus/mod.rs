@@ -160,6 +160,10 @@ pub enum UiAction {
     LevelInfoSizeDelta(i32),
     /// Revert the play-size back to auto (derived from content).
     LevelInfoSizeAuto,
+    /// Raise/lower the boundary wall height by `delta` cells.
+    LevelInfoHeightDelta(i32),
+    /// Revert the boundary wall height to auto (from level size).
+    LevelInfoHeightAuto,
     SetPointerOverUi(bool),
 }
 
@@ -2439,6 +2443,35 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .child(size_plus)
         .child(size_auto_btn);
 
+    // Boundary / room height (independent of the x/z size).
+    let a_hup = actions.clone();
+    let a_hdn = actions.clone();
+    let a_hauto = actions.clone();
+    let height_label = RText(if st.info_height == 0 {
+        "  Height: auto  ".to_string()
+    } else {
+        format!("  Height: {} cells  ", st.info_height)
+    });
+    let height_minus = mk_button_sm("-", move || {
+        push(&a_hdn, UiAction::LevelInfoHeightDelta(-1))
+    });
+    let height_plus = mk_button_sm("+", move || {
+        push(&a_hup, UiAction::LevelInfoHeightDelta(1))
+    });
+    let height_auto_btn = mk_button_sm("Auto", move || {
+        push_ui(&a_hauto, UiAction::LevelInfoHeightAuto)
+    });
+    let height_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
+        .child(height_minus)
+        .child(height_label)
+        .child(height_plus)
+        .child(height_auto_btn);
+
+    let stats = format!(
+        "Blocks: {}   ·   Entities: {}",
+        st.info_blocks, st.info_entities
+    );
+
     let inner = Column(
         Modifier::new()
             .width(480.0)
@@ -2482,6 +2515,18 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     )
     .child(spacer(6.0))
     .child(size_row)
+    .child(spacer(8.0))
+    .child(
+        RText("Height is the room/wall top; the ceiling sits there.")
+            .size(11.0)
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(height_row)
+    .child(spacer(12.0))
+    .child(
+        RText(stats).size(13.0).color(col(200, 200, 210)),
+    )
     .child(spacer(12.0))
     .child(
         RText("Saving metadata does not reset verification.")

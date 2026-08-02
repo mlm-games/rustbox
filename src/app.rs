@@ -257,6 +257,11 @@ pub struct SharedUi {
     pub info_water: Option<i32>,
     pub info_size: [i32; 3],
     pub info_size_auto: bool,
+    /// Boundary wall/room height in cells (0 = auto from level size).
+    pub info_height: i32,
+    /// Level stats shown in the panel: placed blocks / entities.
+    pub info_blocks: usize,
+    pub info_entities: usize,
     // Online level sharing
     pub online_levels: Vec<rustbox_format::api::LevelMeta>,
     pub online_query: String,
@@ -335,6 +340,9 @@ impl Default for SharedUi {
             info_water: None,
             info_size: [16, 12, 16],
             info_size_auto: true,
+            info_height: 0,
+            info_blocks: 0,
+            info_entities: 0,
             online_levels: Vec::new(),
             online_query: String::new(),
             online_token: String::new(),
@@ -493,6 +501,9 @@ fn sync_shared_ui(
         ui.info_water = m.info_water;
         ui.info_size = m.info_size;
         ui.info_size_auto = m.info_size_auto;
+        ui.info_height = m.info_height;
+        ui.info_blocks = m.info_blocks;
+        ui.info_entities = m.info_entities;
         ui.online_levels = sort_online(&m.online_levels, m.online_sort);
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
@@ -939,6 +950,17 @@ fn process_ui_actions(
             UiAction::LevelInfoSizeAuto => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::SizeAuto);
+                }
+            }
+            UiAction::LevelInfoHeightDelta(delta) => {
+                if let Some(ref mut m) = maker_ui {
+                    let next = (m.info_height + delta).max(0);
+                    m.commands.push(UiCommand::SetBoundaryHeight(next));
+                }
+            }
+            UiAction::LevelInfoHeightAuto => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::SetBoundaryHeight(0));
                 }
             }
             UiAction::PlayBundledLevel(i) => {
