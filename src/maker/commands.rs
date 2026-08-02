@@ -74,6 +74,15 @@ pub enum EditCommand {
         cells: Vec<(IVec3, Option<BlockData>)>,
         data: BlockData,
     },
+    PasteSelection {
+        /// `(position, new_data, previous_data)`
+        blocks: Vec<(IVec3, BlockData, Option<BlockData>)>,
+        entities: Vec<EntityData>,
+    },
+    DeleteSelection {
+        blocks: Vec<(IVec3, BlockData)>,
+        entities: Vec<EntityData>,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -133,7 +142,9 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::CreateTrack { track } => {
             level.add_track(track.clone());
         }
-        EditCommand::DeleteTrack { .. } => {}
+        EditCommand::DeleteTrack { track } => {
+            level.remove_track(track.id);
+        }
         EditCommand::AddTrackPoint {
             track_id,
             index,
@@ -193,6 +204,32 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
                 let mut d = data.clone();
                 d.position = pos.to_array();
                 level.set_block(*pos, Some(d));
+            }
+        }
+        EditCommand::PasteSelection { blocks, entities } => {
+            for (pos, data, _) in blocks {
+                let mut d = data.clone();
+                d.position = pos.to_array();
+                level.set_block(*pos, Some(d));
+            }
+
+            for entity in entities {
+                let mut e = entity.clone();
+                if e.id == 0 {
+                    e.id = level.alloc_id();
+                } else {
+                    level.next_entity_id = level.next_entity_id.max(e.id + 1);
+                }
+                level.add_entity(e);
+            }
+        }
+        EditCommand::DeleteSelection { blocks, entities } => {
+            for (pos, _) in blocks {
+                level.set_block(*pos, None);
+            }
+
+            for entity in entities {
+                level.remove_entity(entity.id);
             }
         }
     }
@@ -283,6 +320,32 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::BoxFill { cells, .. } => {
             for (pos, prev) in cells {
                 level.set_block(*pos, prev.clone());
+            }
+        }
+        EditCommand::PasteSelection { blocks, entities } => {
+            for (pos, _, previous) in blocks {
+                level.set_block(*pos, previous.clone());
+            }
+
+            for entity in entities {
+                level.remove_entity(entity.id);
+            }
+        }
+        EditCommand::DeleteSelection { blocks, entities } => {
+            for (pos, data) in blocks {
+                let mut d = data.clone();
+                d.position = pos.to_array();
+                level.set_block(*pos, Some(d));
+            }
+
+            for entity in entities {
+                let mut e = entity.clone();
+                if e.id == 0 {
+                    e.id = level.alloc_id();
+                } else {
+                    level.next_entity_id = level.next_entity_id.max(e.id + 1);
+                }
+                level.add_entity(e);
             }
         }
     }

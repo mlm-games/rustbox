@@ -1,7 +1,10 @@
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 
 use super::block::{BlockKind, BlockShape};
-use super::entity_data::{EntityKind, LevelEntityId};
+use super::entity_data::{EntityData, EntityKind, LevelEntityId};
+use super::level::BlockData;
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MakerMode {
@@ -114,4 +117,80 @@ pub struct BlockPlaced {
 #[derive(Resource, Default)]
 pub struct MakerStats {
     pub blocks_placed: u32,
+}
+
+/// Multi-selection used by build-mode structure editing.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct SelectionSet {
+    pub blocks: HashSet<IVec3>,
+    pub entities: HashSet<LevelEntityId>,
+}
+
+impl SelectionSet {
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.entities.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty() && self.entities.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.blocks.len() + self.entities.len()
+    }
+
+    pub fn toggle_block(&mut self, cell: IVec3) {
+        if !self.blocks.remove(&cell) {
+            self.blocks.insert(cell);
+        }
+    }
+
+    pub fn toggle_entity(&mut self, id: LevelEntityId) {
+        if !self.entities.remove(&id) {
+            self.entities.insert(id);
+        }
+    }
+}
+
+/// First corner for two-click volume selection.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct SelectionBoxStart {
+    pub start: Option<IVec3>,
+}
+
+/// One copied block, stored relative to the clipboard pivot.
+#[derive(Clone, Debug)]
+pub struct ClipboardBlock {
+    pub offset: IVec3,
+    pub data: BlockData,
+}
+
+/// One copied entity, stored relative to the clipboard pivot.
+#[derive(Clone, Debug)]
+pub struct ClipboardEntity {
+    pub offset: IVec3,
+    pub data: EntityData,
+}
+
+/// Internal editor clipboard for selected structures.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct EditorClipboard {
+    pub blocks: Vec<ClipboardBlock>,
+    pub entities: Vec<ClipboardEntity>,
+}
+
+impl EditorClipboard {
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.entities.clear();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty() && self.entities.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.blocks.len() + self.entities.len()
+    }
 }

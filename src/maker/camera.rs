@@ -4,8 +4,9 @@ use bevy::prelude::*;
 use super::MakerCleanup;
 use super::collision::collide_camera_eye;
 use super::entities_runtime::RuntimeSolids;
+use super::entity_data::EntityDataExt;
 use super::level::LevelDocument;
-use super::mode::InputCapture;
+use super::mode::{InputCapture, SelectionSet};
 use super::player::{MoveTuning, Player};
 
 use game_utils_bevy::screen_effects::CameraBase3d;
@@ -175,5 +176,68 @@ pub fn play_camera_follow(
         *t = collided;
         base.translation = collided.translation;
         base.rotation = collided.rotation;
+    }
+}
+
+/// Shift+F frames the current selection. If nothing is selected, it frames
+/// the playable level bounds.
+pub fn frame_selection_hotkey(
+    capture: Res<InputCapture>,
+    keys: Res<ButtonInput<KeyCode>>,
+    selection: Res<SelectionSet>,
+    level: Res<LevelDocument>,
+    mut rig: ResMut<CameraRig>,
+    mut cam: Query<(&mut Transform, &mut CameraBase3d), With<WorldCamera>>,
+) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
+
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if !shift || !keys.just_pressed(KeyCode::KeyF) {
+        return;
+    }
+
+    let mut points: Vec<Vec3> = Vec::new();
+
+    for &cell in &selection.blocks {
+        if level.get_block(cell).is_some() {
+            points.push(cell.as_vec3());
+            points.push(cell.as_vec3() + Vec3::ONE);
+        }
+    }
+
+    for &id in &selection.entities {
+        if let Some(entity) = level.entity_by_id(id) {
+            let c = entity.cell_i().as_vec3();
+            points.push(c);
+            points.push(c + Vec3::ONE);
+        }
+    }
+
+    if points.is_empty() {
+        let (bounds_min, bounds_max) = level.play_bounds();
+        points.push(bounds_min.as_vec3());
+        points.push(bounds_max.as_vec3() + Vec3::ONE);
+    }
+
+    let mut min = points[0];
+    let mut max = points[0];
+    for &p in &points {
+        min = min.min(p);
+        max = max.max(p);
+    }
+
+    let center = (min + max) * 0.5;
+    let extents = max - min;
+
+    rig.focus = center;
+    rig.distance = (extents.length() * 1.35).clamp(8.0, 80.0);
+
+    if let Ok((mut transform, mut base)) = cam.single_mut() {
+        let desired = rig_transform(&rig);
+        *transform = desired;
+        base.translation = desired.translation;
+        base.rotation = desired.rotation;
     }
 }

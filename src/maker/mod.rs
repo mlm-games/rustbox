@@ -77,6 +77,9 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::BoxFillStart>()
             .init_resource::<mode::EditorCursor>()
             .init_resource::<mode::ActiveLinkChannel>()
+            .init_resource::<mode::SelectionSet>()
+            .init_resource::<mode::SelectionBoxStart>()
+            .init_resource::<mode::EditorClipboard>()
             .init_resource::<entities_runtime::LinkState>()
             .init_resource::<campaign::LevelSource>()
             .init_resource::<campaign::CampaignProgress>()
@@ -139,10 +142,18 @@ impl Plugin for MakerPlugin {
             )
             .add_systems(
                 Update,
+                editor::selection_hotkeys
+                    .run_if(in_edit)
+                    .after(ui_bridge::update_input_capture)
+                    .before(editor::update_preview_and_edit),
+            )
+            .add_systems(
+                Update,
                 (
                     track::draw_track_gizmos.run_if(in_edit),
                     editor::delete_selected_entity.run_if(in_edit),
                     editor::draw_selected_entity_gizmo.run_if(in_edit),
+                    editor::draw_selection_gizmos.run_if(in_edit),
                     editor::update_placement_preview.run_if(in_edit),
                     entities_runtime::draw_link_gizmos.run_if(in_edit),
                     entities_runtime::move_prowlers.after(entities_runtime::tick_track_followers),
@@ -154,6 +165,7 @@ impl Plugin for MakerPlugin {
                     entities_runtime::update_relay_gates
                         .after(entities_runtime::trigger_orbs)
                         .run_if(in_play),
+                    camera::frame_selection_hotkey.run_if(in_edit),
                     camera::edit_camera_control.run_if(in_edit),
                     camera::play_camera_follow.run_if(in_play),
                 )

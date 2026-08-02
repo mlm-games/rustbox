@@ -8,8 +8,9 @@ use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityDataExt, EntityKind};
 use super::level::{BlockData, LevelDocument};
 use super::mode::{
-    ActiveLinkChannel, BlockBrush, BlockPlaced, BoxFillStart, BrushTab, EditorCursor, InputCapture,
-    MakerMode, MakerStats, MirrorMode, PlaceYaw, SelectedEntity, SelectedEntityKind,
+    ActiveLinkChannel, BlockBrush, BlockPlaced, BoxFillStart, BrushTab, ClipboardBlock,
+    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MakerStats,
+    MirrorMode, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart, SelectionSet,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
@@ -103,6 +104,9 @@ pub fn entity_palette_hotkeys(
         };
     }
     if keys.just_pressed(KeyCode::KeyF) {
+        if shift_pressed(&keys) {
+            return;
+        }
         place_yaw.0 = (place_yaw.0 + 45.0) % 360.0;
     }
     if keys.just_pressed(KeyCode::KeyL) {
@@ -209,7 +213,7 @@ pub fn mirror_hotkey(
     if capture.ui_wants_keyboard {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyV) {
+    if !ctrl_pressed(&keys) && keys.just_pressed(KeyCode::KeyV) {
         mirror.0 = (mirror.0 + 1) % 4;
         let label = match mirror.0 {
             0 => "Off",
@@ -275,6 +279,370 @@ fn build_block_data(
         shape,
         rot,
         waterlogged,
+    }
+}
+
+fn ctrl_pressed(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight)
+}
+
+fn shift_pressed(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
+}
+
+fn selection_anchor_cell(cursor: &EditorCursor) -> Option<IVec3> {
+    cursor.hit.or(cursor.place)
+}
+
+fn cell_in_aabb(cell: IVec3, min: IVec3, max: IVec3) -> bool {
+    cell.x >= min.x
+        && cell.x <= max.x
+        && cell.y >= min.y
+        && cell.y <= max.y
+        && cell.z >= min.z
+        && cell.z <= max.z
+}
+
+fn selection_pivot(level: &LevelDocument, selection: &SelectionSet) -> Option<IVec3> {
+    let mut pivot: Option<IVec3> = None;
+
+    for &cell in &selection.blocks {
+        pivot = Some(match pivot {
+            Some(p) => IVec3::new(p.x.min(cell.x), p.y.min(cell.y), p.z.min(cell.z)),
+            None => cell,
+        });
+    }
+
+    for &id in &selection.entities {
+        if let Some(entity) = level.entity_by_id(id) {
+            let cell = entity.cell_i();
+            pivot = Some(match pivot {
+                Some(p) => IVec3::new(p.x.min(cell.x), p.y.min(cell.y), p.z.min(cell.z)),
+                None => cell,
+            });
+        }
+    }
+
+    pivot
+}
+
+fn copy_selection_to_clipboard(
+    level: &LevelDocument,
+    selection: &SelectionSet,
+    clipboard: &mut EditorClipboard,
+) -> usize {
+    clipboard.clear();
+
+    let Some(pivot) = selection_pivot(level, selection) else {
+        return 0;
+    };
+
+    for &cell in &selection.blocks {
+        if let Some(block) = level.get_block(cell).cloned() {
+            clipboard.blocks.push(ClipboardBlock {
+                offset: cell - pivot,
+                data: block,
+            });
+        }
+    }
+
+    for &id in &selection.entities {
+        if let Some(entity) = level.entity_by_id(id).cloned() {
+            clipboard.entities.push(ClipboardEntity {
+                offset: entity.cell_i() - pivot,
+                data: entity,
+            });
+        }
+    }
+
+    clipboard.len()
+}
+
+fn delete_selection(
+    level: &mut LevelDocument,
+    history: &mut CommandHistory,
+    selection: &mut SelectionSet,
+    selected_entity: &mut SelectedEntity,
+) -> usize {
+    let mut blocks = Vec::new();
+    let mut entities = Vec::new();
+
+    for &cell in &selection.blocks {
+        if let Some(block) = level.get_block(cell).cloned() {
+            blocks.push((cell, block));
+        }
+    }
+
+    for &id in &selection.entities {
+        if let Some(entity) = level.entity_by_id(id).cloned() {
+            entities.push(entity);
+        }
+    }
+
+    let count = blocks.len() + entities.len();
+    if count == 0 {
+        selection.clear();
+        selected_entity.0 = None;
+        return 0;
+    }
+
+    history.apply(level, EditCommand::DeleteSelection { blocks, entities });
+
+    selection.clear();
+    selected_entity.0 = None;
+    count
+}
+
+fn paste_clipboard(
+    level: &mut LevelDocument,
+    history: &mut CommandHistory,
+    selection: &mut SelectionSet,
+    selected_entity: &mut SelectedEntity,
+    clipboard: &EditorClipboard,
+    target: IVec3,
+) -> usize {
+    if clipboard.is_empty() {
+        return 0;
+    }
+
+    let mut blocks = Vec::new();
+    let mut entities = Vec::new();
+
+    for item in &clipboard.blocks {
+        let pos = target + item.offset;
+
+        // Do not paste into invisible boundary solids.
+        if level.boundary_solid(pos) {
+            continue;
+        }
+
+        let mut data = item.data.clone();
+        data.position = pos.to_array();
+
+        let previous = level.get_block(pos).cloned();
+        blocks.push((pos, data, previous));
+    }
+
+    for item in &clipboard.entities {
+        let pos = target + item.offset;
+
+        // Keep one entity per cell, matching current editor behavior.
+        if level.entity_at_cell(pos).is_some() {
+            continue;
+        }
+
+        let mut entity = item.data.clone();
+        let old_cell = entity.cell_i();
+        let delta = pos - old_cell;
+
+        entity.id = level.alloc_id();
+        entity.cell = pos.to_array();
+
+        // Move legacy paired-cell data with the pasted entity.
+        if let Some(cell_b) = entity.cell_b {
+            entity.cell_b = Some((IVec3::from_array(cell_b) + delta).to_array());
+        }
+
+        entities.push(entity);
+    }
+
+    let count = blocks.len() + entities.len();
+    if count == 0 {
+        return 0;
+    }
+
+    let pasted_blocks: Vec<IVec3> = blocks.iter().map(|(pos, _, _)| *pos).collect();
+    let pasted_entities: Vec<_> = entities.iter().map(|entity| entity.id).collect();
+
+    history.apply(level, EditCommand::PasteSelection { blocks, entities });
+
+    selection.clear();
+
+    for cell in pasted_blocks {
+        selection.blocks.insert(cell);
+    }
+
+    for id in pasted_entities {
+        selection.entities.insert(id);
+    }
+
+    selected_entity.0 = selection.entities.iter().next().copied();
+
+    count
+}
+
+/// Structure-editing hotkeys:
+/// - Ctrl+LeftClick: toggle block/entity under cursor
+/// - B, then B again: select volume corners
+/// - Ctrl+A: select all editable blocks/entities
+/// - Ctrl+C: copy selection
+/// - Ctrl+X: cut selection
+/// - Ctrl+V: paste at cursor
+/// - Delete: delete selection
+/// - Escape: clear selection
+pub fn selection_hotkeys(
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
+    cursor: Res<EditorCursor>,
+    mut selection: ResMut<SelectionSet>,
+    mut box_select: ResMut<SelectionBoxStart>,
+    mut clipboard: ResMut<EditorClipboard>,
+    mut level: ResMut<LevelDocument>,
+    mut history: ResMut<CommandHistory>,
+    mut selected_entity: ResMut<SelectedEntity>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
+
+    let ctrl = ctrl_pressed(&keys);
+    let shift = shift_pressed(&keys);
+
+    if keys.just_pressed(KeyCode::Escape) {
+        selection.clear();
+        box_select.start = None;
+        selected_entity.0 = None;
+        ui.set_status("Selection cleared");
+        return;
+    }
+
+    if ctrl && buttons.just_pressed(MouseButton::Left) {
+        let Some(cell) = selection_anchor_cell(&cursor) else {
+            return;
+        };
+
+        if !shift {
+            // Ctrl+Shift+Click can add/remove without clearing,
+            // Ctrl+Click starts a fresh targeted selection.
+            selection.clear();
+        }
+
+        if let Some(entity) = level.entity_at_cell(cell) {
+            selection.toggle_entity(entity.id);
+            selected_entity.0 = Some(entity.id);
+        } else if level.get_block(cell).is_some() {
+            selection.toggle_block(cell);
+            selected_entity.0 = None;
+        }
+
+        ui.set_status(format!("Selected {} item(s)", selection.len()));
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::KeyB) {
+        let Some(cell) = selection_anchor_cell(&cursor) else {
+            ui.set_status("Aim at the level to volume-select");
+            return;
+        };
+
+        match box_select.start {
+            None => {
+                box_select.start = Some(cell);
+                ui.set_status("Selection corner set. Press B on the opposite corner.");
+            }
+            Some(start) => {
+                box_select.start = None;
+
+                if !shift {
+                    selection.clear();
+                    selected_entity.0 = None;
+                }
+
+                let min = start.min(cell);
+                let max = start.max(cell);
+
+                for &block_cell in level.map.keys() {
+                    if cell_in_aabb(block_cell, min, max) {
+                        selection.blocks.insert(block_cell);
+                    }
+                }
+
+                for entity in &level.data.entities {
+                    if cell_in_aabb(entity.cell_i(), min, max) {
+                        selection.entities.insert(entity.id);
+                    }
+                }
+
+                selected_entity.0 = selection.entities.iter().next().copied();
+                ui.set_status(format!("Volume selected {} item(s)", selection.len()));
+            }
+        }
+
+        return;
+    }
+
+    if ctrl && keys.just_pressed(KeyCode::KeyA) {
+        selection.clear();
+        selection.blocks.extend(level.map.keys().copied());
+        selection
+            .entities
+            .extend(level.data.entities.iter().map(|e| e.id));
+        selected_entity.0 = selection.entities.iter().next().copied();
+        ui.set_status(format!("Selected all {} item(s)", selection.len()));
+        return;
+    }
+
+    if ctrl && keys.just_pressed(KeyCode::KeyC) {
+        let count = copy_selection_to_clipboard(&level, &selection, &mut clipboard);
+        ui.set_status(if count == 0 {
+            "Nothing selected to copy".to_string()
+        } else {
+            format!("Copied {count} item(s)")
+        });
+        return;
+    }
+
+    if ctrl && keys.just_pressed(KeyCode::KeyX) {
+        let copied = copy_selection_to_clipboard(&level, &selection, &mut clipboard);
+        if copied == 0 {
+            ui.set_status("Nothing selected to cut");
+            return;
+        }
+
+        let deleted = delete_selection(
+            &mut level,
+            &mut history,
+            &mut selection,
+            &mut selected_entity,
+        );
+        ui.set_status(format!("Cut {deleted} item(s)"));
+        return;
+    }
+
+    if ctrl && keys.just_pressed(KeyCode::KeyV) {
+        let Some(target) = cursor.place.or(cursor.hit) else {
+            ui.set_status("Aim at the level to paste");
+            return;
+        };
+
+        let count = paste_clipboard(
+            &mut level,
+            &mut history,
+            &mut selection,
+            &mut selected_entity,
+            &clipboard,
+            target,
+        );
+
+        ui.set_status(if count == 0 {
+            "Nothing pasted".to_string()
+        } else {
+            format!("Pasted {count} item(s)")
+        });
+
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Delete) && !selection.is_empty() {
+        let count = delete_selection(
+            &mut level,
+            &mut history,
+            &mut selection,
+            &mut selected_entity,
+        );
+        ui.set_status(format!("Deleted {count} item(s)"));
     }
 }
 
@@ -402,6 +770,10 @@ pub fn update_preview_and_edit(
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let pointer = cursor.pointer;
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    if ctrl {
+        return;
+    }
 
     // End stroke when the button is released so the next click is a fresh
     // single place.
@@ -770,5 +1142,59 @@ pub fn draw_selected_entity_gizmo(
     gizmos.lineloop(top.iter().copied(), color);
     for i in 0..4 {
         gizmos.line(bottom[i], top[i], color);
+    }
+}
+
+fn draw_aabb(gizmos: &mut Gizmos, center: Vec3, half: Vec3, color: Color) {
+    let min = center - half;
+    let max = center + half;
+
+    let bottom = [
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(min.x, min.y, max.z),
+    ];
+
+    let top = [
+        Vec3::new(min.x, max.y, min.z),
+        Vec3::new(max.x, max.y, min.z),
+        Vec3::new(max.x, max.y, max.z),
+        Vec3::new(min.x, max.y, max.z),
+    ];
+
+    gizmos.lineloop(bottom, color);
+    gizmos.lineloop(top, color);
+
+    for i in 0..4 {
+        gizmos.line(bottom[i], top[i], color);
+    }
+}
+
+pub fn draw_selection_gizmos(
+    mode: Res<MakerMode>,
+    level: Res<LevelDocument>,
+    selection: Res<SelectionSet>,
+    mut gizmos: Gizmos,
+) {
+    if *mode != MakerMode::Edit || selection.is_empty() {
+        return;
+    }
+
+    let block_color = Color::srgb(0.2, 0.9, 1.0);
+    let entity_color = Color::srgb(1.0, 0.85, 0.25);
+
+    for &cell in &selection.blocks {
+        if level.get_block(cell).is_some() {
+            let center = cell.as_vec3() + Vec3::splat(0.5);
+            draw_aabb(&mut gizmos, center, Vec3::splat(0.54), block_color);
+        }
+    }
+
+    for &id in &selection.entities {
+        if let Some(entity) = level.entity_by_id(id) {
+            let center = entity.cell_i().as_vec3() + Vec3::new(0.5, 0.5, 0.5);
+            draw_aabb(&mut gizmos, center, Vec3::splat(0.62), entity_color);
+        }
     }
 }
