@@ -468,6 +468,22 @@ pub fn player_controller(
         } else {
             he
         };
+
+        // Stay glued to the ground: when grounded (walking / landing / holding
+        // a stance), seat the feet exactly on the top surface *before* the
+        // move so the box never starts embedded. This is the robust mitigation
+        // for crouch/stand: growing the box downward while embedded makes the
+        // horizontal sweep treat the floor as a wall and jams the player into
+        // geometry (fall-through). Pre-seating keeps the box top-up always.
+        let grounding_ok =
+            (player.was_on_ground || player.on_ground) && !underwater && player.velocity.y <= 0.0;
+        if grounding_ok {
+            let top = ground_height(&level, transform.translation.x, transform.translation.z);
+            if top.is_finite() {
+                transform.translation.y = top + move_he.y;
+            }
+        }
+
         let result = move_and_collide(
             transform.translation,
             move_he,
@@ -514,6 +530,17 @@ pub fn player_controller(
                 on_plate = true;
                 move_state.floor_normal = Vec3::Y;
                 break;
+            }
+        }
+        let grounded_now =
+            result.on_ground || on_plate || (player.was_on_ground && player.velocity.y <= 0.0);
+        if grounded_now && !on_plate && player.velocity.y <= 0.0 {
+            let top = ground_height(&level, pos.x, pos.z);
+            if top.is_finite() {
+                let eff_he = if crouching { he.y * 0.55 } else { he.y };
+                if pos.y - eff_he < top + 0.001 {
+                    pos.y = top + eff_he;
+                }
             }
         }
         transform.translation = pos;
@@ -639,10 +666,15 @@ pub fn play_hazard_goal(
             super::block::BlockKind::Hazard,
         );
         let fell_off = transform.translation.y < -20.0;
+        let bounds = level.play_bounds();
+        let out_of_bounds = transform.translation.x < bounds.0.x as f32 - 0.5
+            || transform.translation.x > bounds.1.x as f32 + 0.5
+            || transform.translation.z < bounds.0.z as f32 - 0.5
+            || transform.translation.z > bounds.1.z as f32 + 0.5;
         let manual_reset = keys.just_pressed(KeyCode::KeyR);
 
-        if hit_hazard || fell_off || manual_reset {
-            if hit_hazard || fell_off {
+        if hit_hazard || fell_off || out_of_bounds || manual_reset {
+            if hit_hazard || fell_off || out_of_bounds {
                 ui.deaths += 1;
             }
             reset_player(

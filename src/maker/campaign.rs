@@ -17,12 +17,6 @@ pub struct BundledLevel {
 /// Embedded at compile time.
 pub const BUNDLED_LEVELS: &[BundledLevel] = &[
     BundledLevel {
-        id: "00_movement_gym",
-        name: "Movement Gym",
-        teaches: "Run, jump, slope, swim, slam, launch",
-        source: include_str!("../../assets/levels/00_movement_gym.ron"),
-    },
-    BundledLevel {
         id: "01_first_steps",
         name: "First Steps",
         teaches: "Move, jump, reach the Goal",
