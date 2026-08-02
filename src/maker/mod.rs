@@ -174,7 +174,6 @@ impl Plugin for MakerPlugin {
                     ui_bridge::push_ui_state,
                     ui_bridge::share_text_input.before(ui_bridge::drain_ui_commands),
                     ui_bridge::browse_text_input.before(ui_bridge::drain_ui_commands),
-                    ui_bridge::online_text_input.before(ui_bridge::drain_ui_commands),
                     ui_bridge::level_info_text_input.before(ui_bridge::drain_ui_commands),
                     cursor::cursor_policy,
                     storage::save_load_hotkeys

@@ -124,8 +124,9 @@ pub struct MakerUi {
     pub online_levels: Vec<LevelMeta>,
     pub online_query: String,
     pub online_token: String,
-    /// 0 = search query field, 1 = upload token field.
-    pub online_focus: u8,
+    /// 0 = by created_at, 1 = name, 2 = likes, 3 = plays (client-side ordering).
+    pub online_sort: u8,
+    pub online_loading: bool,
     /// Requests the flush system turns into fetches (kept here so
     /// `drain_ui_commands` stays under Bevy's 16-param system limit).
     pub online_pending: Vec<OnlineRequest>,
@@ -625,55 +626,6 @@ pub fn browse_text_input(
             && text.chars().all(|c| !c.is_control())
         {
             ui.browse_query.push_str(text);
-        }
-    }
-}
-
-pub fn online_text_input(
-    mut keys: MessageReader<KeyboardInput>,
-    overlay: Res<OverlayMenu>,
-    mut ui: ResMut<MakerUi>,
-) {
-    if *overlay != OverlayMenu::Online {
-        return;
-    }
-    for ev in keys.read() {
-        if ev.state != ButtonState::Pressed || ev.repeat {
-            continue;
-        }
-        if ev.key_code == KeyCode::Backspace {
-            if ui.online_focus == 0 {
-                ui.online_query.pop();
-            } else {
-                ui.online_token.pop();
-            }
-        } else if ev.key_code == KeyCode::Enter {
-            if ui.online_focus == 0 {
-                let query = ui.online_query.clone();
-                ui.online_pending.push(OnlineRequest::List {
-                    query,
-                    limit: 50,
-                    offset: 0,
-                });
-                ui.set_status("Loading online levels...");
-            } else {
-                let token = ui.online_token.trim().to_string();
-                ui.online_token = token.clone();
-                let msg = if token.is_empty() {
-                    "Upload token cleared."
-                } else {
-                    "Upload token set."
-                };
-                ui.set_status(msg);
-            }
-        } else if let Some(text) = &ev.text
-            && text.chars().all(|c| !c.is_control())
-        {
-            if ui.online_focus == 0 {
-                ui.online_query.push_str(text);
-            } else {
-                ui.online_token.push_str(text);
-            }
         }
     }
 }

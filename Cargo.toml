@@ -158,6 +158,7 @@ strip = "debuginfo"
 
 # [patch.crates-io]
 # repose-core = { path = "../repose/crates/repose-core" }
+# repose-app = { path = "../repose/crates/repose-app" }
 # repose-ui = { path = "../repose/crates/repose-ui" }
 # repose-material = { path = "../repose/crates/repose-material" }
 # repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }

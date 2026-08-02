@@ -140,10 +140,11 @@ pub enum UiAction {
     OnlineReport(u64),
     OnlineDelete(u64),
     OnlineUpload,
-    OnlineSetToken,
+    OnlineSetToken(String),
+    OnlineSetQuery(String),
+    OnlineSearch,
     OnlineClearQuery,
-    OnlineFocusQuery,
-    OnlineFocusToken,
+    OnlineCycleSort,
     LevelInfoOpen,
     LevelInfoFocus(u8),
     LevelInfoToggleTag(LevelTag),
@@ -1497,7 +1498,7 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .fill_max_width()
         .align_items(AlignItems::CENTER))
     .child((
-        RText("Community Levels").size(28.0).color(RColor::WHITE),
+        RText("My Levels").size(28.0).color(RColor::WHITE),
         Column(Modifier::new().fill_max_width()),
         mk_icon_button(Symbols::REMOVE, true, move || {
             push(&a_close, UiAction::CloseOverlay)
@@ -1821,19 +1822,21 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_close = actions.clone();
     let a_refresh = actions.clone();
     let a_clear = actions.clone();
-    let a_query_focus = actions.clone();
-    let a_token_focus = actions.clone();
+    let a_submit_search = actions.clone();
+    let a_submit_token = actions.clone();
+    let a_search = actions.clone();
     let a_set_token = actions.clone();
     let a_upload = actions.clone();
+    let a_sort = actions.clone();
 
     let levels = &st.online_levels;
 
     let header = Row(Modifier::new()
-        .fill_max_size()
+        .fill_max_width()
         .align_items(AlignItems::CENTER))
     .child((
         RText("Online Levels").size(28.0).color(RColor::WHITE),
-        Column(Modifier::new().fill_max_size()),
+        Column(Modifier::new().fill_max_width()),
         mk_icon_button(Symbols::REFRESH, true, move || {
             push(&a_refresh, UiAction::OnlineRefresh)
         }),
@@ -1842,78 +1845,112 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }),
     ));
 
-    let mut search_children: Vec<View> = vec![
-        Icon(Symbols::SEARCH).size(18.0).color(col(150, 150, 170)),
-        RText(if st.online_query.is_empty() {
-            "Search name or author".to_string()
-        } else {
-            st.online_query.clone()
-        })
-        .size(14.0)
-        .color(if st.online_query.is_empty() {
-            col(130, 130, 150)
-        } else {
-            RColor::WHITE
-        }),
-    ];
-    if !st.online_query.is_empty() {
-        search_children.push(mk_icon_button(Symbols::REMOVE, true, move || {
-            push(&a_clear, UiAction::OnlineClearQuery)
-        }));
+    let query_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
+    let query_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if !query_focus.get() && query_state.borrow().text != st.online_query {
+        query_state.borrow_mut().text = st.online_query.clone();
     }
-    let search_row = FilledTonalButton(
-        Modifier::new()
-            .fill_max_size()
-            .padding(10.0)
-            .background(if st.online_focus == 0 {
-                col(70, 90, 120)
-            } else {
-                col(45, 45, 60)
-            })
-            .clip_rounded(18.0),
-        move || push(&a_query_focus, UiAction::OnlineFocusQuery),
-        ButtonConfig::default(),
-        move || {
-            Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
-                .child(search_children.clone())
+    let on_change = {
+        let a = actions.clone();
+        Rc::new(move |v: String| push(&a, UiAction::OnlineSetQuery(v))) as Rc<dyn Fn(String)>
+    };
+    let on_submit = {
+        let a = a_submit_search.clone();
+        Rc::new(move |v: String| {
+            push(&a, UiAction::OnlineSetQuery(v));
+            push(&a, UiAction::OnlineSearch);
+        }) as Rc<dyn Fn(String)>
+    };
+    let search_field = BasicTextField(
+        query_state.clone(),
+        Modifier::new().flex_grow(1.0).height(34.0),
+        "Search name or author",
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Filter,
+                ime_action: ImeAction::Search,
+                ..KeyboardOptions::DEFAULT
+            },
+            on_change: Some(on_change),
+            on_submit: Some(on_submit),
+            focus_tracker: Some(query_focus.clone()),
+            ..Default::default()
         },
     );
 
-    let token_display = if st.online_token.is_empty() {
-        "Enter upload token (needed to publish / delete)".to_string()
-    } else {
-        st.online_token.clone()
+    let mut search_children: Vec<View> = vec![
+        Icon(Symbols::SEARCH).size(18.0).color(col(150, 150, 170)),
+        search_field,
+    ];
+    if !st.online_query.is_empty() {
+        let qs = query_state.clone();
+        let a_clear2 = a_clear.clone();
+        search_children.push(mk_icon_button(Symbols::REMOVE, true, move || {
+            qs.borrow_mut().text.clear();
+            push(&a_clear2, UiAction::OnlineClearQuery)
+        }));
+    }
+    let search_row = Row(Modifier::new().fill_max_width().gap(8.0).align_items(AlignItems::CENTER))
+        .child((
+            Row(Modifier::new()
+                .fill_max_width()
+                .gap(8.0)
+                .align_items(AlignItems::CENTER)
+                .padding(10.0)
+                .background(col(45, 45, 60))
+                .clip_rounded(18.0))
+            .child(search_children),
+            mk_pill_button(icon_label(Symbols::SEARCH, "Search".into()), move || {
+                let q = query_state.borrow().text.clone();
+                push(&a_search, UiAction::OnlineSetQuery(q));
+                push(&a_search, UiAction::OnlineSearch);
+            }),
+        ));
+
+    let token_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
+    let token_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if !token_focus.get() && token_state.borrow().text != st.online_token {
+        token_state.borrow_mut().text = st.online_token.clone();
+    }
+    let on_token_submit = {
+        let a = a_submit_token.clone();
+        Rc::new(move |v: String| push(&a, UiAction::OnlineSetToken(v))) as Rc<dyn Fn(String)>
     };
-    let token_field = FilledTonalButton(
-        Modifier::new()
-            .fill_max_size()
-            .padding(10.0)
-            .background(if st.online_focus == 1 {
-                col(70, 90, 120)
-            } else {
-                col(45, 45, 60)
-            })
-            .clip_rounded(18.0),
-        move || push(&a_token_focus, UiAction::OnlineFocusToken),
-        ButtonConfig::default(),
-        move || {
-            Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
-                Icon(Symbols::LINK).size(16.0).color(col(150, 150, 170)),
-                RText(token_display.clone())
-                    .size(13.0)
-                    .color(if st.online_token.is_empty() {
-                        col(130, 130, 150)
-                    } else {
-                        RColor::WHITE
-                    }),
-            ))
+    let token_field = BasicTextField(
+        token_state.clone(),
+        Modifier::new().flex_grow(1.0).height(34.0),
+        "Upload token (needed to publish / delete)",
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Text,
+                ime_action: ImeAction::Done,
+                ..KeyboardOptions::DEFAULT
+            },
+            on_submit: Some(on_token_submit),
+            focus_tracker: Some(token_focus.clone()),
+            ..Default::default()
         },
     );
-    let token_set = mk_pill_button(icon_label(Symbols::CHECK, "Set".into()), move || {
-        push(&a_set_token, UiAction::OnlineSetToken)
-    });
-    let token_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
-        .child((token_field, token_set));
+    let token_row = Row(Modifier::new().fill_max_width().gap(8.0).align_items(AlignItems::CENTER))
+        .child((
+            Row(Modifier::new()
+                .fill_max_width()
+                .gap(8.0)
+                .align_items(AlignItems::CENTER)
+                .padding(10.0)
+                .background(col(45, 45, 60))
+                .clip_rounded(18.0))
+            .child((
+                Icon(Symbols::LINK).size(16.0).color(col(150, 150, 170)),
+                token_field,
+            )),
+            mk_pill_button(icon_label(Symbols::CHECK, "Set".into()), move || {
+                let t = token_state.borrow().text.clone();
+                push(&a_set_token, UiAction::OnlineSetToken(t));
+            }),
+        ));
 
     let verified_hint = RText(if st.level_verified {
         "Ready to publish".to_string()
@@ -1932,6 +1969,33 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         col(150, 110, 200),
         move || push(&a_upload, UiAction::OnlineUpload),
     );
+
+    let sort_label = match st.online_sort % 4 {
+        0 => "Sort: Newest",
+        1 => "Sort: Name",
+        2 => "Sort: Most liked",
+        _ => "Sort: Most played",
+    };
+    let sort_text = RText(sort_label).size(13.0).color(col(190, 190, 205));
+    let sort_button = FilledTonalButton(
+        Modifier::new()
+            .height(30.0)
+            .padding(12.0)
+            .background(col(45, 45, 60))
+            .clip_rounded(15.0),
+        move || push(&a_sort, UiAction::OnlineCycleSort),
+        ButtonConfig::default(),
+        move || sort_text.clone(),
+    );
+    let count_text: View = if st.online_loading {
+        icon_text(Symbols::REFRESH, "Loading...".into(), 12.0, col(230, 160, 70))
+    } else {
+        RText(format!("{} levels", levels.len()))
+            .size(12.0)
+            .color(col(150, 150, 170))
+    };
+    let sort_row = Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER))
+        .child((sort_button, count_text));
 
     let card = |m: &LevelMeta| -> View {
         let a_play = actions.clone();
@@ -1964,6 +2028,12 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 col(150, 150, 170),
             ),
         ];
+        if !m.created_at.is_empty() {
+            let date: String = m.created_at.chars().take(10).collect();
+            meta.push(
+                RText(date).size(11.0).color(col(130, 130, 150)),
+            );
+        }
         if !m.description.is_empty() {
             let desc = if m.description.chars().count() > 120 {
                 let mut d: String = m.description.chars().take(120).collect();
@@ -2028,7 +2098,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let mut list: Vec<View> = Vec::new();
     if levels.is_empty() {
         list.push(
-            RText("No levels online yet. Publish one, or press refresh to re-fetch.")
+            RText("No levels online yet. Publish one, or search / press refresh to re-fetch.")
                 .size(14.0)
                 .color(col(180, 180, 190)),
         );
@@ -2038,9 +2108,18 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }
     }
 
+    let scroll_state = remember_scroll_state("online_list");
+    let list_column = Column(Modifier::new().fill_max_width().gap(6.0)).with_children(list);
+    let scroll_list = ScrollArea(
+        Modifier::new().fill_max_width().height(340.0),
+        scroll_state,
+        list_column,
+    );
+
     let inner = Column(
         Modifier::new()
             .width(640.0)
+            .max_height(680.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -2056,14 +2135,16 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
             upload_button,
             verified_hint,
-            Column(Modifier::new().fill_max_size()),
+            Column(Modifier::new().fill_max_width()),
             RText(st.maker_status.clone())
                 .size(12.0)
                 .color(col(150, 150, 170)),
         )),
     )
     .child(spacer(12.0))
-    .child(list);
+    .child(sort_row)
+    .child(spacer(12.0))
+    .child(scroll_list);
 
     modal_shell(inner)
 }

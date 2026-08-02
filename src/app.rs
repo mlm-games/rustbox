@@ -255,7 +255,8 @@ pub struct SharedUi {
     pub online_levels: Vec<rustbox_format::api::LevelMeta>,
     pub online_query: String,
     pub online_token: String,
-    pub online_focus: u8,
+    pub online_sort: u8,
+    pub online_loading: bool,
 }
 
 impl Default for SharedUi {
@@ -326,7 +327,8 @@ impl Default for SharedUi {
             online_levels: Vec::new(),
             online_query: String::new(),
             online_token: String::new(),
-            online_focus: 0,
+            online_sort: 0,
+            online_loading: false,
         }
     }
 }
@@ -352,7 +354,7 @@ impl Plugin for AppPlugin {
                 ReposePluginSettings {
                     clear_alpha: 0.0,
                     compose_every_frame: true,
-                    msaa_samples: 1,
+                    msaa_samples: 4,
                     overlay: true,
                 },
                 move |_s, _c| {
@@ -475,10 +477,11 @@ fn sync_shared_ui(
         ui.info_description = m.info_description.clone();
         ui.info_tags = m.info_tags.clone();
         ui.info_focus = m.info_focus;
-        ui.online_levels = m.online_levels.clone();
+        ui.online_levels = sort_online(&m.online_levels, m.online_sort);
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
-        ui.online_focus = m.online_focus;
+        ui.online_sort = m.online_sort;
+        ui.online_loading = m.online_loading;
         ui.brush_entities = m.brush_entities;
         ui.selected_entity = m.selected_entity;
         ui.brush_tab = m.brush_tab;
@@ -570,6 +573,21 @@ fn set_vol(bridge: &UiBridge, field: impl Fn(&mut SharedUi) -> &mut f32, v: f32)
     if let Ok(mut ui) = bridge.shared.lock() {
         *field(&mut ui) = v.clamp(0.0, 1.0);
     }
+}
+
+/// Client-side ordering for the online listing (the server returns raw order).
+fn sort_online(
+    levels: &[rustbox_format::api::LevelMeta],
+    mode: u8,
+) -> Vec<rustbox_format::api::LevelMeta> {
+    let mut v = levels.to_vec();
+    match mode % 4 {
+        0 => v.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
+        1 => v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        2 => v.sort_by(|a, b| b.likes.cmp(&a.likes)),
+        _ => v.sort_by(|a, b| b.plays.cmp(&a.plays)),
+    }
+    v
 }
 
 fn process_ui_actions(
@@ -724,6 +742,7 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     m.browse_confirm_delete = None;
                     let query = m.online_query.clone();
+                    m.online_loading = true;
                     m.online_pending.push(OnlineRequest::List {
                         query,
                         limit: 50,
@@ -736,6 +755,7 @@ fn process_ui_actions(
             UiAction::OnlineRefresh => {
                 if let Some(ref mut m) = maker_ui {
                     let query = m.online_query.clone();
+                    m.online_loading = true;
                     m.online_pending.push(OnlineRequest::List {
                         query,
                         limit: 50,
@@ -788,6 +808,7 @@ fn process_ui_actions(
             UiAction::OnlineClearQuery => {
                 if let Some(ref mut m) = maker_ui {
                     m.online_query.clear();
+                    m.online_loading = true;
                     m.online_pending.push(OnlineRequest::List {
                         query: String::new(),
                         limit: 50,
@@ -796,19 +817,31 @@ fn process_ui_actions(
                     m.set_status("Loading online levels...");
                 }
             }
-            UiAction::OnlineFocusQuery => {
+            UiAction::OnlineSetQuery(q) => {
                 if let Some(ref mut m) = maker_ui {
-                    m.online_focus = 0;
+                    m.online_query = q;
                 }
             }
-            UiAction::OnlineFocusToken => {
+            UiAction::OnlineSearch => {
                 if let Some(ref mut m) = maker_ui {
-                    m.online_focus = 1;
+                    let query = m.online_query.clone();
+                    m.online_loading = true;
+                    m.online_pending.push(OnlineRequest::List {
+                        query,
+                        limit: 50,
+                        offset: 0,
+                    });
+                    m.set_status("Searching online levels...");
                 }
             }
-            UiAction::OnlineSetToken => {
+            UiAction::OnlineCycleSort => {
                 if let Some(ref mut m) = maker_ui {
-                    let token = m.online_token.trim().to_string();
+                    m.online_sort = (m.online_sort + 1) % 4;
+                }
+            }
+            UiAction::OnlineSetToken(token) => {
+                if let Some(ref mut m) = maker_ui {
+                    let token = token.trim().to_string();
                     m.online_token = token.clone();
                     let msg = if token.is_empty() {
                         "Upload token cleared."
