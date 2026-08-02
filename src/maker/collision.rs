@@ -315,6 +315,106 @@ pub fn move_and_collide(
     }
 }
 
+/// World-space height of the topmost solid surface at horizontal point
+/// `(wx, wz)`. Returns `f32::NEG_INFINITY` over open void (e.g. a pit).
+pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
+    let cx = wx.floor() as i32;
+    let cz = wz.floor() as i32;
+    let from = wx.max(wz).max(0.0) as i32 + 8;
+    for y in ((-512 + 8)..=from).rev() {
+        let cell = IVec3::new(cx, y, cz);
+        let block = level.get_block(cell);
+        let solid = block.is_some_and(|b| b.kind.is_solid()) || level.boundary_solid(cell);
+        if solid {
+            return match block {
+                Some(b) if b.kind.is_solid() => surface_top_height(b, wx, wz),
+                _ => y as f32 + 1.0,
+            };
+        }
+    }
+    f32::NEG_INFINITY
+}
+
+/// The lowest horizontal midpoint-provision surface already fitted under
+/// the center of the block.
+pub fn slope_slide(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<Vec2> {
+    const SLIDE_MIN: f32 = 0.22;
+    let hc = ground_height(level, center.x, center.z);
+    if !hc.is_finite() {
+        return None;
+    }
+    let dirs = [
+        Vec2::X,
+        Vec2::NEG_X,
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+    ];
+    let dists = [he.x, he.x, he.z, he.z];
+    let mut best: Option<(Vec2, f32)> = None;
+    for (d, dist) in dirs.iter().zip(dists.iter()) {
+        let h = ground_height(level, center.x + d.x * dist, center.z + d.y * dist);
+        let drop = hc - h;
+        if drop.is_finite()
+            && drop >= SLIDE_MIN
+            && best.is_none_or(|(_, bd)| drop > bd)
+        {
+            best = Some((*d, drop));
+        }
+    }
+    best.map(|(d, _)| d)
+}
+
+#[derive(Debug, PartialEq)]
+pub struct LedgeGrip {
+    /// Unit horizontal direction from the player toward the wall.
+    pub face: Vec2,
+    /// World height of the ledge lip (top surface) the player hangs on.
+    pub wall_top: f32,
+}
+
+/// When falling next to a solid wall whose lip is within the player's reach,
+/// return a place to grip so the fall stops and a grab/climb becomes possible.
+pub fn ledge_grip(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<LedgeGrip> {
+    let faces = [
+        Vec2::X,
+        Vec2::NEG_X,
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.0, -1.0),
+    ];
+    let dists = [he.x, he.x, he.z, he.z];
+    let feet = center.y - he.y;
+    let head = center.y + he.y;
+    for (f, dist) in faces.iter().zip(dists.iter()) {
+        let px = center.x + f.x * dist;
+        let pz = center.z + f.y * dist;
+        let wt = ground_height(level, px, pz);
+        if !wt.is_finite() {
+            continue;
+        }
+        // The lip has to be reachable: above the feet a bit, below the head.
+        if wt < feet + 0.28 || wt > head + 0.25 {
+            continue;
+        }
+        let lip_cell = IVec3::new(
+            px.floor() as i32,
+            (wt - 0.01).floor() as i32,
+            pz.floor() as i32,
+        );
+        if !level.is_solid(lip_cell) {
+            continue;
+        }
+        let above = lip_cell + IVec3::Y;
+        if level.is_solid(above) {
+            continue;
+        }
+        return Some(LedgeGrip {
+            face: *f,
+            wall_top: wt,
+        });
+    }
+    None
+}
+
 pub fn overlaps_kind(center: Vec3, he: Vec3, level: &LevelDocument, kind: BlockKind) -> bool {
     let he = he + Vec3::splat(0.06);
     let min = center - he;

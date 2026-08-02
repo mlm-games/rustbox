@@ -5,7 +5,7 @@ use bevy::world_serialization::WorldAssetRoot;
 
 use super::MakerCleanup;
 use super::camera::CameraRig;
-use super::collision::{move_and_collide, overlaps_kind};
+use super::collision::{ledge_grip, move_and_collide, overlaps_kind, slope_slide};
 use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
@@ -17,12 +17,15 @@ use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 const GRAVITY: f32 = -25.0;
 const WATER_GRAVITY: f32 = -4.5;
 const MOVE_SPEED: f32 = 6.0;
+const SLIDE_SPEED: f32 = 4.0;
 pub const JUMP_SPEED: f32 = 9.0;
+const SLIDE_JUMP_SPEED: f32 = 11.5;
 const COYOTE_TIME: f32 = 0.10;
 const JUMP_BUFFER: f32 = 0.12;
 const MAX_FALL: f32 = -40.0;
 const MAX_FALL_WATER: f32 = -8.0;
 const SWIM_SPEED: f32 = 4.5;
+const SLAM_SPEED: f32 = -34.0;
 
 #[derive(Component)]
 pub struct Player {
@@ -34,6 +37,13 @@ pub struct Player {
     pub was_on_ground: bool,
     pub fall_speed: f32,
     pub launch: f32,
+    /// Currently slamming (air-drop strike). Sets a fast downward velocity and
+    /// makes the landing a heavy impact.
+    pub slamming: bool,
+    /// Currently gripped onto a ledge lip (climbing/cling state).
+    pub gripping: bool,
+    /// The world height the player can pull up to while gripping.
+    pub grip_top: f32,
 }
 
 impl Default for Player {
@@ -47,6 +57,9 @@ impl Default for Player {
             was_on_ground: true,
             fall_speed: 0.0,
             launch: 0.0,
+            slamming: false,
+            gripping: false,
+            grip_top: 0.0,
         }
     }
 }
@@ -71,6 +84,9 @@ pub fn reset_player(
     player.was_on_ground = true;
     player.fall_speed = 0.0;
     player.launch = 0.0;
+    player.slamming = false;
+    player.gripping = false;
+    player.grip_top = 0.0;
 }
 
 pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
@@ -145,9 +161,26 @@ pub fn player_controller(
         if horiz.length_squared() > 1.0 {
             horiz = horiz.normalize();
         }
-        if player.launch <= 0.0 {
+        let crouching = kb && keys.pressed(KeyCode::ShiftLeft);
+        let crouch_pressed = kb && keys.just_pressed(KeyCode::ShiftLeft);
+        let he = player.half_extents;
+        let slope = if player.on_ground {
+            slope_slide(&level, transform.translation, he)
+        } else {
+            None
+        };
+        let mut sliding = slope.is_some();
+        if player.launch <= 0.0 && !sliding {
             player.velocity.x = horiz.x * MOVE_SPEED;
             player.velocity.z = horiz.z * MOVE_SPEED;
+        }
+        if let Some(dir) = slope {
+            if player.launch <= 0.0 {
+                player.velocity.x = dir.x * SLIDE_SPEED;
+                player.velocity.z = dir.y * SLIDE_SPEED;
+            }
+        } else {
+            sliding = false;
         }
 
         player.coyote = (player.coyote - dt).max(0.0);
@@ -163,10 +196,19 @@ pub fn player_controller(
                 player.velocity.y = SWIM_SPEED;
             }
         } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
-            player.velocity.y = JUMP_SPEED;
+            // A slide-jump launches off the slope with extra height while
+            // keeping the slide's horizontal momentum.
+            player.velocity.y = if sliding { SLIDE_JUMP_SPEED } else { JUMP_SPEED };
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
             player.on_ground = false;
+        }
+
+        if !underwater && crouch_pressed && !player.on_ground && player.velocity.y <= 2.0 {
+            player.velocity.y = SLAM_SPEED;
+            player.velocity.x = 0.0;
+            player.velocity.z = 0.0;
+            player.slamming = true;
         }
 
         // Launch pads (apply velocity but let frames tick cooldown separately)
@@ -192,9 +234,14 @@ pub fn player_controller(
         let max_fall = if underwater { MAX_FALL_WATER } else { MAX_FALL };
         player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
 
+        let move_he = if crouching {
+            Vec3::new(he.x, he.y * 0.55, he.z)
+        } else {
+            he
+        };
         let result = move_and_collide(
             transform.translation,
-            he,
+            move_he,
             player.velocity * dt,
             &level,
             &solids.boxes,
@@ -235,16 +282,54 @@ pub fn player_controller(
         }
         transform.translation = pos;
 
-        let was_grounded = result.on_ground || on_plate;
+        if player.gripping {
+            if kb && (keys.just_pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyW)) {
+                // Climb up onto the ledge.
+                transform.translation.y = player.grip_top + he.y;
+                player.gripping = false;
+                player.grip_top = 0.0;
+                player.coyote = COYOTE_TIME;
+                player.velocity = Vec3::ZERO;
+            } else if kb && keys.pressed(KeyCode::KeyS) {
+                player.gripping = false;
+                player.grip_top = 0.0;
+            } else if let Some(g) = ledge_grip(&level, transform.translation, he) {
+                // Keep holding the (still-present) lip.
+                transform.translation.y = g.wall_top - he.y + 0.05;
+                player.velocity = Vec3::ZERO;
+            } else {
+                player.gripping = false;
+                player.grip_top = 0.0;
+            }
+        } else if !result.on_ground
+            && player.velocity.y <= 0.0
+            && !underwater
+            && !player.slamming
+        {
+            if let Some(g) = ledge_grip(&level, transform.translation, he) {
+                transform.translation.y = g.wall_top - he.y + 0.05;
+                player.gripping = true;
+                player.grip_top = g.wall_top;
+                player.velocity = Vec3::ZERO;
+            }
+        }
+
+        let was_grounded = result.on_ground || on_plate || player.gripping;
         if was_grounded && !player.was_on_ground {
             let impact = (-player.fall_speed).max(0.0);
-            if impact > 4.0 {
+            if player.slamming {
+                // A slam landing is always a heavy impact.
+                let amount = (impact / 40.0).clamp(0.15, 0.4);
+                Juice::squash_stretch(&mut commands, entity, Vec2::new(1.4, 0.6), 0.15);
+                ScreenEffects::add_trauma(&mut trauma, amount);
+            } else if impact > 4.0 {
                 Juice::squash_stretch(&mut commands, entity, Vec2::new(1.25, 0.7), 0.12);
                 if impact > 10.0 {
                     let amount = ((impact - 10.0) / 40.0).clamp(0.05, 0.35);
                     ScreenEffects::add_trauma(&mut trauma, amount);
                 }
             }
+            player.slamming = false;
             player.fall_speed = 0.0;
         }
         if !was_grounded {
