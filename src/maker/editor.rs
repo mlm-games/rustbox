@@ -9,8 +9,9 @@ use super::entity_data::{EntityData, EntityDataExt, EntityKind};
 use super::level::{BlockData, LevelDocument};
 use super::mode::{
     ActiveLinkChannel, BlockBrush, BlockPlaced, BoxFillStart, BrushTab, ClipboardBlock,
-    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MakerStats, MirrorMode,
-    PastePreview, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart, SelectionSet,
+    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MakerStats,
+    MirrorMode, PastePreview, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart,
+    SelectionSet,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
@@ -603,15 +604,17 @@ pub fn draw_box_fill_preview(
     }
 
     // Corner markers.
-    for c in [lo, Vec3::new(hi.x, lo.y, lo.z), Vec3::new(lo.x, lo.y, hi.z), hi] {
+    for c in [
+        lo,
+        Vec3::new(hi.x, lo.y, lo.z),
+        Vec3::new(lo.x, lo.y, hi.z),
+        hi,
+    ] {
         gizmos.sphere(Isometry3d::from_translation(c), 0.08, color);
     }
 }
 
-pub fn draw_paste_preview_gizmos(
-    preview: Res<PastePreview>,
-    mut gizmos: Gizmos,
-) {
+pub fn draw_paste_preview_gizmos(preview: Res<PastePreview>, mut gizmos: Gizmos) {
     if !preview.active || preview.clipboard.is_empty() {
         return;
     }
