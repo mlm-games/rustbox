@@ -350,7 +350,8 @@ pub fn poll_online_events(
         match event {
             OnlineEvent::Listed(result) => match result {
                 Ok(resp) => {
-                    listing.0 = resp.levels;
+                    ui.online_levels = resp.levels;
+                    listing.0 = ui.online_levels.clone();
                     ui.set_status(format!("{} levels online", listing.0.len()));
                 }
                 Err(e) => ui.set_status(format!("Browse failed: {e}")),

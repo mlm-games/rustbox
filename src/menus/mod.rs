@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use repose_core::View;
@@ -9,6 +10,7 @@ use repose_core::prelude::{
     AlignItems, AlignSelf, AnimationSpec, Color as RColor, Easing, JustifyContent, Modifier,
     remember,
 };
+use repose_core::{ImeAction, KeyboardOptions, KeyboardType, TextFieldLineLimits};
 use repose_material::material3::{
     ButtonConfig, DropdownMenu, DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem,
     FilledTonalButton, FilledTonalIconButton, IconButtonColors, IconButtonConfig, MenuState,
@@ -18,7 +20,11 @@ use repose_ui::anim_ext::{
     AnimatedVisibility, AnimatedVisibilityConfig, EnterTransition, ExitTransition,
 };
 use repose_ui::overlay::OverlayHandle;
-use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt, ZStack};
+use repose_ui::scroll::{ScrollArea, remember_scroll_state};
+use repose_ui::{
+    BasicTextField, Column, Row, Text as RText, TextFieldConfig, TextFieldState, TextStyle,
+    ViewExt, ZStack,
+};
 
 use crate::app::{AppState, OverlayMenu, SharedUi};
 use crate::maker::catalog::{LevelSourceKind, LevelSummary, difficulty_label};
@@ -26,18 +32,24 @@ use crate::maker::entity_data::EntityKind;
 use crate::maker::level::LevelTag;
 use crate::maker::thumbnail::ThumbPreview;
 use crate::maker::track::TrackMode;
+use rustbox_format::api::LevelMeta;
 
 material_symbols! {
     ADD: '\u{E145}',
     AUTO_AWESOME: '\u{E65F}',
     CHECK: '\u{E5CA}',
+    CLOUD: '\u{E2BD}',
+    CLOUD_UPLOAD: '\u{E2C3}',
+    DELETE: '\u{E872}',
     EDIT: '\u{F097}',
+    FLAG: '\u{E153}',
     FOLDER_OPEN: '\u{E2C8}',
     INFO: '\u{E88E}',
     LINK: '\u{E250}',
     PLAY_ARROW: '\u{E037}',
     PUBLISH: '\u{E255}',
     REDO: '\u{E15A}',
+    REFRESH: '\u{E5D5}',
     REMOVE: '\u{E15B}',
     ROTATE_RIGHT: '\u{E41A}',
     SEARCH: '\u{E8B6}',
@@ -45,6 +57,7 @@ material_symbols! {
     SKULL: '\u{F89A}',
     STAR: '\u{F09A}',
     SWAP_HORIZ: '\u{E8D4}',
+    THUMB_UP: '\u{E8DC}',
     TIMER: '\u{E425}',
     UNDO: '\u{E166}',
 }
@@ -114,8 +127,20 @@ pub enum UiAction {
     BrowseToggleVerified,
     BrowseSetDifficulty(Option<u8>),
     BrowseCycleSort,
+    BrowseSetQuery(String),
     BrowseClearQuery,
     BrowseAddToCollection,
+    OnlineOpen,
+    OnlineRefresh,
+    OnlinePlay(u64),
+    OnlineLike(u64),
+    OnlineReport(u64),
+    OnlineDelete(u64),
+    OnlineUpload,
+    OnlineSetToken,
+    OnlineClearQuery,
+    OnlineFocusQuery,
+    OnlineFocusToken,
     LevelInfoOpen,
     LevelInfoFocus(u8),
     LevelInfoToggleTag(LevelTag),
@@ -143,6 +168,23 @@ fn popup_anim_config(key: &str) -> AnimatedVisibilityConfig {
     }
 }
 
+/// HACK: Full-screen dimmer that blocks pointer hits to everything underneath.
+/// Background alone is paint-only; the clickable + focusable(false) create a
+/// real hit region so buttons under the modal don't stay clickable/hoverable.
+/// Using Overlay host dialogs, from repose-material is better than this
+fn modal_shell(inner: View) -> View {
+    Column(
+        Modifier::new()
+            .fill_max_size()
+            .justify_content(JustifyContent::CENTER)
+            .align_items(AlignItems::CENTER)
+            .background(RColor::from_rgba(0, 0, 0, 180))
+            .clickable()
+            .focusable(false),
+    )
+    .child(inner)
+}
+
 pub fn compose_root(
     overlay: OverlayHandle,
     st: SharedUi,
@@ -165,6 +207,11 @@ pub fn compose_root(
                 st.overlay == OverlayMenu::Browse,
                 browse_ui(&st, actions.clone()),
                 popup_anim_config("browse"),
+            ),
+            AnimatedVisibility(
+                st.overlay == OverlayMenu::Online,
+                online_ui(&st, actions.clone()),
+                popup_anim_config("online"),
             ),
             AnimatedVisibility(
                 st.overlay == OverlayMenu::Settings,
@@ -216,6 +263,11 @@ pub fn compose_root(
                     level_info_ui(&st, actions.clone()),
                     popup_anim_config("level_info"),
                 ),
+            ))
+            .child(AnimatedVisibility(
+                st.overlay == OverlayMenu::Online,
+                online_ui(&st, actions.clone()),
+                popup_anim_config("ingame_online"),
             ))
         }
     };
@@ -292,6 +344,7 @@ fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_create = actions.clone();
     let a_levels = actions.clone();
     let a_browse = actions.clone();
+    let a_online = actions.clone();
     let a2 = actions.clone();
     let a3 = actions.clone();
     let a4 = actions.clone();
@@ -304,32 +357,31 @@ fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .align_items(AlignItems::CENTER)
             .background(col(8, 8, 12)),
     )
-    .child((
-        RText(t(tr, "app-title", "My Ecosystem Bevy"))
-            .size(56.0)
-            .color(RColor::WHITE),
-        spacer(24.0),
-        mk_button(&t(tr, "create", "Create"), col(60, 120, 200), move || {
-            push(&a_create, UiAction::StartGame)
-        }),
-        mk_button(
-            &t(tr, "play-levels", "Play Levels"),
-            col(80, 170, 120),
-            move || push(&a_levels, UiAction::OpenLevelSelect),
-        ),
-        mk_button("Browse Levels", col(150, 110, 200), move || {
-            push(&a_browse, UiAction::BrowseOpen)
-        }),
-        mk_button(&t(tr, "settings", "Settings"), col(70, 70, 90), move || {
-            push(&a2, UiAction::OpenSettings)
-        }),
-        mk_button(&t(tr, "credits", "Credits"), col(70, 70, 90), move || {
-            push(&a3, UiAction::OpenCredits)
-        }),
-        mk_button(&t(tr, "quit", "Quit"), col(180, 60, 60), move || {
-            push(&a4, UiAction::QuitApp)
-        }),
+    .child(RText(t(tr, "app-title", "My Ecosystem Bevy")).size(56.0).color(RColor::WHITE))
+    .child(spacer(24.0))
+    .child(mk_button(&t(tr, "create", "Create"), col(60, 120, 200), move || {
+        push(&a_create, UiAction::StartGame)
+    }))
+    .child(mk_button(
+        &t(tr, "play-levels", "Play Levels"),
+        col(80, 170, 120),
+        move || push(&a_levels, UiAction::OpenLevelSelect),
     ))
+    .child(mk_button("Browse Levels", col(150, 110, 200), move || {
+        push(&a_browse, UiAction::BrowseOpen)
+    }))
+    .child(mk_button("Online Levels", col(90, 160, 210), move || {
+        push(&a_online, UiAction::OnlineOpen)
+    }))
+    .child(mk_button(&t(tr, "settings", "Settings"), col(70, 70, 90), move || {
+        push(&a2, UiAction::OpenSettings)
+    }))
+    .child(mk_button(&t(tr, "credits", "Credits"), col(70, 70, 90), move || {
+        push(&a3, UiAction::OpenCredits)
+    }))
+    .child(mk_button(&t(tr, "quit", "Quit"), col(180, 60, 60), move || {
+        push(&a4, UiAction::QuitApp)
+    }))
 }
 
 fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -395,14 +447,7 @@ fn level_select_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         move || push(&a_back, UiAction::CloseOverlay),
     ));
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn pause_overlay(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -411,14 +456,7 @@ fn pause_overlay(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a3 = actions.clone();
     let tr = &st.translations;
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(pause_panel(tr, a1, a2, a3))
+    modal_shell(pause_panel(tr, a1, a2, a3))
 }
 
 fn pause_panel(
@@ -590,14 +628,7 @@ fn settings_ui(overlay: OverlayHandle, st: &SharedUi, actions: Arc<Mutex<Vec<UiA
         move || push(&a_back, UiAction::CloseOverlay),
     ));
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn credits_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -634,14 +665,7 @@ fn credits_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }),
     ));
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -693,6 +717,7 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_info = actions.clone();
     let a_new = actions.clone();
     let a_pub = actions.clone();
+    let a_online = actions.clone();
 
     Row(Modifier::new()
         .padding(8.0)
@@ -745,6 +770,9 @@ fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }),
         mk_icon_button(Symbols::PUBLISH, true, move || {
             push_ui(&a_pub, UiAction::MakerPublish)
+        }),
+        mk_icon_button(Symbols::CLOUD, true, move || {
+            push_ui(&a_online, UiAction::OnlineOpen)
         }),
     ])
 }
@@ -1352,14 +1380,7 @@ fn level_clear_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     )
     .children(body);
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn load_level_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -1416,55 +1437,68 @@ fn load_level_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         move || push_ui(&a_back, UiAction::CloseOverlay),
     ));
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_close = actions.clone();
     let a_sort = actions.clone();
     let a_clear = actions.clone();
+    let a_query = actions.clone();
 
     let levels = &st.browse_visible;
 
     let header = Row(Modifier::new()
-        .fill_max_size()
+        .fill_max_width()
         .align_items(AlignItems::CENTER))
     .child((
         RText("Community Levels").size(28.0).color(RColor::WHITE),
-        Column(Modifier::new().fill_max_size()),
+        Column(Modifier::new().fill_max_width()),
         mk_icon_button(Symbols::REMOVE, true, move || {
             push(&a_close, UiAction::CloseOverlay)
         }),
     ));
 
+    let query_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
+    let query_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if !query_focus.get() && query_state.borrow().text != st.browse_query {
+        query_state.borrow_mut().text = st.browse_query.clone();
+    }
+    let on_change = {
+        let a = a_query.clone();
+        Rc::new(move |v: String| push(&a, UiAction::BrowseSetQuery(v))) as Rc<dyn Fn(String)>
+    };
+    let field = BasicTextField(
+        query_state.clone(),
+        Modifier::new().flex_grow(1.0).height(34.0),
+        "Search name, author, description",
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Filter,
+                ime_action: ImeAction::Search,
+                ..KeyboardOptions::DEFAULT
+            },
+            on_change: Some(on_change),
+            focus_tracker: Some(query_focus.clone()),
+            ..Default::default()
+        },
+    );
+
     let mut search_children: Vec<View> = vec![
         Icon(Symbols::SEARCH).size(18.0).color(col(150, 150, 170)),
-        RText(if st.browse_query.is_empty() {
-            "Search name, author, description".to_string()
-        } else {
-            st.browse_query.clone()
-        })
-        .size(14.0)
-        .color(if st.browse_query.is_empty() {
-            col(130, 130, 150)
-        } else {
-            RColor::WHITE
-        }),
+        field,
     ];
     if !st.browse_query.is_empty() {
+        let qs = query_state.clone();
+        let a_clear2 = a_clear.clone();
         search_children.push(mk_icon_button(Symbols::REMOVE, true, move || {
-            push(&a_clear, UiAction::BrowseClearQuery)
+            qs.borrow_mut().text.clear();
+            push(&a_clear2, UiAction::BrowseClearQuery)
         }));
     }
     let search_row = Row(Modifier::new()
-        .fill_max_size()
+        .fill_max_width()
         .gap(8.0)
         .align_items(AlignItems::CENTER)
         .padding(10.0)
@@ -1704,9 +1738,18 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }
     }
 
+    let scroll_state = remember_scroll_state("browse_list");
+    let list_column = Column(Modifier::new().fill_max_width().gap(6.0)).with_children(list);
+    let scroll_list = ScrollArea(
+        Modifier::new().fill_max_width().height(360.0),
+        scroll_state,
+        list_column,
+    );
+
     let inner = Column(
         Modifier::new()
             .width(600.0)
+            .max_height(680.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -1724,16 +1767,260 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(spacer(10.0))
     .child(sort_row)
     .child(spacer(12.0))
-    .child(list);
+    .child(scroll_list);
 
-    Column(
+    modal_shell(inner)
+}
+
+fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let a_close = actions.clone();
+    let a_refresh = actions.clone();
+    let a_clear = actions.clone();
+    let a_query_focus = actions.clone();
+    let a_token_focus = actions.clone();
+    let a_set_token = actions.clone();
+    let a_upload = actions.clone();
+
+    let levels = &st.online_levels;
+
+    let header = Row(
         Modifier::new()
             .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
+            .align_items(AlignItems::CENTER),
     )
-    .child(inner)
+    .child((
+        RText("Online Levels").size(28.0).color(RColor::WHITE),
+        Column(Modifier::new().fill_max_size()),
+        mk_icon_button(Symbols::REFRESH, true, move || {
+            push(&a_refresh, UiAction::OnlineRefresh)
+        }),
+        mk_icon_button(Symbols::REMOVE, true, move || {
+            push(&a_close, UiAction::CloseOverlay)
+        }),
+    ));
+
+    let mut search_children: Vec<View> = vec![
+        Icon(Symbols::SEARCH).size(18.0).color(col(150, 150, 170)),
+        RText(if st.online_query.is_empty() {
+            "Search name or author".to_string()
+        } else {
+            st.online_query.clone()
+        })
+        .size(14.0)
+        .color(if st.online_query.is_empty() {
+            col(130, 130, 150)
+        } else {
+            RColor::WHITE
+        }),
+    ];
+    if !st.online_query.is_empty() {
+        search_children.push(mk_icon_button(Symbols::REMOVE, true, move || {
+            push(&a_clear, UiAction::OnlineClearQuery)
+        }));
+    }
+    let search_row = FilledTonalButton(
+        Modifier::new()
+            .fill_max_size()
+            .padding(10.0)
+            .background(if st.online_focus == 0 {
+                col(70, 90, 120)
+            } else {
+                col(45, 45, 60)
+            })
+            .clip_rounded(18.0),
+        move || push(&a_query_focus, UiAction::OnlineFocusQuery),
+        ButtonConfig::default(),
+        move || {
+            Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child(search_children.clone())
+        },
+    );
+
+    let token_display = if st.online_token.is_empty() {
+        "Enter upload token (needed to publish / delete)".to_string()
+    } else {
+        st.online_token.clone()
+    };
+    let token_field = FilledTonalButton(
+        Modifier::new()
+            .fill_max_size()
+            .padding(10.0)
+            .background(if st.online_focus == 1 {
+                col(70, 90, 120)
+            } else {
+                col(45, 45, 60)
+            })
+            .clip_rounded(18.0),
+        move || push(&a_token_focus, UiAction::OnlineFocusToken),
+        ButtonConfig::default(),
+        move || {
+            Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
+                Icon(Symbols::LINK).size(16.0).color(col(150, 150, 170)),
+                RText(token_display.clone()).size(13.0).color(if st.online_token.is_empty() {
+                    col(130, 130, 150)
+                } else {
+                    RColor::WHITE
+                }),
+            ))
+        },
+    );
+    let token_set = mk_pill_button(
+        icon_label(Symbols::CHECK, "Set".into()),
+        move || push(&a_set_token, UiAction::OnlineSetToken),
+    );
+    let token_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
+        .child((token_field, token_set));
+
+    let verified_hint = RText(if st.level_verified {
+        "Ready to publish".to_string()
+    } else {
+        "Beat the level to publish it".to_string()
+    })
+    .size(12.0)
+    .color(if st.level_verified {
+        col(90, 200, 120)
+    } else {
+        col(230, 160, 70)
+    });
+
+    let upload_button = mk_primary_button(
+        icon_label(Symbols::CLOUD_UPLOAD, "Publish Current Level".into()),
+        col(150, 110, 200),
+        move || push(&a_upload, UiAction::OnlineUpload),
+    );
+
+    let card = |m: &LevelMeta| -> View {
+        let a_play = actions.clone();
+        let a_like = actions.clone();
+        let a_report = actions.clone();
+        let a_del = actions.clone();
+        let id = m.id;
+
+        let mut meta: Vec<View> = vec![
+            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                RText(m.name.clone()).size(16.0).color(RColor::WHITE),
+                RText(format!("#{}", m.id))
+                    .size(12.0)
+                    .color(col(130, 130, 150)),
+            )),
+            icon_text(
+                Symbols::AUTO_AWESOME,
+                format!(
+                    "{} · {} likes · {} plays · {:.1} KB",
+                    if m.author.is_empty() {
+                        "Unknown".to_string()
+                    } else {
+                        m.author.clone()
+                    },
+                    m.likes,
+                    m.plays,
+                    m.size_bytes as f32 / 1024.0,
+                ),
+                12.0,
+                col(150, 150, 170),
+            ),
+        ];
+        if !m.description.is_empty() {
+            let desc = if m.description.chars().count() > 120 {
+                let mut d: String = m.description.chars().take(120).collect();
+                d.push_str("...");
+                d
+            } else {
+                m.description.clone()
+            };
+            meta.push(RText(desc).size(13.0).color(col(190, 190, 205)));
+        }
+        if !m.tags.is_empty() {
+            let mut tag_pills: Vec<View> = Vec::new();
+            for tag in &m.tags {
+                tag_pills.push(
+                    Column(
+                        Modifier::new()
+                            .padding(6.0)
+                            .background(col(60, 60, 80))
+                            .clip_rounded(8.0),
+                    )
+                    .child(RText(tag.clone()).size(11.0).color(col(170, 170, 190))),
+                );
+            }
+            meta.push(Row(Modifier::new().gap(6.0)).child(tag_pills));
+        }
+
+        let action_row = Row(Modifier::new().gap(6.0)).child((
+            mk_icon_button(Symbols::PLAY_ARROW, true, move || {
+                push(&a_play, UiAction::OnlinePlay(id))
+            }),
+            mk_icon_button(Symbols::THUMB_UP, true, move || {
+                push(&a_like, UiAction::OnlineLike(id))
+            }),
+            mk_icon_button(Symbols::FLAG, true, move || {
+                push(&a_report, UiAction::OnlineReport(id))
+            }),
+            mk_icon_button(Symbols::DELETE, true, move || {
+                push(&a_del, UiAction::OnlineDelete(id))
+            }),
+        ));
+
+        Column(
+            Modifier::new()
+                .fill_max_size()
+                .background(col(40, 40, 52))
+                .clip_rounded(10.0)
+                .padding(10.0)
+                .gap(6.0),
+        )
+        .child((
+            Column(
+                Modifier::new()
+                    .fill_max_width()
+                    .gap(6.0)
+                    .align_items(AlignItems::FLEX_START),
+            )
+            .child(meta),
+            action_row,
+        ))
+    };
+
+    let mut list: Vec<View> = Vec::new();
+    if levels.is_empty() {
+        list.push(
+            RText("No levels online yet. Publish one, or press refresh to re-fetch.")
+                .size(14.0)
+                .color(col(180, 180, 190)),
+        );
+    } else {
+        for m in levels {
+            list.push(card(m));
+        }
+    }
+
+    let inner = Column(
+        Modifier::new()
+            .width(640.0)
+            .padding(24.0)
+            .background(col(20, 20, 28))
+            .clip_rounded(12.0)
+            .align_items(AlignItems::CENTER),
+    )
+    .child(header)
+    .child(spacer(12.0))
+    .child(search_row)
+    .child(spacer(8.0))
+    .child(token_row)
+    .child(spacer(12.0))
+    .child(
+        Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
+            upload_button,
+            verified_hint,
+            Column(Modifier::new().fill_max_size()),
+            RText(st.maker_status.clone())
+                .size(12.0)
+                .color(col(150, 150, 170)),
+        )),
+    )
+    .child(spacer(12.0))
+    .child(list);
+
+    modal_shell(inner)
 }
 
 /// Renders an isometric preview as a grid of colored boxes (Repose primitives
@@ -1910,14 +2197,7 @@ fn share_overlay_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(spacer(8.0))
     .child(tail);
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -2010,14 +2290,7 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         push(&a_close, UiAction::LevelInfoClose)
     }));
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .justify_content(JustifyContent::CENTER)
-            .align_items(AlignItems::CENTER)
-            .background(RColor::from_rgba(0, 0, 0, 180)),
-    )
-    .child(inner)
+    modal_shell(inner)
 }
 
 fn mk_button(label: &str, _bg: RColor, on_click: impl Fn() + 'static) -> View {

@@ -57,13 +57,7 @@ pub enum UiCommand {
     AddToCollection,
     OpenLevelInfo,
     SaveMetadata,
-    OnlineBrowse,
     OnlineUpload,
-    OnlinePlay(u64),
-    OnlineLike(u64),
-    OnlineReport(u64),
-    OnlineDelete(u64),
-    OnlineSetToken(String),
 }
 
 #[derive(Resource, Default)]
@@ -124,6 +118,8 @@ pub struct MakerUi {
     pub online_levels: Vec<LevelMeta>,
     pub online_query: String,
     pub online_token: String,
+    /// 0 = search query field, 1 = upload token field.
+    pub online_focus: u8,
     /// Requests the flush system turns into fetches (kept here so
     /// `drain_ui_commands` stays under Bevy's 16-param system limit).
     pub online_pending: Vec<OnlineRequest>,
@@ -426,16 +422,6 @@ pub fn drain_ui_commands(
                     ui.set_status("Clipboard unavailable.");
                 }
             }
-            UiCommand::OnlineBrowse => {
-                let query = ui.browse_query.clone();
-                ui.online_query = query.clone();
-                ui.online_pending.push(OnlineRequest::List {
-                    query,
-                    limit: 50,
-                    offset: 0,
-                });
-                ui.set_status("Loading online levels...");
-            }
             UiCommand::OnlineUpload => {
                 if !level.data.is_verified {
                     ui.set_status("Beat the level before publishing.");
@@ -453,42 +439,6 @@ pub fn drain_ui_commands(
                     data: level.data.clone(),
                 });
                 ui.set_status("Uploading...");
-            }
-            UiCommand::OnlinePlay(id) => {
-                let meta = ui
-                    .online_levels
-                    .iter()
-                    .find(|m| m.id == id)
-                    .cloned()
-                    .unwrap_or_else(|| LevelMeta {
-                        id,
-                        author: String::new(),
-                        name: format!("#{id}"),
-                        description: String::new(),
-                        tags: Vec::new(),
-                        format_version: 0,
-                        game_version: String::new(),
-                        size_bytes: 0,
-                        sha256: String::new(),
-                        likes: 0,
-                        plays: 0,
-                        created_at: String::new(),
-                        updated_at: String::new(),
-                    });
-                ui.online_pending.push(OnlineRequest::Download { meta, play: true });
-            }
-            UiCommand::OnlineLike(id) => ui.online_pending.push(OnlineRequest::Like { id }),
-            UiCommand::OnlineReport(id) => ui.online_pending.push(OnlineRequest::Report { id }),
-            UiCommand::OnlineDelete(id) => ui.online_pending.push(OnlineRequest::Delete { id }),
-            UiCommand::OnlineSetToken(token) => {
-                let token = token.trim().to_string();
-                let msg = if token.is_empty() {
-                    "Upload token cleared."
-                } else {
-                    "Upload token set."
-                };
-                ui.online_token = token;
-                ui.set_status(msg);
             }
             UiCommand::DeltaEntityParam(id, delta) => {
                 if let Some(e) = level.entity_by_id(id) {
@@ -643,6 +593,52 @@ pub fn browse_text_input(
             && text.chars().all(|c| !c.is_control())
         {
             ui.browse_query.push_str(text);
+        }
+    }
+}
+
+pub fn online_text_input(
+    mut keys: MessageReader<KeyboardInput>,
+    overlay: Res<OverlayMenu>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if *overlay != OverlayMenu::Online {
+        return;
+    }
+    for ev in keys.read() {
+        if ev.state != ButtonState::Pressed || ev.repeat {
+            continue;
+        }
+        if ev.key_code == KeyCode::Backspace {
+            if ui.online_focus == 0 {
+                ui.online_query.pop();
+            } else {
+                ui.online_token.pop();
+            }
+        } else if ev.key_code == KeyCode::Enter {
+            if ui.online_focus == 0 {
+                let query = ui.online_query.clone();
+                ui.online_pending
+                    .push(OnlineRequest::List { query, limit: 50, offset: 0 });
+                ui.set_status("Loading online levels...");
+            } else {
+                let token = ui.online_token.trim().to_string();
+                ui.online_token = token.clone();
+                let msg = if token.is_empty() {
+                    "Upload token cleared."
+                } else {
+                    "Upload token set."
+                };
+                ui.set_status(msg);
+            }
+        } else if let Some(text) = &ev.text
+            && text.chars().all(|c| !c.is_control())
+        {
+            if ui.online_focus == 0 {
+                ui.online_query.push_str(text);
+            } else {
+                ui.online_token.push_str(text);
+            }
         }
     }
 }

@@ -170,6 +170,7 @@ pub enum OverlayMenu {
     Share,
     LevelSelect,
     Browse,
+    Online,
     LevelInfo,
 }
 
@@ -247,6 +248,11 @@ pub struct SharedUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
+    // Online level sharing
+    pub online_levels: Vec<rustbox_format::api::LevelMeta>,
+    pub online_query: String,
+    pub online_token: String,
+    pub online_focus: u8,
 }
 
 impl Default for SharedUi {
@@ -311,6 +317,10 @@ impl Default for SharedUi {
             info_description: String::new(),
             info_tags: Vec::new(),
             info_focus: 0,
+            online_levels: Vec::new(),
+            online_query: String::new(),
+            online_token: String::new(),
+            online_focus: 0,
         }
     }
 }
@@ -456,6 +466,10 @@ fn sync_shared_ui(
         ui.info_description = m.info_description.clone();
         ui.info_tags = m.info_tags.clone();
         ui.info_focus = m.info_focus;
+        ui.online_levels = m.online_levels.clone();
+        ui.online_query = m.online_query.clone();
+        ui.online_token = m.online_token.clone();
+        ui.online_focus = m.online_focus;
         ui.brush_entities = m.brush_entities;
         ui.selected_entity = m.selected_entity;
         ui.brush_tab = m.brush_tab;
@@ -566,7 +580,9 @@ fn process_ui_actions(
     use crate::maker::block::BlockKind;
     use crate::maker::entity_data::EntityKind;
     use crate::maker::mode::{BrushTab, MakerMode};
+    use crate::maker::online::OnlineRequest;
     use crate::maker::ui_bridge::UiCommand;
+    use rustbox_format::api::LevelMeta;
 
     let Ok(mut q) = bridge.actions.lock() else {
         return;
@@ -678,6 +694,12 @@ fn process_ui_actions(
                     m.browse_sort = (m.browse_sort + 1) % 6;
                 }
             }
+            UiAction::BrowseSetQuery(q) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_query = q;
+                    m.browse_confirm_delete = None;
+                }
+            }
             UiAction::BrowseClearQuery => {
                 if let Some(ref mut m) = maker_ui {
                     m.browse_query.clear();
@@ -687,6 +709,102 @@ fn process_ui_actions(
             UiAction::BrowseAddToCollection => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::AddToCollection);
+                }
+            }
+            UiAction::OnlineOpen => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_confirm_delete = None;
+                    let query = m.online_query.clone();
+                    m.online_pending
+                        .push(OnlineRequest::List { query, limit: 50, offset: 0 });
+                    m.set_status("Loading online levels...");
+                }
+                *overlay = OverlayMenu::Online;
+            }
+            UiAction::OnlineRefresh => {
+                if let Some(ref mut m) = maker_ui {
+                    let query = m.online_query.clone();
+                    m.online_pending
+                        .push(OnlineRequest::List { query, limit: 50, offset: 0 });
+                    m.set_status("Loading online levels...");
+                }
+            }
+            UiAction::OnlinePlay(id) => {
+                if let Some(ref mut m) = maker_ui {
+                    let meta = m
+                        .online_levels
+                        .iter()
+                        .find(|x| x.id == id)
+                        .cloned()
+                        .unwrap_or_else(|| LevelMeta {
+                            id,
+                            author: String::new(),
+                            name: format!("#{id}"),
+                            description: String::new(),
+                            tags: Vec::new(),
+                            format_version: 0,
+                            game_version: String::new(),
+                            size_bytes: 0,
+                            sha256: String::new(),
+                            likes: 0,
+                            plays: 0,
+                            created_at: String::new(),
+                            updated_at: String::new(),
+                        });
+                    m.online_pending.push(OnlineRequest::Download { meta, play: true });
+                }
+            }
+            UiAction::OnlineLike(id) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_pending.push(OnlineRequest::Like { id });
+                }
+            }
+            UiAction::OnlineReport(id) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_pending.push(OnlineRequest::Report { id });
+                }
+            }
+            UiAction::OnlineDelete(id) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_pending.push(OnlineRequest::Delete { id });
+                }
+            }
+            UiAction::OnlineClearQuery => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_query.clear();
+                    m.online_pending.push(OnlineRequest::List {
+                        query: String::new(),
+                        limit: 50,
+                        offset: 0,
+                    });
+                    m.set_status("Loading online levels...");
+                }
+            }
+            UiAction::OnlineFocusQuery => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_focus = 0;
+                }
+            }
+            UiAction::OnlineFocusToken => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_focus = 1;
+                }
+            }
+            UiAction::OnlineSetToken => {
+                if let Some(ref mut m) = maker_ui {
+                    let token = m.online_token.trim().to_string();
+                    m.online_token = token.clone();
+                    let msg = if token.is_empty() {
+                        "Upload token cleared."
+                    } else {
+                        "Upload token set."
+                    };
+                    m.set_status(msg);
+                }
+            }
+            UiAction::OnlineUpload => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::OnlineUpload);
                 }
             }
             UiAction::LevelInfoOpen => {
@@ -1048,7 +1166,7 @@ fn handle_pause_input(
             *overlay = OverlayMenu::None;
             pending_unpause.0 = Some(Timer::from_seconds(0.2, TimerMode::Once));
         }
-        OverlayMenu::LevelClear | OverlayMenu::LoadLevel | OverlayMenu::LevelInfo => {
+        OverlayMenu::LevelClear | OverlayMenu::LoadLevel | OverlayMenu::LevelInfo | OverlayMenu::Online => {
             *overlay = OverlayMenu::None;
             paused.0 = false;
             virtual_time.unpause();
