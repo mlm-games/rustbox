@@ -9,8 +9,8 @@ use super::entity_data::{EntityData, EntityDataExt, EntityKind};
 use super::level::{BlockData, LevelDocument};
 use super::mode::{
     ActiveLinkChannel, BlockBrush, BlockPlaced, BoxFillStart, BrushTab, ClipboardBlock,
-    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MakerStats,
-    MirrorMode, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart, SelectionSet,
+    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MakerStats, MirrorMode,
+    PastePreview, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart, SelectionSet,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
@@ -65,8 +65,8 @@ pub fn block_palette_hotkeys(
         ui.set_status("Water: fills a cell with swimmable water");
     }
     if keys.just_pressed(KeyCode::KeyR) {
-        brush.rot = (brush.rot + 1) % 4;
-        ui.set_status(format!("Block rotation: {}°", brush.rot * 90));
+        brush.rot = (brush.rot.wrapping_add(1)) % 4;
+        ui.set_status(format!("Block rotation: {}°", (brush.rot as u16) * 90));
     }
     if keys.just_pressed(KeyCode::KeyT) {
         let shapes = ALL_BLOCK_SHAPES;
@@ -393,6 +393,21 @@ fn delete_selection(
     count
 }
 
+fn rotate_clipboard_yaw(yaw: &mut f32) {
+    *yaw = (*yaw + 90.0) % 360.0;
+}
+
+fn transformed_cell(offset: IVec3, pivot: IVec3, yaw: f32) -> IVec3 {
+    let mut p = offset;
+    match yaw as i32 % 360 {
+        90 => p = IVec3::new(-p.z, p.y, p.x),
+        180 => p = IVec3::new(-p.x, p.y, -p.z),
+        270 => p = IVec3::new(p.z, p.y, -p.x),
+        _ => {}
+    }
+    pivot + p
+}
+
 fn paste_clipboard(
     level: &mut LevelDocument,
     history: &mut CommandHistory,
@@ -400,6 +415,7 @@ fn paste_clipboard(
     selected_entity: &mut SelectedEntity,
     clipboard: &EditorClipboard,
     target: IVec3,
+    yaw: f32,
 ) -> usize {
     if clipboard.is_empty() {
         return 0;
@@ -409,7 +425,7 @@ fn paste_clipboard(
     let mut entities = Vec::new();
 
     for item in &clipboard.blocks {
-        let pos = target + item.offset;
+        let pos = transformed_cell(item.offset, target, yaw);
 
         // Do not paste into invisible boundary solids.
         if level.boundary_solid(pos) {
@@ -418,13 +434,14 @@ fn paste_clipboard(
 
         let mut data = item.data.clone();
         data.position = pos.to_array();
+        data.rot = (data.rot + (yaw as u8 / 90) as u8) % 4;
 
         let previous = level.get_block(pos).cloned();
         blocks.push((pos, data, previous));
     }
 
     for item in &clipboard.entities {
-        let pos = target + item.offset;
+        let pos = transformed_cell(item.offset, target, yaw);
 
         // Keep one entity per cell, matching current editor behavior.
         if level.entity_at_cell(pos).is_some() {
@@ -437,6 +454,7 @@ fn paste_clipboard(
 
         entity.id = level.alloc_id();
         entity.cell = pos.to_array();
+        entity.yaw_deg = (entity.yaw_deg + yaw) % 360.0;
 
         // Move legacy paired-cell data with the pasted entity.
         if let Some(cell_b) = entity.cell_b {
@@ -471,6 +489,159 @@ fn paste_clipboard(
     count
 }
 
+/// Live paste preview controls (should have a help menu for shortcuts ig):
+/// - R rotates the preview 90°
+/// - Left-click commits the paste
+/// - Right-click or Escape cancels
+pub fn update_paste_preview(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    cursor: Res<EditorCursor>,
+    mut preview: ResMut<PastePreview>,
+    mut selection: ResMut<SelectionSet>,
+    mut selected_entity: ResMut<SelectedEntity>,
+    mut level: ResMut<LevelDocument>,
+    mut history: ResMut<CommandHistory>,
+    mut ui: ResMut<MakerUi>,
+    mut box_select: ResMut<SelectionBoxStart>,
+) {
+    if !preview.active {
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::KeyR) {
+        rotate_clipboard_yaw(&mut preview.yaw);
+        ui.set_status(format!("Preview rotated to {}°", preview.yaw));
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::Escape) || buttons.just_pressed(MouseButton::Right) {
+        preview.reset();
+        box_select.start = None;
+        ui.set_status("Paste preview cancelled");
+        return;
+    }
+
+    // Update preview target to current cursor.
+    if let Some(target) = cursor.place.or(cursor.hit) {
+        preview.current_pivot = target;
+    }
+
+    // Commit on left click. The preview stays "active" until the next frame so
+    // normal block placement is suppressed for this commit click.
+    if buttons.just_pressed(MouseButton::Left) {
+        let count = paste_clipboard(
+            &mut level,
+            &mut history,
+            &mut selection,
+            &mut selected_entity,
+            &preview.clipboard,
+            preview.current_pivot,
+            preview.yaw,
+        );
+
+        ui.set_status(format!("Pasted {count} item(s)"));
+        preview.active = false;
+    }
+}
+
+pub fn draw_box_fill_preview(
+    mode: Res<MakerMode>,
+    tab: Res<BrushTab>,
+    cursor: Res<EditorCursor>,
+    box_start: Res<BoxFillStart>,
+    mut gizmos: Gizmos,
+) {
+    if *mode != MakerMode::Edit || *tab != BrushTab::Blocks {
+        return;
+    }
+    let Some(a) = box_start.start else {
+        return;
+    };
+    let Some(b) = cursor.place else {
+        return;
+    };
+
+    let color = Color::srgb(0.95, 0.9, 0.2);
+    let min = a.min(b);
+    let max = a.max(b);
+
+    // World bounds covering every cell from `min` to `max` inclusive.
+    let lo = min.as_vec3() - Vec3::splat(0.5);
+    let hi = max.as_vec3() + Vec3::new(0.5, 0.5, 0.5) + Vec3::ONE;
+    let center = (lo + hi) * 0.5;
+    let size = hi - lo;
+
+    // Outlined edges to mark the box bounds.
+    draw_aabb(&mut gizmos, center, size * 0.5, color);
+
+    // Grid lines across each face so the fill extent reads as a region.
+    let steps = (size / 1.0).floor().min(Vec3::splat(48.0));
+    let sx = steps.x as i32;
+    let sz = steps.z as i32;
+    if sx > 1 {
+        for i in 1..sx {
+            let t = i as f32 / sx as f32;
+            let x = lo.x + size.x * t;
+            gizmos.line(
+                Vec3::new(x, lo.y, lo.z),
+                Vec3::new(x, lo.y, hi.z),
+                color.with_alpha(0.25),
+            );
+        }
+    }
+    if sz > 1 {
+        for i in 1..sz {
+            let t = i as f32 / sz as f32;
+            let z = lo.z + size.z * t;
+            gizmos.line(
+                Vec3::new(lo.x, lo.y, z),
+                Vec3::new(hi.x, lo.y, z),
+                color.with_alpha(0.25),
+            );
+        }
+    }
+
+    // Corner markers.
+    for c in [lo, Vec3::new(hi.x, lo.y, lo.z), Vec3::new(lo.x, lo.y, hi.z), hi] {
+        gizmos.sphere(Isometry3d::from_translation(c), 0.08, color);
+    }
+}
+
+pub fn draw_paste_preview_gizmos(
+    preview: Res<PastePreview>,
+    mut gizmos: Gizmos,
+) {
+    if !preview.active || preview.clipboard.is_empty() {
+        return;
+    }
+
+    let preview_color = Color::srgb(0.0, 1.0, 0.6);
+    let alpha = 0.7;
+
+    for item in &preview.clipboard.blocks {
+        let world_pos = transformed_cell(item.offset, preview.current_pivot, preview.yaw);
+        let center = world_pos.as_vec3() + Vec3::splat(0.5);
+        draw_aabb(
+            &mut gizmos,
+            center,
+            Vec3::splat(0.52),
+            preview_color.with_alpha(alpha),
+        );
+    }
+
+    for item in &preview.clipboard.entities {
+        let world_pos = transformed_cell(item.offset, preview.current_pivot, preview.yaw);
+        let center = world_pos.as_vec3() + Vec3::new(0.5, 0.5, 0.5);
+        draw_aabb(
+            &mut gizmos,
+            center,
+            Vec3::splat(0.65),
+            preview_color.with_alpha(alpha),
+        );
+    }
+}
+
 /// Structure-editing hotkeys:
 /// - Ctrl+LeftClick: toggle block/entity under cursor
 /// - B, then B again: select volume corners
@@ -492,6 +663,7 @@ pub fn selection_hotkeys(
     mut history: ResMut<CommandHistory>,
     mut selected_entity: ResMut<SelectedEntity>,
     mut ui: ResMut<MakerUi>,
+    mut preview: ResMut<PastePreview>,
 ) {
     if capture.ui_wants_keyboard {
         return;
@@ -612,26 +784,24 @@ pub fn selection_hotkeys(
     }
 
     if ctrl && keys.just_pressed(KeyCode::KeyV) {
+        if clipboard.is_empty() {
+            ui.set_status("Clipboard is empty");
+            return;
+        }
+
         let Some(target) = cursor.place.or(cursor.hit) else {
-            ui.set_status("Aim at the level to paste");
+            ui.set_status("Aim at the level to start paste preview");
             return;
         };
 
-        let count = paste_clipboard(
-            &mut level,
-            &mut history,
-            &mut selection,
-            &mut selected_entity,
-            &clipboard,
-            target,
+        preview.active = true;
+        preview.clipboard = clipboard.clone();
+        preview.current_pivot = target;
+        preview.yaw = 0.0;
+
+        ui.set_status(
+            "Paste preview active — Left click to place, R to rotate, Right click/Escape to cancel",
         );
-
-        ui.set_status(if count == 0 {
-            "Nothing pasted".to_string()
-        } else {
-            format!("Pasted {count} item(s)")
-        });
-
         return;
     }
 
@@ -792,7 +962,7 @@ pub fn update_preview_and_edit(
         if let Some(b) = level.get_block(hit_cell) {
             brush.kind = b.kind;
             brush.shape = b.shape;
-            brush.rot = b.rot;
+            brush.rot = b.rot % 4;
             brush.waterlogged = b.waterlogged;
             *tab = BrushTab::Blocks;
         } else if let Some(ent) = level.entity_at_cell(hit_cell) {

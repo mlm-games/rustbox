@@ -48,6 +48,9 @@ fn in_edit(mode: Res<MakerMode>) -> bool {
 fn in_play(mode: Res<MakerMode>) -> bool {
     *mode == MakerMode::Play
 }
+fn not_in_paste_preview(preview: Res<mode::PastePreview>) -> bool {
+    !preview.active
+}
 fn not_paused(p: Res<Paused>) -> bool {
     !p.0
 }
@@ -80,6 +83,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::SelectionSet>()
             .init_resource::<mode::SelectionBoxStart>()
             .init_resource::<mode::EditorClipboard>()
+            .init_resource::<mode::PastePreview>()
             .init_resource::<entities_runtime::LinkState>()
             .init_resource::<campaign::LevelSource>()
             .init_resource::<campaign::CampaignProgress>()
@@ -120,7 +124,9 @@ impl Plugin for MakerPlugin {
                     editor::track_tool_hotkeys.run_if(in_edit),
                     editor::undo_redo_hotkeys.run_if(in_edit),
                     editor::mirror_hotkey.run_if(in_edit),
-                    editor::update_preview_and_edit.run_if(in_edit),
+                    editor::update_preview_and_edit
+                        .run_if(in_edit)
+                        .run_if(not_in_paste_preview),
                     rendering::rebuild_dirty_chunks,
                     rendering::tick_ghosts,
                     entities_runtime::reconcile_entities,
@@ -142,10 +148,15 @@ impl Plugin for MakerPlugin {
             )
             .add_systems(
                 Update,
-                editor::selection_hotkeys
-                    .run_if(in_edit)
-                    .after(ui_bridge::update_input_capture)
-                    .before(editor::update_preview_and_edit),
+                (
+                    editor::selection_hotkeys
+                        .run_if(in_edit)
+                        .after(ui_bridge::update_input_capture)
+                        .before(editor::update_preview_and_edit),
+                    editor::update_paste_preview
+                        .run_if(in_edit)
+                        .after(editor::update_preview_and_edit),
+                ),
             )
             .add_systems(
                 Update,
@@ -154,6 +165,8 @@ impl Plugin for MakerPlugin {
                     editor::delete_selected_entity.run_if(in_edit),
                     editor::draw_selected_entity_gizmo.run_if(in_edit),
                     editor::draw_selection_gizmos.run_if(in_edit),
+                    editor::draw_box_fill_preview.run_if(in_edit),
+                    editor::draw_paste_preview_gizmos.run_if(in_edit),
                     editor::update_placement_preview.run_if(in_edit),
                     entities_runtime::draw_link_gizmos.run_if(in_edit),
                     entities_runtime::move_prowlers.after(entities_runtime::tick_track_followers),

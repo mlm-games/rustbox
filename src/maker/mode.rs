@@ -194,3 +194,20 @@ impl EditorClipboard {
         self.blocks.len() + self.entities.len()
     }
 }
+
+/// Live preview of a clipboard structure while the user positions it.
+#[derive(Resource, Default, Debug)]
+pub struct PastePreview {
+    pub active: bool,
+    pub clipboard: EditorClipboard,
+    pub current_pivot: IVec3,
+    pub yaw: f32, // 0, 90, 180, 270
+}
+
+impl PastePreview {
+    pub fn reset(&mut self) {
+        self.active = false;
+        self.clipboard.clear();
+        self.yaw = 0.0;
+    }
+}
