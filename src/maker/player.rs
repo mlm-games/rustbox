@@ -305,7 +305,8 @@ pub fn player_controller(
                 player.gripping = false;
                 player.grip_top = 0.0;
             }
-        } else if !result.on_ground && player.velocity.y <= 0.0 && !underwater && !player.slamming {
+        } else if false && !result.on_ground && player.velocity.y <= 0.0 && !underwater && !player.slamming {
+            // Ledge grab is disabled for now: leads to buggy interactions with most blocks.
             if let Some(g) = ledge_grip(&level, transform.translation, he, player.velocity) {
                 transform.translation.y = g.wall_top - he.y + 0.05;
                 player.gripping = true;
