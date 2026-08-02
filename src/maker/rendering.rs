@@ -55,6 +55,7 @@ pub struct WaterBoundaryState {
     pub walls: bool,
     pub ceiling: bool,
     pub theme: Theme,
+    pub edit: bool,
 }
 
 impl Default for WaterBoundaryState {
@@ -65,6 +66,7 @@ impl Default for WaterBoundaryState {
             walls: true,
             ceiling: false,
             theme: Theme::Grass,
+            edit: true,
         }
     }
 }
@@ -869,7 +871,8 @@ pub fn tick_ghosts(
 }
 
 /// Rebuilds the water surface plane and boundary walls when the level's water
-/// level / size / theme / boundary config changes.
+/// level / size / theme / boundary config changes. Boundary walls (and the
+/// ceiling) are a level-design aid, so they're only shown in Edit mode.
 pub fn rebuild_water_and_boundary(
     mut commands: Commands,
     mut level: ResMut<LevelDocument>,
@@ -878,18 +881,21 @@ pub fn rebuild_water_and_boundary(
     mut materials: ResMut<Assets<StandardMaterial>>,
     water_q: Query<Entity, With<WaterSurface>>,
     wall_q: Query<Entity, With<BoundaryWall>>,
+    mode: Res<super::mode::MakerMode>,
 ) {
     let size = level.play_size();
     let water_level = level.water_level();
     let walls = level.data.boundary.walls;
     let ceiling = level.data.boundary.ceiling;
     let theme = level.data.theme;
-    let changed = (water_level, size, walls, ceiling, theme) != (
+    let edit = *mode == super::mode::MakerMode::Edit;
+    let changed = (water_level, size, walls, ceiling, theme, edit) != (
         state.water_level,
         state.size,
         state.walls,
         state.ceiling,
         state.theme,
+        state.edit,
     );
 
     if changed {
@@ -922,7 +928,7 @@ pub fn rebuild_water_and_boundary(
             ));
         }
 
-        if walls {
+        if walls && edit {
             let (min, max) = level.play_bounds();
             let mut mat = StandardMaterial::from_color(Color::srgba(0.7, 0.3, 0.85, 0.35));
             mat.alpha_mode = AlphaMode::Blend;
@@ -955,7 +961,7 @@ pub fn rebuild_water_and_boundary(
             }
         }
 
-        if ceiling {
+        if ceiling && edit {
             let mut mat = StandardMaterial::from_color(Color::srgba(0.7, 0.3, 0.85, 0.35));
             mat.alpha_mode = AlphaMode::Blend;
             mat.perceptual_roughness = 0.6;
@@ -979,6 +985,7 @@ pub fn rebuild_water_and_boundary(
     state.walls = walls;
     state.ceiling = ceiling;
     state.theme = theme;
+    state.edit = edit;
 }
 
 /// Applies the level theme to the camera clear color and ambient light.

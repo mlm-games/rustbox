@@ -208,8 +208,8 @@ fn resolve_axis(
                         };
                         // Only snap when the column under the player is solid
                         // (skip the empty halves of partial shapes) and the
-                        // player's bottom actually crosses the surface from
-                        // above.
+                        // player's bottom crosses the surface from above this
+                        // frame (`prev_feet` = feet before the move).
                         let column_solid = match block {
                             Some(b) if b.kind.is_solid() => {
                                 let (lx, lz) = local_from_world(
@@ -221,8 +221,10 @@ fn resolve_axis(
                             }
                             _ => true,
                         };
-                        if column_solid && p[1] - he[1] >= top - 0.001 {
-                            p[1] = top - he[1];
+                        let feet = p[1] - he[1];
+                        let prev_feet = feet - delta;
+                        if column_solid && prev_feet >= top - 0.001 && feet <= top + 0.001 {
+                            p[1] = top + he[1];
                             collided = true;
                         }
                     } else {
