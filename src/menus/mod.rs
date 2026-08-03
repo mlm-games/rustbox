@@ -1329,7 +1329,8 @@ fn mk_primary_button(label: View, bg: RColor, on_click: impl Fn() + 'static) -> 
             .min_height(38.0)
             .padding(10.0)
             .background(bg)
-            .clip_rounded(8.0),
+            .clip_rounded(8.0)
+            .flex_shrink(0.0),
         on_click,
         ButtonConfig::default(),
         move || label.clone(),
