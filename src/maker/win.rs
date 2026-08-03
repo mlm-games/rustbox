@@ -54,7 +54,7 @@ fn clear_condition_blocker(
             if clear_ms <= limit {
                 None
             } else {
-                Some(format!("Too slow — finish under {}.", fmt_ms(limit)))
+                Some(format!("Too slow - finish under {}.", fmt_ms(limit)))
             }
         }
     }

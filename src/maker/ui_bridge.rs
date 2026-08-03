@@ -77,6 +77,8 @@ pub enum UiCommand {
     /// Set the boundary wall/room height in cells (0 = auto from size).
     SetBoundaryHeight(i32),
     OnlineUpload,
+    /// Copy the anonymous creator recovery key to the clipboard.
+    CopyCreatorKey,
 }
 
 #[derive(Resource, Default)]
@@ -178,6 +180,14 @@ pub struct MakerUi {
     pub online_preview_lru: Vec<u64>,
     pub online_query: String,
     pub online_token: String,
+    /// Anonymous creator identity (recovery key = the account; device id is a
+    /// local-only abuse signal). Bootstrapped by `online::flush_online_requests`.
+    pub creator_recovery_key: String,
+    pub creator_device_id: String,
+    /// Human-readable weekly upload quota from `/v1/me`, e.g. "3/10 used".
+    pub creator_quota_text: String,
+    /// Non-empty triggers a recovery-key import (cleared after handling).
+    pub creator_import_code: String,
     /// 0 = new, 1 = name, 2 = likes, 3 = plays (client-side secondary ordering).
     pub online_sort: u8,
     /// Online shelf tab: 0 = New, 1 = Popular, 2 = Hot (recency-weighted).
@@ -190,7 +200,7 @@ pub struct MakerUi {
     /// this id (matches the local delete UX).
     pub online_confirm_delete: Option<u64>,
     /// Dedicated "Level ID" search field, distinct from the query box. The
-    /// backend `FetchById` looks a level up by a single level id — NOT a maker id.
+    /// backend `FetchById` looks a level up by a single level id - NOT a maker id.
     pub online_id_query: String,
     pub online_loading: bool,
     /// Requests the pending loop turns into JSON requests (kept here so
@@ -684,6 +694,15 @@ pub fn drain_ui_commands(
                     ui.set_status("No code to copy yet.");
                 } else if clipboard.set_text(ui.export_code.clone()).is_ok() {
                     ui.set_status("Code copied!");
+                } else {
+                    ui.set_status("Clipboard unavailable.");
+                }
+            }
+            UiCommand::CopyCreatorKey => {
+                if ui.creator_recovery_key.is_empty() {
+                    ui.set_status("No recovery key yet, open the online browser once.");
+                } else if clipboard.set_text(ui.creator_recovery_key.clone()).is_ok() {
+                    ui.set_status("Recovery key copied! Keep it private!! It is your account!!!");
                 } else {
                     ui.set_status("Clipboard unavailable.");
                 }

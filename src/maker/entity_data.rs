@@ -90,7 +90,7 @@ impl EntityDataExt for EntityData {
             EntityKind::Key => (0.0, None),
             // stays open this many seconds (0 = permanent until leave+reenter level)
             EntityKind::LockGate => (0.0, None),
-            // heal amount (lives or HP units — mapped below)
+            // heal amount (lives or HP units - mapped below)
             EntityKind::HealOrb => (1.0, None),
             // boost duration seconds
             EntityKind::SpeedRing => (2.5, None),

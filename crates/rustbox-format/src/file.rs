@@ -115,9 +115,7 @@ pub struct LevelDataV4 {
     pub coin_star: bool,
 }
 
-/// Layout of version-5 levels. `LevelData` gained no fields in v6 — only its
-/// entities changed shape (each `EntityData` gained `contents`), so this
-/// snapshot differs from `LevelData` purely by its entity type.
+/// Layout of version-5 levels. `LevelData` gained no fields in v6.
 #[derive(Serialize, Deserialize)]
 pub struct LevelFileV5 {
     pub version: u32,

@@ -105,6 +105,10 @@ bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", optional = t
 rustbox-format = { path = "crates/rustbox-format" }
 ehttp = { version = "0.7", features = ["multipart", "json"] }
 crossbeam-channel = "0.5"
+sha2 = "0.11"
+hex = "0.4"
+base64 = "0.23"
+getrandom = "0.4"
 # Optional big-game crates (pull in bevy-0.19)
 # leafwing-input-manager = { version = "0.14", optional = true, default-features = false, features = [] }
 # bevy_hanabi = { version = "0.14", optional = true, default-features = false, features = ["2d"] }

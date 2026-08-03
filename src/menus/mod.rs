@@ -43,12 +43,15 @@ material_symbols! {
     CHECK: '\u{E5CA}',
     CLOUD: '\u{E2BD}',
     CLOUD_UPLOAD: '\u{E2C3}',
+    COPY: '\u{E14C}',
     DELETE: '\u{E872}',
     EDIT: '\u{F097}',
     FLAG: '\u{E153}',
     FOLDER_OPEN: '\u{E2C8}',
     INFO: '\u{E88E}',
+    KEY: '\u{E73D}',
     LINK: '\u{E250}',
+    PERSON: '\u{E7FD}',
     PLAY_ARROW: '\u{E037}',
     PUBLISH: '\u{E255}',
     REDO: '\u{E15A}',
@@ -63,6 +66,8 @@ material_symbols! {
     THUMB_UP: '\u{E8DC}',
     TIMER: '\u{E425}',
     UNDO: '\u{E166}',
+    VISIBILITY: '\u{E8F4}',
+    VISIBILITY_OFF: '\u{E8F5}',
 }
 
 fn t(translations: &HashMap<String, String>, key: &str, fallback: &str) -> String {
@@ -156,6 +161,10 @@ pub enum UiAction {
     OnlineSetIdQuery(String),
     OnlineSearchId,
     OnlineSetToken(String),
+    /// Import an anonymous creator recovery key (pasted code).
+    CreatorImport(String),
+    /// Copy the current recovery key to the clipboard.
+    CreatorCopyKey,
     OnlineSetQuery(String),
     OnlineSearch,
     OnlineClearQuery,
@@ -2178,6 +2187,114 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         }),
     ));
 
+    // Anonymous creator identity: the recovery key IS the account.
+    let creator_short = if st.creator_recovery_key.is_empty() {
+        "…".to_string()
+    } else {
+        crate::maker::creator::short_maker_id(&st.creator_recovery_key)
+    };
+    let reveal_state: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    let show_key = reveal_state.get();
+    let a_copy_key = actions.clone();
+
+    let identity_box = Row(Modifier::new()
+        .fill_max_width()
+        .gap(8.0)
+        .align_items(AlignItems::CENTER)
+        .padding(10.0)
+        .background(col(45, 45, 60))
+        .clip_rounded(18.0))
+    .child((
+        Icon(Symbols::PERSON).size(18.0).color(col(150, 150, 170)),
+        Column(Modifier::new().flex_grow(1.0).gap(2.0)).child((
+            RText(format!("Maker ID: {creator_short}"))
+                .size(13.0)
+                .color(RColor::WHITE),
+            RText(if show_key {
+                st.creator_recovery_key.clone()
+            } else {
+                "Recovery key: •••••• (hidden)".to_string()
+            })
+            .size(12.0)
+            .color(if show_key {
+                col(255, 217, 59)
+            } else {
+                col(140, 140, 160)
+            }),
+            RText(if st.creator_quota_text.is_empty() {
+                "Weekly upload quota: -".to_string()
+            } else {
+                format!("{}", st.creator_quota_text)
+            })
+            .size(12.0)
+            .color(col(150, 150, 170)),
+        )),
+        mk_icon_button(
+            if show_key {
+                Symbols::VISIBILITY_OFF
+            } else {
+                Symbols::VISIBILITY
+            },
+            true,
+            move || {
+                reveal_state.set(!reveal_state.get());
+            },
+        ),
+        mk_icon_button(Symbols::COPY, true, move || {
+            push(&a_copy_key, UiAction::CreatorCopyKey)
+        }),
+    ));
+
+    // Import: paste a recovery key to "log in" with that identity here.
+    let import_state: Rc<RefCell<TextFieldState>> =
+        remember(|| RefCell::new(TextFieldState::new()));
+    let import_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if !import_focus.get() && import_state.borrow().text != st.creator_import_code {
+        import_state.borrow_mut().text = st.creator_import_code.clone();
+    }
+    let a_import_submit = actions.clone();
+    let a_import_go = actions.clone();
+    let import_field = BasicTextField(
+        import_state.clone(),
+        Modifier::new().flex_grow(1.0).height(34.0),
+        "Paste a recovery key (restore identity on this device)",
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Text,
+                ime_action: ImeAction::Done,
+                ..KeyboardOptions::DEFAULT
+            },
+            on_submit: Some(Rc::new(move |v: String| {
+                push(&a_import_submit, UiAction::CreatorImport(v))
+            })),
+            focus_tracker: Some(import_focus.clone()),
+            ..Default::default()
+        },
+    );
+    let import_row = Row(Modifier::new()
+        .fill_max_width()
+        .gap(8.0)
+        .align_items(AlignItems::CENTER))
+    .child((
+        Row(Modifier::new()
+            .fill_max_width()
+            .gap(8.0)
+            .align_items(AlignItems::CENTER)
+            .padding(10.0)
+            .background(col(45, 45, 60))
+            .clip_rounded(18.0))
+        .child((
+            Icon(Symbols::KEY).size(16.0).color(col(150, 150, 170)),
+            import_field,
+        )),
+        mk_pill_button(icon_label(Symbols::CHECK, "Import".into()), move || {
+            let t = import_state.borrow().text.clone();
+            push(&a_import_go, UiAction::CreatorImport(t));
+        }),
+    ));
+
+    // Admin token: dev-only override, kept out of the way.
     let token_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
     let token_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
     if !token_focus.get() && token_state.borrow().text != st.online_token {
@@ -2190,7 +2307,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let token_field = BasicTextField(
         token_state.clone(),
         Modifier::new().flex_grow(1.0).height(34.0),
-        "Upload token (needed to publish / delete)",
+        "Admin token (dev only)",
         TextFieldConfig {
             line_limits: TextFieldLineLimits::SingleLine,
             keyboard_options: KeyboardOptions {
@@ -2275,7 +2392,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let _sort_row: ();
 
     // Shelf tabs (MM2 category shelves): New / Popular / Hot.
-    let shelf_labels = ["Fresh", "Popular", "Hot"];
+    let shelf_labels = ["Fresh", "Popular", "Hot", "Mine"];
     let mut shelf_row_children: Vec<View> = Vec::new();
     for (i, name) in shelf_labels.iter().enumerate() {
         let a = actions.clone();
@@ -2347,7 +2464,8 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     ));
 
     // Tell the Bevy-side browser nav to stand down while any text field owns focus.
-    let any_text_focus = query_focus.get() || token_focus.get() || id_focus.get();
+    let any_text_focus =
+        query_focus.get() || token_focus.get() || id_focus.get() || import_focus.get();
     if matches!(st.overlay, OverlayMenu::Online) {
         push(&actions, UiAction::SetKeyboardCaptured(any_text_focus));
     }
@@ -2396,7 +2514,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         Modifier::new()
             .fill_max_width()
             .width(980.0)
-            .max_height(760.0)
+            .max_height(820.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -2405,6 +2523,10 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(header)
     .child(spacer(12.0))
     .child(search_row)
+    .child(spacer(8.0))
+    .child(identity_box)
+    .child(spacer(8.0))
+    .child(import_row)
     .child(spacer(8.0))
     .child(token_row)
     .child(spacer(12.0))

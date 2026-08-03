@@ -4,7 +4,9 @@ use std::io::Cursor;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
-use rustbox_format::api::{ApiError, LevelListResponse, LevelMeta, UploadMetadata, UploadResponse};
+use rustbox_format::api::{
+    ApiError, LevelListResponse, LevelMeta, MeResponse, UploadMetadata, UploadResponse,
+};
 use rustbox_format::file::decode_level;
 use rustbox_format::level::LevelData;
 
@@ -47,6 +49,10 @@ pub enum OnlineRequest {
     Delete {
         id: u64,
     },
+    /// Fetch `/v1/me` (identity + weekly upload quota) to display status.
+    Me,
+    /// Fetch `/v1/me/levels` - the creator's own published levels.
+    MyLevels,
 }
 
 #[derive(Debug)]
@@ -75,6 +81,8 @@ pub enum OnlineEvent {
         id: u64,
         result: Result<(), String>,
     },
+    Me(Result<MeResponse, String>),
+    MyLevels(Result<LevelListResponse, String>),
 }
 
 /// Optional upload token (never compiled into the binary). Only uploads and
@@ -82,6 +90,11 @@ pub enum OnlineEvent {
 pub struct OnlineConfig {
     pub base_url: String,
     pub token: String,
+    /// Anonymous creator recovery key (`Authorization: Bearer`). Sent on
+    /// upload/delete/me/my-levels; ownership and quota ride on it.
+    pub recovery_key: String,
+    /// Local-only device id (`X-Rustbox-Device`), a secondary abuse signal.
+    pub device_id: String,
 }
 
 /// Everything the UI needs to make an online request. Held as one resource so
@@ -110,6 +123,8 @@ impl Default for OnlineConfig {
         Self {
             base_url: api_base().to_string(),
             token: String::new(),
+            recovery_key: String::new(),
+            device_id: String::new(),
         }
     }
 }
@@ -122,12 +137,21 @@ fn base_url(cfg: &OnlineConfig) -> String {
     }
 }
 
+/// Attach whatever write-credentials the client has: the admin token (if set)
+/// and the anonymous creator identity (recovery key + device id). Identity
+/// headers are only meaningful once `flush_online_requests` bootstrapped them.
 fn with_auth(cfg: &OnlineConfig, req: ehttp::Request) -> ehttp::Request {
-    if cfg.token.trim().is_empty() {
-        req
-    } else {
-        req.with_header("X-Auth-Token", cfg.token.trim())
+    let mut req = req;
+    if !cfg.token.trim().is_empty() {
+        req = req.with_header("X-Auth-Token", cfg.token.trim());
     }
+    if !cfg.recovery_key.is_empty() {
+        req = req.with_header("Authorization", &format!("Bearer {}", cfg.recovery_key));
+    }
+    if !cfg.device_id.is_empty() {
+        req = req.with_header("X-Rustbox-Device", &cfg.device_id);
+    }
+    req
 }
 
 /// Kick off a fetch whose success body parses as `T` and forward the outcome
@@ -259,6 +283,18 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
                 move |r| OnlineEvent::Deleted { id, result: r },
             );
         }
+        OnlineRequest::Me => {
+            let url = format!("{base}/v1/me");
+            send(with_auth(cfg, ehttp::Request::get(url)), ev_tx, |r| {
+                OnlineEvent::Me(r)
+            });
+        }
+        OnlineRequest::MyLevels => {
+            let url = format!("{base}/v1/me/levels");
+            send(with_auth(cfg, ehttp::Request::get(url)), ev_tx, |r| {
+                OnlineEvent::MyLevels(r)
+            });
+        }
     }
 }
 
@@ -299,6 +335,7 @@ fn nonempty(mut s: String) -> String {
 /// Order online levels the way the UI / grid navigation expects.
 /// - `shelf == 1`: Popular (by likes)
 /// - `shelf == 2`: Hot (recency-weighted engagement)
+/// - `shelf == 3`: Mine (the caller's own levels, newest first)
 /// - otherwise client-side secondary sort from `mode` (0 new, 1 name, 2 likes, 3 plays).
 pub fn sort_online(levels: &[LevelMeta], mode: u8, shelf: u8) -> Vec<LevelMeta> {
     let mut v = levels.to_vec();
@@ -308,6 +345,10 @@ pub fn sort_online(levels: &[LevelMeta], mode: u8, shelf: u8) -> Vec<LevelMeta> 
     }
     if shelf == 2 {
         v.sort_by(|a, b| hot_of(b).total_cmp(&hot_of(a)));
+        return v;
+    }
+    if shelf == 3 {
+        v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         return v;
     }
     match mode % 4 {
@@ -388,6 +429,10 @@ impl Plugin for OnlinePlugin {
 /// Drain UI-queued online requests into fetches (non-blocking; responses arrive
 /// later on the event channel) and sync the upload token from the UI. Download
 /// requests for already-cached levels are answered locally without a round trip.
+///
+/// Also owns the anonymous creator identity: it is silently created on first
+/// run, refreshed from `storage` whenever the UI field changes (import), and
+/// copied into `ctx.config` so every request carries it.
 pub fn flush_online_requests(
     mut ctx: ResMut<OnlineContext>,
     cache: Res<OnlineCache>,
@@ -397,7 +442,34 @@ pub fn flush_online_requests(
     mut mode: ResMut<super::mode::MakerMode>,
     mut source: ResMut<super::campaign::LevelSource>,
     mut sel_ent: ResMut<super::mode::SelectedEntity>,
+    storage: Res<super::storage::LevelStorage>,
 ) {
+    if ui.creator_recovery_key.is_empty() {
+        match super::creator::load_or_create(&storage) {
+            Ok(id) => {
+                ui.creator_recovery_key = id.recovery_key.clone();
+                ui.creator_device_id = id.device_id.clone();
+            }
+            Err(e) => ui.set_status(format!("Creator identity unavailable: {e}")),
+        }
+    }
+    if !ui.creator_import_code.trim().is_empty() {
+        let code = ui.creator_import_code.trim().to_string();
+        ui.creator_import_code.clear();
+        match super::creator::import_recovery_key(&storage, &code) {
+            Ok(id) => {
+                ui.creator_recovery_key = id.recovery_key.clone();
+                ui.creator_device_id = id.device_id.clone();
+                ui.set_status("Recovery key imported, restoring your levels...");
+                ctx.pending.push(OnlineRequest::Me);
+                ctx.pending.push(OnlineRequest::MyLevels);
+            }
+            Err(e) => ui.set_status(format!("Recovery key import failed: {e}")),
+        }
+    }
+    ctx.config.recovery_key = ui.creator_recovery_key.clone();
+    ctx.config.device_id = ui.creator_device_id.clone();
+
     for req in std::mem::take(&mut ctx.pending) {
         if let OnlineRequest::Download { meta, play } = &req {
             if let Some(data) = cache.0.get(&meta.id).cloned() {
@@ -572,6 +644,29 @@ pub fn poll_online_events(
                     ui.set_status(format!("Deleted #{id}"));
                 }
                 Err(e) => ui.set_status(format!("Delete failed: {e}")),
+            },
+            OnlineEvent::Me(result) => match result {
+                Ok(me) => {
+                    let used = me.uploads_used_this_week;
+                    let cap = used + me.uploads_remaining_this_week;
+                    ui.creator_quota_text = format!("{used}/{cap} uploads used this week");
+                    let _ = me.owner_id_short;
+                }
+                Err(e) => ui.creator_quota_text = format!("Quota unknown ({e})"),
+            },
+            OnlineEvent::MyLevels(result) => match result {
+                Ok(resp) => {
+                    ui.online_levels = resp.levels;
+                    listing.0 = ui.online_levels.clone();
+                    ui.online_loading = false;
+                    ui.online_confirm_delete = None;
+                    super::ui_bridge::reconcile_online_nav(&mut ui);
+                    ui.set_status(format!("{} of your levels online", listing.0.len()));
+                }
+                Err(e) => {
+                    ui.online_loading = false;
+                    ui.set_status(format!("My levels failed: {e}"));
+                }
             },
         }
     }

@@ -286,6 +286,14 @@ pub struct SharedUi {
     pub online_preview_pending: Vec<u64>,
     pub online_query: String,
     pub online_token: String,
+    /// Anonymous creator identity (recovery key = the account; device id is a
+    /// local-only abuse signal). Mirrors `MakerUi`; bootstrapped by the maker.
+    pub creator_recovery_key: String,
+    pub creator_device_id: String,
+    /// Human-readable weekly upload quota from `/v1/me`.
+    pub creator_quota_text: String,
+    /// Non-empty triggers a recovery-key import in `flush_online_requests`.
+    pub creator_import_code: String,
     pub online_sort: u8,
     pub online_loading: bool,
     /// Selected online level id (detail panel).
@@ -387,6 +395,10 @@ impl Default for SharedUi {
             online_preview_pending: Vec::new(),
             online_query: String::new(),
             online_token: String::new(),
+            creator_recovery_key: String::new(),
+            creator_device_id: String::new(),
+            creator_quota_text: String::new(),
+            creator_import_code: String::new(),
             online_sort: 0,
             online_loading: false,
             online_selected: None,
@@ -564,6 +576,10 @@ fn sync_shared_ui(
         ui.online_preview_pending = m.online_preview_pending.clone();
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
+        ui.creator_recovery_key = m.creator_recovery_key.clone();
+        ui.creator_device_id = m.creator_device_id.clone();
+        ui.creator_quota_text = m.creator_quota_text.clone();
+        ui.creator_import_code = m.creator_import_code.clone();
         ui.online_sort = m.online_sort;
         ui.online_shelf = m.online_shelf;
         ui.online_selected = m.online_selected;
@@ -854,6 +870,7 @@ fn process_ui_actions(
                         limit: 50,
                         offset: 0,
                     });
+                    m.online_pending.push(OnlineRequest::Me);
                     m.set_status("Loading online levels...");
                 }
                 *overlay = OverlayMenu::Online;
@@ -910,6 +927,11 @@ fn process_ui_actions(
                     m.online_shelf = shelf;
                     m.online_confirm_delete = None;
                     crate::maker::ui_bridge::reconcile_online_nav(m);
+                    if shelf == 3 {
+                        m.online_loading = true;
+                        m.online_pending.push(OnlineRequest::MyLevels);
+                        m.set_status("Loading your levels...");
+                    }
                 }
             }
             UiAction::OnlineSetIdQuery(q) => {
@@ -1029,6 +1051,16 @@ fn process_ui_actions(
                         "Upload token set."
                     };
                     m.set_status(msg);
+                }
+            }
+            UiAction::CreatorImport(code) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.creator_import_code = code;
+                }
+            }
+            UiAction::CreatorCopyKey => {
+                if let Some(ref mut m) = maker_ui {
+                    m.commands.push(UiCommand::CopyCreatorKey);
                 }
             }
             UiAction::OnlineUpload => {

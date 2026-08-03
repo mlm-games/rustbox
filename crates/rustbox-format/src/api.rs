@@ -57,6 +57,19 @@ pub struct UploadResponse {
     pub meta: LevelMeta,
 }
 
+/// `GET /v1/me`, creator identity + weekly upload quota. The identity is
+/// derived from the recovery key the client sends, so there is no registration
+/// step; the first call silently creates the owner.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MeResponse {
+    /// First 10 hex chars of the owner id (sha256 of the recovery key)
+    pub owner_id_short: String,
+    pub uploads_used_this_week: i64,
+    pub uploads_remaining_this_week: i64,
+    /// Unix seconds when the quota next frees a slot (or `None`).
+    pub reset_at_unix: Option<i64>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ApiError {
     pub error: String,

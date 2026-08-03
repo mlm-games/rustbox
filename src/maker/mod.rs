@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod chunk;
 pub mod collision;
 pub mod commands;
+pub mod creator;
 pub mod cursor;
 pub mod editor;
 pub mod entities_runtime;

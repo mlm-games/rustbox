@@ -844,7 +844,7 @@ pub fn selection_hotkeys(
         preview.yaw = 0.0;
 
         ui.set_status(
-            "Paste preview active — Left click to place, R to rotate, Right click/Escape to cancel",
+            "Paste preview active - Left click to place, R to rotate, Right click/Escape to cancel",
         );
         return;
     }

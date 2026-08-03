@@ -135,7 +135,7 @@ pub struct OnOffSwitch;
 #[derive(Component)]
 pub struct Contents {
     pub item: ContainedItem,
-    /// Container's link channel — inherited by a contained Key.
+    /// Container's link channel - inherited by a contained Key.
     pub link: u32,
 }
 
