@@ -694,6 +694,7 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     m.catalog = crate::maker::catalog::build_catalog(&storage);
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
                 *overlay = OverlayMenu::Browse;
             }
@@ -714,7 +715,6 @@ fn process_ui_actions(
                 transition.begin_to_state(AppState::Loading);
             }
             UiAction::BrowseDelete(key) => {
-                // First click arms a confirm; only the explicit Confirm action deletes.
                 if let Some(ref mut m) = maker_ui {
                     if m.browse_confirm_delete.as_deref() == Some(key.as_str()) {
                         let result = if key.starts_with(crate::maker::storage::COLLECTION_PREFIX) {
@@ -726,6 +726,7 @@ fn process_ui_actions(
                         match result {
                             Ok(()) => {
                                 m.catalog = crate::maker::catalog::build_catalog(&storage);
+                                crate::maker::ui_bridge::reconcile_browse_nav(m);
                                 m.set_status("Deleted.");
                             }
                             Err(e) => m.set_status(format!("Delete failed: {e}")),
@@ -746,6 +747,7 @@ fn process_ui_actions(
                     match result {
                         Ok(()) => {
                             m.catalog = crate::maker::catalog::build_catalog(&storage);
+                            crate::maker::ui_bridge::reconcile_browse_nav(m);
                             m.set_status("Deleted.");
                         }
                         Err(e) => m.set_status(format!("Delete failed: {e}")),
@@ -761,6 +763,7 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     m.browse_selected = Some(key);
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseClearSelection => {
@@ -777,35 +780,41 @@ fn process_ui_actions(
                         m.browse_include_tags.push(tag);
                     }
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseToggleVerified => {
                 if let Some(ref mut m) = maker_ui {
                     m.browse_verified_only = !m.browse_verified_only;
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseSetDifficulty(d) => {
                 if let Some(ref mut m) = maker_ui {
                     m.browse_difficulty = d;
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseCycleSort => {
                 if let Some(ref mut m) = maker_ui {
                     m.browse_sort = (m.browse_sort + 1) % 6;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseSetQuery(q) => {
                 if let Some(ref mut m) = maker_ui {
                     m.browse_query = q;
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseClearQuery => {
                 if let Some(ref mut m) = maker_ui {
                     m.browse_query.clear();
                     m.browse_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_browse_nav(m);
                 }
             }
             UiAction::BrowseAddToCollection => {
@@ -842,6 +851,8 @@ fn process_ui_actions(
             UiAction::OnlineSelect(id) => {
                 if let Some(ref mut m) = maker_ui {
                     m.online_selected = Some(id);
+                    m.online_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_online_nav(m);
                 }
             }
             UiAction::OnlinePreview(id) => {
@@ -869,11 +880,14 @@ fn process_ui_actions(
             UiAction::OnlineClearSelection => {
                 if let Some(ref mut m) = maker_ui {
                     m.online_selected = None;
+                    m.online_confirm_delete = None;
                 }
             }
             UiAction::OnlineSetShelf(shelf) => {
                 if let Some(ref mut m) = maker_ui {
                     m.online_shelf = shelf;
+                    m.online_confirm_delete = None;
+                    crate::maker::ui_bridge::reconcile_online_nav(m);
                 }
             }
             UiAction::OnlineSetIdQuery(q) => {
@@ -980,6 +994,7 @@ fn process_ui_actions(
             UiAction::OnlineCycleSort => {
                 if let Some(ref mut m) = maker_ui {
                     m.online_sort = (m.online_sort + 1) % 4;
+                    crate::maker::ui_bridge::reconcile_online_nav(m);
                 }
             }
             UiAction::OnlineSetToken(token) => {
@@ -1379,6 +1394,11 @@ fn process_ui_actions(
                 }
                 if let Some(ref mut m) = maker_ui {
                     m.pointer_over_ui = v;
+                }
+            }
+            UiAction::SetKeyboardCaptured(v) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.keyboard_captured = v;
                 }
             }
         }

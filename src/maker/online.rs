@@ -490,6 +490,8 @@ pub fn poll_online_events(
                     ui.online_loading = false;
                     ui.online_levels = resp.levels;
                     listing.0 = ui.online_levels.clone();
+                    ui.online_confirm_delete = None;
+                    super::ui_bridge::reconcile_online_nav(&mut ui);
                     ui.set_status(format!("{} levels online", listing.0.len()));
                 }
                 Err(e) => {
@@ -502,6 +504,8 @@ pub fn poll_online_events(
                     ui.online_loading = false;
                     ui.online_levels = vec![meta];
                     ui.online_selected = Some(id);
+                    ui.online_confirm_delete = None;
+                    super::ui_bridge::reconcile_online_nav(&mut ui);
                     ui.set_status(format!("Found #{id}"));
                 }
                 Err(e) => {
@@ -557,6 +561,18 @@ pub fn poll_online_events(
             OnlineEvent::Deleted { id, result } => match result {
                 Ok(()) => {
                     cache.0.remove(&id);
+                    ui.online_previews.remove(&id);
+                    ui.online_preview_pending.retain(|x| *x != id);
+                    ui.online_preview_lru.retain(|x| *x != id);
+                    ui.online_levels.retain(|m| m.id != id);
+                    listing.0.retain(|m| m.id != id);
+
+                    if ui.online_selected == Some(id) {
+                        ui.online_selected = None;
+                    }
+
+                    ui.online_confirm_delete = None;
+                    super::ui_bridge::reconcile_online_nav(&mut ui);
                     ui.set_status(format!("Deleted #{id}"));
                 }
                 Err(e) => ui.set_status(format!("Delete failed: {e}")),

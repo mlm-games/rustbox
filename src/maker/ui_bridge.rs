@@ -194,6 +194,88 @@ impl MakerUi {
     }
 }
 
+pub fn filtered_browse_levels(ui: &MakerUi) -> Vec<catalog::LevelSummary> {
+    catalog::filter_catalog(
+        &ui.catalog,
+        &ui.browse_query,
+        &ui.browse_include_tags,
+        ui.browse_verified_only,
+        ui.browse_difficulty,
+        ui.browse_sort,
+    )
+}
+
+pub fn sorted_online_levels(ui: &MakerUi) -> Vec<LevelMeta> {
+    crate::maker::online::sort_online(&ui.online_levels, ui.online_sort, ui.online_shelf)
+}
+
+/// Keep the local browse cursor and selection consistent after:
+/// - mouse selection
+/// - query/filter/sort changes
+/// - catalog rebuilds/deletes
+pub fn reconcile_browse_nav(ui: &mut MakerUi) {
+    let visible = filtered_browse_levels(ui);
+
+    if visible.is_empty() {
+        ui.browse_cursor = 0;
+        ui.browse_selected = None;
+        ui.browse_confirm_delete = None;
+        return;
+    }
+
+    if let Some(sel) = ui.browse_selected.as_deref()
+        && let Some(pos) = visible.iter().position(|s| s.key == sel)
+    {
+        ui.browse_cursor = pos;
+        return;
+    }
+
+    ui.browse_cursor = ui.browse_cursor.min(visible.len() - 1);
+
+    if ui.browse_selected.is_some() {
+        ui.browse_selected = Some(visible[ui.browse_cursor].key.clone());
+    }
+}
+
+/// Keep the online cursor and selection consistent after:
+/// - mouse selection
+/// - shelf/sort changes
+/// - list refreshes / ID search / deletes
+pub fn reconcile_online_nav(ui: &mut MakerUi) {
+    let visible = sorted_online_levels(ui);
+
+    if visible.is_empty() {
+        ui.online_cursor = 0;
+        ui.online_selected = None;
+        ui.online_confirm_delete = None;
+        return;
+    }
+
+    if let Some(sel) = ui.online_selected
+        && let Some(pos) = visible.iter().position(|m| m.id == sel)
+    {
+        ui.online_cursor = pos;
+        return;
+    }
+
+    ui.online_cursor = ui.online_cursor.min(visible.len() - 1);
+
+    if ui.online_selected.is_some() {
+        ui.online_selected = Some(visible[ui.online_cursor].id);
+    }
+}
+
+/// Repose focus is only bridged while the browse/online overlays are visible.
+/// When they close, force keyboard capture off so gameplay/editor input resumes.
+pub fn clear_text_capture_when_not_browsing(
+    overlay: Res<OverlayMenu>,
+    mut ui: ResMut<MakerUi>,
+) {
+    if !matches!(*overlay, OverlayMenu::Browse | OverlayMenu::Online) {
+        ui.keyboard_captured = false;
+    }
+}
+
 pub fn push_ui_state(
     time: Res<Time>,
     mode: Res<MakerMode>,
@@ -732,34 +814,14 @@ pub fn share_text_input(
     }
 }
 
-pub fn browse_text_input(
-    mut keys: MessageReader<KeyboardInput>,
-    overlay: Res<OverlayMenu>,
-    mut ui: ResMut<MakerUi>,
-) {
-    if *overlay != OverlayMenu::Browse {
-        return;
-    }
-    for ev in keys.read() {
-        if ev.state != ButtonState::Pressed || ev.repeat {
-            continue;
-        }
-        if ev.key_code == KeyCode::Backspace {
-            ui.browse_query.pop();
-        } else if let Some(text) = &ev.text
-            && text.chars().all(|c| !c.is_control())
-        {
-            ui.browse_query.push_str(text);
-        }
-    }
-}
-
-/// Keyboard/gamepad grid navigation for the Browse and Online shelves.
+/// Keyboard grid navigation for the Browse and Online shelves.
+/// Intentionally keyboard-only here; add gamepad once you've matched your Bevy git
+/// rev's exact gamepad button API.
 pub fn browser_grid_nav(
     keys: Res<ButtonInput<KeyCode>>,
     overlay: Res<crate::app::OverlayMenu>,
     bridge: Res<crate::menus::UiBridge>,
-    mut maker_ui: Option<ResMut<MakerUi>>,
+    maker_ui: Option<ResMut<MakerUi>>,
 ) {
     const COLS: usize = 3;
 
@@ -767,7 +829,13 @@ pub fn browser_grid_nav(
         return;
     };
 
-    let right = || (keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD));
+    // While a Repose text field owns focus, do not let arrows / enter / space drive
+    // card navigation or launch levels.
+    if ui.keyboard_captured {
+        return;
+    }
+
+    let right = || keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD);
     let left = || keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA);
     let down = || keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
     let up = || keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
@@ -775,21 +843,15 @@ pub fn browser_grid_nav(
 
     match *overlay {
         crate::app::OverlayMenu::Browse => {
-            let visible = catalog::filter_catalog(
-                &ui.catalog,
-                &ui.browse_query,
-                &ui.browse_include_tags,
-                ui.browse_verified_only,
-                ui.browse_difficulty,
-                ui.browse_sort,
-            );
+            reconcile_browse_nav(&mut ui);
+            let visible = filtered_browse_levels(&ui);
+
             if visible.is_empty() {
-                ui.browse_cursor = 0;
-                ui.browse_selected = None;
                 return;
             }
 
             let mut c = ui.browse_cursor.min(visible.len() - 1);
+
             if right() && c + 1 < visible.len() {
                 c += 1;
             }
@@ -814,6 +876,7 @@ pub fn browser_grid_nav(
                     .browse_selected
                     .clone()
                     .unwrap_or_else(|| visible[c].key.clone());
+
                 if let Ok(mut acts) = bridge.actions.lock() {
                     acts.push(crate::menus::UiAction::BrowsePlay(key));
                 }
@@ -821,24 +884,15 @@ pub fn browser_grid_nav(
         }
 
         crate::app::OverlayMenu::Online => {
-            if ui.online_levels.is_empty() {
-                ui.online_cursor = 0;
-                ui.online_selected = None;
-                return;
-            }
+            reconcile_online_nav(&mut ui);
+            let visible = sorted_online_levels(&ui);
 
-            let visible = crate::maker::online::sort_online(
-                &ui.online_levels,
-                ui.online_sort,
-                ui.online_shelf,
-            );
             if visible.is_empty() {
-                ui.online_cursor = 0;
-                ui.online_selected = None;
                 return;
             }
 
             let mut c = ui.online_cursor.min(visible.len() - 1);
+
             if right() && c + 1 < visible.len() {
                 c += 1;
             }
@@ -860,6 +914,7 @@ pub fn browser_grid_nav(
 
             if confirm() {
                 let id = ui.online_selected.unwrap_or(visible[c].id);
+
                 if let Ok(mut acts) = bridge.actions.lock() {
                     acts.push(crate::menus::UiAction::OnlinePlay(id));
                 }

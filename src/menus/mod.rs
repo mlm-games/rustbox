@@ -16,8 +16,7 @@ use repose_core::{
 use repose_material::material3::{
     ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, DropdownMenu, DropdownMenuConfig,
     DropdownMenuEntry, DropdownMenuItem, FilledTonalButton, FilledTonalIconButton,
-    IconButtonColors, IconButtonConfig, InputChip, MenuState, OutlinedTextFieldConfig,
-    OutlinedTextFieldState,
+    IconButtonColors, IconButtonConfig, InputChip, MenuState,
 };
 use repose_material::{Icon, Symbol, material_symbols};
 use repose_ui::anim_ext::{
@@ -177,6 +176,7 @@ pub enum UiAction {
     /// Revert the boundary wall height to auto (from level size).
     LevelInfoHeightAuto,
     SetPointerOverUi(bool),
+    SetKeyboardCaptured(bool),
 }
 
 #[derive(bevy::prelude::Resource, Clone)]
@@ -1604,6 +1604,11 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .clip_rounded(18.0))
     .child(search_children);
 
+    // Tell the Bevy-side browser nav to stand down while a text field owns focus.
+    if matches!(st.overlay, OverlayMenu::Browse) {
+        push(&actions, UiAction::SetKeyboardCaptured(query_focus.get()));
+    }
+
     let hint =
         RText("Try: name:air  author:mlm  tag:puzzle  #precision  verified:1  diff:hard  has:gate")
             .size(11.0)
@@ -2194,14 +2199,20 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let id_change = actions.clone();
     let id_submit = actions.clone();
     let a_id_go = actions.clone();
-    let id_field = OutlinedTextFieldState(
-        Modifier::new().width(170.0),
+    let id_field = BasicTextField(
         id_state.clone(),
-        move |v: String| push(&id_change, UiAction::OnlineSetIdQuery(v)),
-        OutlinedTextFieldConfig {
-            label: Some("Level ID".into()),
-            placeholder: None,
-            single_line: true,
+        Modifier::new().width(170.0).height(34.0),
+        "Level ID",
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Number,
+                ime_action: ImeAction::Search,
+                ..KeyboardOptions::DEFAULT
+            },
+            on_change: Some(Rc::new(move |v: String| {
+                push(&id_change, UiAction::OnlineSetIdQuery(v))
+            })),
             on_submit: Some(Rc::new(move |v: String| {
                 push(&id_submit, UiAction::OnlineSetIdQuery(v));
                 push(&id_submit, UiAction::OnlineSearchId);
@@ -2224,6 +2235,12 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             },
         ),
     ));
+
+    // Tell the Bevy-side browser nav to stand down while any text field owns focus.
+    let any_text_focus = query_focus.get() || token_focus.get() || id_focus.get();
+    if matches!(st.overlay, OverlayMenu::Online) {
+        push(&actions, UiAction::SetKeyboardCaptured(any_text_focus));
+    }
 
     // A 3-across grid of identity-only cards.
     let mut grid_children: Vec<View> = Vec::new();

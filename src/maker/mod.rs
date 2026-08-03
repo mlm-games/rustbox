@@ -207,7 +207,6 @@ impl Plugin for MakerPlugin {
                     editor::spawn_place_ghosts.run_if(in_edit),
                     ui_bridge::push_ui_state,
                     ui_bridge::share_text_input.before(ui_bridge::drain_ui_commands),
-                    ui_bridge::browse_text_input.before(ui_bridge::drain_ui_commands),
                     ui_bridge::level_info_text_input.before(ui_bridge::drain_ui_commands),
                     cursor::cursor_policy,
                     storage::save_load_hotkeys
@@ -231,7 +230,13 @@ impl Plugin for MakerPlugin {
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(Update, entities_runtime::collect_clips)
-            .add_systems(Update, ui_bridge::browser_grid_nav)
+            .add_systems(
+                Update,
+                (
+                    ui_bridge::clear_text_capture_when_not_browsing,
+                    ui_bridge::browser_grid_nav.after(ui_bridge::update_input_capture),
+                ),
+            )
             .add_systems(
                 OnEnter(AppState::InGame),
                 |mut ui: ResMut<ui_bridge::MakerUi>, storage: Res<storage::LevelStorage>| {
