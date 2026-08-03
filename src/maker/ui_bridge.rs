@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
@@ -153,6 +155,11 @@ pub struct MakerUi {
 
     /// Online level-sharing state.
     pub online_levels: Vec<LevelMeta>,
+    /// Generated previews for online levels whose data has been downloaded/cached.
+    /// These are not stored thumbnails; they are rebuilt from LevelData.
+    pub online_previews: HashMap<u64, crate::maker::thumbnail::ThumbPreview>,
+    /// Preview downloads currently requested so compose does not spam requests.
+    pub online_preview_pending: Vec<u64>,
     pub online_query: String,
     pub online_token: String,
     /// 0 = new, 1 = name, 2 = likes, 3 = plays (client-side secondary ordering).

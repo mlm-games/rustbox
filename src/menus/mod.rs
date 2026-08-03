@@ -10,7 +10,10 @@ use repose_core::prelude::{
     AlignItems, AlignSelf, AnimationSpec, Color as RColor, Easing, JustifyContent, Modifier,
     remember,
 };
-use repose_core::{ImeAction, KeyboardOptions, KeyboardType, TextFieldLineLimits};
+use repose_core::{
+    ImeAction, KeyboardOptions, KeyboardType, StateColors, StateElevation,
+    TextFieldLineLimits,
+};
 use repose_material::material3::{
     ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, DropdownMenu,
     DropdownMenuConfig, DropdownMenuEntry, DropdownMenuItem, FilledTonalButton,
@@ -146,6 +149,8 @@ pub enum UiAction {
     OnlineUpload,
     OnlineSelect(u64),
     OnlineClearSelection,
+    /// Request a background download of level data purely to generate a card preview.
+    OnlinePreview(u64),
     OnlineSetShelf(u8),
     OnlineSetIdQuery(String),
     OnlineSearchId,
@@ -1310,7 +1315,7 @@ fn icon_text(symbol: Symbol, text: String, size: f32, color: RColor) -> View {
 fn mk_pill_button(label: View, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
         Modifier::new()
-            .height(38.0)
+            .min_height(38.0)
             .padding(10.0)
             .clip_rounded(19.0),
         on_click,
@@ -1322,7 +1327,7 @@ fn mk_pill_button(label: View, on_click: impl Fn() + 'static) -> View {
 fn mk_primary_button(label: View, bg: RColor, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
         Modifier::new()
-            .height(38.0)
+            .min_height(38.0)
             .padding(10.0)
             .background(bg)
             .clip_rounded(8.0),
@@ -1719,7 +1724,7 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .iter()
         .find(|s| st.browse_selected.as_deref() == Some(s.key.as_str()))
     {
-        Some(sd) => local_detail_panel(sd, &actions),
+        Some(sd) => local_detail_panel(sd, st, &actions),
         None => BrowseSelectPanel(vec![
             RText("Select a level").size(14.0).color(col(150, 150, 170)),
         ]),
@@ -1728,8 +1733,8 @@ fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let inner = Column(
         Modifier::new()
             .fill_max_width()
-            .width(760.0)
-            .max_height(720.0)
+            .width(980.0)
+            .max_height(760.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -1846,6 +1851,7 @@ fn browse_card(
 
 fn local_detail_panel(
     s: &LevelSummary,
+    st: &SharedUi,
     actions: &Arc<Mutex<Vec<UiAction>>>,
 ) -> View {
     let a_play = actions.clone();
@@ -1880,8 +1886,37 @@ fn local_detail_panel(
     }
     tag_pills.push(RText(stats).size(11.0).color(col(140, 140, 160)));
 
-    let action_row: View = Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER))
-        .child((
+    let confirming_delete = st.browse_confirm_delete.as_deref() == Some(s.key.as_str());
+
+    let action_row: View = if confirming_delete {
+        let a_confirm = actions.clone();
+        let a_cancel = actions.clone();
+        let k_confirm = s.key.clone();
+
+        Column(Modifier::new().gap(6.0)).child((
+            RText("Delete this level?")
+                .size(12.0)
+                .color(col(232, 120, 120)),
+            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                FilledTonalButton(
+                    Modifier::new()
+                        .height(34.0)
+                        .background(col(160, 60, 60))
+                        .clip_rounded(8.0),
+                    move || push(&a_confirm, UiAction::BrowseConfirmDelete(k_confirm.clone())),
+                    ButtonConfig::default(),
+                    move || RText("Confirm Delete").size(13.0).color(RColor::WHITE),
+                ),
+                FilledTonalButton(
+                    Modifier::new().height(34.0),
+                    move || push(&a_cancel, UiAction::BrowseCancelDelete),
+                    ButtonConfig::default(),
+                    move || RText("Cancel").size(13.0).color(RColor::WHITE),
+                ),
+            )),
+        ))
+    } else {
+        Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
             FilledTonalButton(
                 Modifier::new().height(34.0),
                 move || push(&a_play, UiAction::BrowsePlay(k_play.clone())),
@@ -1915,7 +1950,8 @@ fn local_detail_panel(
                     ))
                 },
             ),
-        ));
+        ))
+    };
 
     Column(
         Modifier::new()
@@ -2155,7 +2191,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let _sort_row: ();
 
     // Shelf tabs (MM2 category shelves): New / Popular / Hot.
-    let shelf_labels = ["New", "Popular", "Hot"];
+    let shelf_labels = ["Fresh", "Popular", "Hot"];
     let mut shelf_row_children: Vec<View> = Vec::new();
     for (i, name) in shelf_labels.iter().enumerate() {
         let a = actions.clone();
@@ -2244,7 +2280,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .iter()
         .find(|m| st.online_selected == Some(m.id))
     {
-        Some(m) => online_detail_panel(m, &actions),
+        Some(m) => online_detail_panel(m, st, &actions),
         None => BrowseSelectPanel(vec![
             RText("Select a level").size(14.0).color(col(150, 150, 170)),
         ]),
@@ -2253,8 +2289,8 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let inner = Column(
         Modifier::new()
             .fill_max_width()
-            .width(760.0)
-            .max_height(720.0)
+            .width(980.0)
+            .max_height(760.0)
             .padding(24.0)
             .background(col(20, 20, 28))
             .clip_rounded(12.0)
@@ -2294,19 +2330,34 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     modal_shell(inner)
 }
 
-/// An identity-only online card: thumbnail-accent, name, author, stats. No
-/// actions on the tile; click selects it and opens the detail panel.
+/// An identity-only online card: generated preview when available, name, author,
+/// stats. No actions on the tile; click selects it and opens the detail panel.
 fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>) -> View {
     let b_sel = actions.clone();
+    let a_preview = actions.clone();
     let id = m.id;
     let selected = st.online_selected == Some(m.id);
 
+    // Lazy-preview request. This is intentionally data-driven, not stored
+    // thumbnail-driven: download level data once, generate ThumbPreview locally.
+    let needs_preview =
+        !st.online_previews.contains_key(&m.id) && !st.online_preview_pending.contains(&m.id);
+    if needs_preview {
+        push(&a_preview, UiAction::OnlinePreview(m.id));
+    }
+
+    let preview = st.online_previews.get(&m.id).cloned();
+    let pending = st.online_preview_pending.contains(&m.id);
+
     let card_config = CardConfig {
-        border: Some((if selected { 2.0 } else { 1.0 }, if selected {
-            col(255, 217, 59)
-        } else {
-            RColor::from_rgba(255, 255, 255, 40)
-        })),
+        border: Some((
+            if selected { 2.0 } else { 1.0 },
+            if selected {
+                col(255, 217, 59)
+            } else {
+                RColor::from_rgba(255, 255, 255, 40)
+            },
+        )),
         shape_radius: 12.0,
         ..Default::default()
     };
@@ -2317,20 +2368,23 @@ fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>
         card_config,
         move || {
             let date: String = m.created_at.chars().take(10).collect();
+
+            let preview_view: View = match preview {
+                Some(p) => Column(
+                    Modifier::new()
+                        .fill_max_width()
+                        .height(92.0)
+                        .align_items(AlignItems::CENTER)
+                        .justify_content(JustifyContent::CENTER)
+                        .background(col(30, 30, 42))
+                        .clip_rounded(8.0),
+                )
+                .child(thumb_grid_view(&p)),
+                None => online_preview_placeholder(m.id, pending),
+            };
+
             let children: Vec<View> = vec![
-                // Thumbnail-accent band (identity only; no stored image yet).
-                Row(Modifier::new()
-                    .fill_max_width()
-                    .height(84.0)
-                    .align_items(AlignItems::CENTER)
-                    .justify_content(JustifyContent::CENTER)
-                    .background(col(30, 30, 42))
-                    .clip_rounded(8.0))
-                .child(
-                    RText("#id")
-                        .size(13.0)
-                        .color(col(120, 120, 140)),
-                ),
+                preview_view,
                 Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
                     RText(m.name.clone()).size(15.0).color(RColor::WHITE),
                     RText(format!("#{}", m.id)).size(11.0).color(col(130, 130, 150)),
@@ -2348,14 +2402,43 @@ fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>
                     .size(11.0)
                     .color(col(140, 140, 160)),
             ];
+
             Column(Modifier::new().gap(6.0).align_items(AlignItems::FLEX_START))
                 .with_children(children)
         },
     )
 }
 
+/// Placeholder shown while an online card's preview is not available yet.
+fn online_preview_placeholder(id: u64, pending: bool) -> View {
+    let label = if pending {
+        "Generating preview…".to_string()
+    } else {
+        format!("#{id}")
+    };
+
+    Column(
+        Modifier::new()
+            .fill_max_width()
+            .height(92.0)
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER)
+            .background(col(30, 30, 42))
+            .clip_rounded(8.0),
+    )
+    .child((
+        Icon(Symbols::CLOUD).size(22.0).color(col(120, 120, 145)),
+        spacer(4.0),
+        RText(label).size(12.0).color(col(140, 140, 160)),
+    ))
+}
+
 /// Right-side detail panel for a selected online level with its actions.
-fn online_detail_panel(m: &LevelMeta, actions: &Arc<Mutex<Vec<UiAction>>>) -> View {
+fn online_detail_panel(
+    m: &LevelMeta,
+    st: &SharedUi,
+    actions: &Arc<Mutex<Vec<UiAction>>>,
+) -> View {
     let a_play = actions.clone();
     let a_like = actions.clone();
     let a_delete = actions.clone();
@@ -2429,14 +2512,19 @@ fn online_detail_panel(m: &LevelMeta, actions: &Arc<Mutex<Vec<UiAction>>>) -> Vi
             .gap(8.0),
     )
     .child((
-        Row(Modifier::new()
-            .fill_max_width()
-            .height(100.0)
-            .align_items(AlignItems::CENTER)
-            .justify_content(JustifyContent::CENTER)
-            .background(col(30, 30, 42))
-            .clip_rounded(8.0))
-        .child(RText(format!("#{}", m.id)).size(18.0).color(col(140, 140, 160))),
+        match st.online_previews.get(&m.id) {
+            Some(p) => Column(
+                Modifier::new()
+                    .fill_max_width()
+                    .height(120.0)
+                    .align_items(AlignItems::CENTER)
+                    .justify_content(JustifyContent::CENTER)
+                    .background(col(30, 30, 42))
+                    .clip_rounded(8.0),
+            )
+            .child(thumb_grid_view(p)),
+            None => online_preview_placeholder(m.id, st.online_preview_pending.contains(&m.id)),
+        },
         RText(m.name.clone()).size(19.0).color(RColor::WHITE),
         RText(
             if m.author.is_empty() {
@@ -2505,6 +2593,19 @@ fn tag_color(tag: LevelTag) -> RColor {
 
 fn mk_chip(label: View, selected: bool, color: RColor, on_click: impl Fn() + 'static) -> View {
     let bg = if selected { color } else { col(45, 45, 60) };
+    let mut cfg = ButtonConfig::default();
+    cfg.state_elevation = Some(StateElevation {
+        default: 0.0,
+        hovered: 0.0,
+        pressed: 0.0,
+        disabled: 0.0,
+    });
+    cfg.state_colors = StateColors {
+        default: RColor::from_rgba(0, 0, 0, 0),
+        hovered: RColor::from_rgba(255, 255, 255, 16),
+        pressed: RColor::from_rgba(255, 255, 255, 28),
+        disabled: RColor::from_rgba(0, 0, 0, 0),
+    };
     FilledTonalButton(
         Modifier::new()
             .height(30.0)
@@ -2512,7 +2613,7 @@ fn mk_chip(label: View, selected: bool, color: RColor, on_click: impl Fn() + 'st
             .background(bg)
             .clip_rounded(15.0),
         on_click,
-        ButtonConfig::default(),
+        cfg,
         move || label.clone(),
     )
 }
@@ -2843,7 +2944,7 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 
 fn mk_button(label: &str, _bg: RColor, on_click: impl Fn() + 'static) -> View {
     FilledTonalButton(
-        Modifier::new().width(260.0).height(52.0).margin(8.0),
+        Modifier::new().width(260.0).margin(8.0),
         on_click,
         ButtonConfig::default(),
         move || RText(label).size(20.0),

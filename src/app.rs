@@ -272,6 +272,10 @@ pub struct SharedUi {
     pub info_entities: usize,
     // Online level sharing
     pub online_levels: Vec<rustbox_format::api::LevelMeta>,
+    /// Generated online previews keyed by server id.
+    pub online_previews: HashMap<u64, crate::maker::thumbnail::ThumbPreview>,
+    /// Online previews currently being fetched/generated.
+    pub online_preview_pending: Vec<u64>,
     pub online_query: String,
     pub online_token: String,
     pub online_sort: u8,
@@ -361,6 +365,8 @@ impl Default for SharedUi {
             info_blocks: 0,
             info_entities: 0,
             online_levels: Vec::new(),
+            online_previews: HashMap::new(),
+            online_preview_pending: Vec::new(),
             online_query: String::new(),
             online_token: String::new(),
             online_sort: 0,
@@ -528,6 +534,8 @@ fn sync_shared_ui(
         ui.info_blocks = m.info_blocks;
         ui.info_entities = m.info_entities;
         ui.online_levels = sort_online(&m.online_levels, m.online_sort, m.online_shelf);
+        ui.online_previews = m.online_previews.clone();
+        ui.online_preview_pending = m.online_preview_pending.clone();
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
         ui.online_sort = m.online_sort;
@@ -652,9 +660,11 @@ fn sort_online(
 }
 
 fn hot_of(m: &rustbox_format::api::LevelMeta) -> f64 {
+    //HACK: Until the API exposes real recent-window stats, this is a stable
+    // "up-and-coming" approximation:
     let engagement = m.likes as f64 * 4.0 + m.plays as f64;
-    let recency = m.created_at.bytes().map(|b| b as f64).sum::<f64>();
-    engagement * (1.0 + (recency % 97.0) / 97.0)
+    let size_penalty = ((m.size_bytes as f64 / 1024.0).max(1.0)).sqrt();
+    engagement / size_penalty
 }
 
 fn process_ui_actions(
@@ -846,6 +856,21 @@ fn process_ui_actions(
             UiAction::OnlineSelect(id) => {
                 if let Some(ref mut m) = maker_ui {
                     m.online_selected = Some(id);
+                }
+            }
+            UiAction::OnlinePreview(id) => {
+                if let Some(ref mut m) = maker_ui {
+                    if m.online_previews.contains_key(&id) || m.online_preview_pending.contains(&id) {
+                        continue;
+                    }
+
+                    let Some(meta) = m.online_levels.iter().find(|x| x.id == id).cloned() else {
+                        continue;
+                    };
+
+                    m.online_preview_pending.push(id);
+                    m.online_pending
+                        .push(OnlineRequest::Download { meta, play: false });
                 }
             }
             UiAction::OnlineClearSelection => {

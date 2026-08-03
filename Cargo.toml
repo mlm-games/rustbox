@@ -86,10 +86,10 @@ repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", default-featur
     "shared-device",
 ] }
 wgpu = { version = "30", features = ["webgpu", "webgl"] }
-repose-core = "0.25"
-repose-ui = "0.25"
-repose-material = "0.25"
-repose-render-wgpu = "0.25"
+repose-core = "0.26"
+repose-ui = "0.26"
+repose-material = "0.26"
+repose-render-wgpu = "0.26"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

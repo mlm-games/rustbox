@@ -321,7 +321,7 @@ impl Plugin for OnlinePlugin {
 pub fn flush_online_requests(
     mut ctx: ResMut<OnlineContext>,
     cache: Res<OnlineCache>,
-    ui: Res<super::ui_bridge::MakerUi>,
+    mut ui: ResMut<super::ui_bridge::MakerUi>,
     mut level: ResMut<super::level::LevelDocument>,
     mut history: ResMut<super::commands::CommandHistory>,
     mut mode: ResMut<super::mode::MakerMode>,
@@ -331,6 +331,15 @@ pub fn flush_online_requests(
     for req in std::mem::take(&mut ctx.pending) {
         if let OnlineRequest::Download { meta, play } = &req {
             if let Some(data) = cache.0.get(&meta.id).cloned() {
+                if !play {
+                    let preview = super::thumbnail::render_preview(
+                        &data,
+                        super::catalog::PREVIEW_COLS,
+                        super::catalog::PREVIEW_ROWS,
+                    );
+                    ui.online_preview_pending.retain(|id| *id != meta.id);
+                    ui.online_previews.insert(meta.id, preview);
+                }
                 apply_download(
                     &mut level,
                     &mut history,
@@ -416,6 +425,14 @@ pub fn poll_online_events(
             },
             OnlineEvent::Downloaded { meta, result, play } => match result {
                 Ok(data) => {
+                    let preview = super::thumbnail::render_preview(
+                        &data,
+                        super::catalog::PREVIEW_COLS,
+                        super::catalog::PREVIEW_ROWS,
+                    );
+
+                    ui.online_preview_pending.retain(|id| *id != meta.id);
+                    ui.online_previews.insert(meta.id, preview);
                     cache.0.insert(meta.id, data.clone());
                     apply_download(
                         &mut level,
@@ -433,7 +450,10 @@ pub fn poll_online_events(
                         ui.set_status(format!("Downloaded: {}", meta.name));
                     }
                 }
-                Err(e) => ui.set_status(format!("Download failed: {e}")),
+                Err(e) => {
+                    ui.online_preview_pending.retain(|id| *id != meta.id);
+                    ui.set_status(format!("Download failed: {e}"));
+                }
             },
             OnlineEvent::Liked { id, result } => match result {
                 Ok(()) => ui.set_status(format!("Liked #{id}")),
