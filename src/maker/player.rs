@@ -546,7 +546,8 @@ pub fn player_controller(
         // Conveyor: push the player along the block's facing while on top.
         if let Some(kind) = ground_kind
             && kind == BlockKind::Conveyor
-            && let Some(rot) = ground_block_rot(&level, transform.translation.x, transform.translation.z)
+            && let Some(rot) =
+                ground_block_rot(&level, transform.translation.x, transform.translation.z)
         {
             let dir = Quat::from_rotation_y(rot as f32 * std::f32::consts::FRAC_PI_2) * Vec3::X;
             player.velocity += dir * 6.0 * dt;
@@ -566,12 +567,7 @@ pub fn player_controller(
         player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
 
         // Climb surface: hold W while overlapping a Climb block to ascend.
-        let on_climb = overlaps_kind(
-            transform.translation,
-            he,
-            &level,
-            BlockKind::Climb,
-        );
+        let on_climb = overlaps_kind(transform.translation, he, &level, BlockKind::Climb);
         if on_climb && kb && keys.pressed(KeyCode::KeyW) {
             player.velocity.y = 4.5;
         }

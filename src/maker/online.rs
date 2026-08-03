@@ -300,11 +300,7 @@ fn nonempty(mut s: String) -> String {
 /// - `shelf == 1`: Popular (by likes)
 /// - `shelf == 2`: Hot (recency-weighted engagement)
 /// - otherwise client-side secondary sort from `mode` (0 new, 1 name, 2 likes, 3 plays).
-pub fn sort_online(
-    levels: &[LevelMeta],
-    mode: u8,
-    shelf: u8,
-) -> Vec<LevelMeta> {
+pub fn sort_online(levels: &[LevelMeta], mode: u8, shelf: u8) -> Vec<LevelMeta> {
     let mut v = levels.to_vec();
     if shelf == 1 {
         v.sort_by(|a, b| b.likes.cmp(&a.likes));
