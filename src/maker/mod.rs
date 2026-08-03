@@ -184,6 +184,13 @@ impl Plugin for MakerPlugin {
                     entities_runtime::update_crumble_plates
                         .run_if(in_play)
                         .after(player::player_controller),
+                    entities_runtime::launch_cannons
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::animate_kit
+                        .run_if(in_state(AppState::InGame))
+                        .run_if(not_paused)
+                        .run_if(not_blocked),
                 )
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)

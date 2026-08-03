@@ -1260,6 +1260,7 @@ fn process_ui_actions(
                         14 => EntityKind::HealOrb,
                         15 => EntityKind::SpeedRing,
                         16 => EntityKind::CrumblePlate,
+                        17 => EntityKind::Cannon,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));

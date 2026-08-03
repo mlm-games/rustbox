@@ -912,7 +912,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 17] = [
+    let items: [(u8, RColor); 18] = [
         (0, col(255, 215, 70)),
         (1, col(90, 190, 255)),
         (2, col(190, 90, 230)),
@@ -930,6 +930,7 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (14, col(255, 90, 115)),
         (15, col(50, 240, 140)),
         (16, col(180, 165, 140)),
+        (17, col(100, 115, 130)),
     ];
     let a_rot = actions.clone();
     let mut row = Row(Modifier::new().gap(6.0));
@@ -1029,6 +1030,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::HealOrb => ("toolbar-heal", "Heal Orb"),
             EntityKind::SpeedRing => ("toolbar-speed", "Speed Ring"),
             EntityKind::CrumblePlate => ("toolbar-crumble", "Crumble Plate"),
+            EntityKind::Cannon => ("toolbar-cannon", "Cannon"),
         };
         body.push(
             RText(t(tr, label_key, label_fb))
@@ -1065,6 +1067,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 EntityKind::SpeedRing => ("inspector-duration", "Duration", 0.25),
                 EntityKind::CrumblePlate => ("inspector-delay", "Delay", 0.05),
                 EntityKind::LockGate => ("inspector-open-for", "Open For", 0.5),
+                EntityKind::Cannon => ("inspector-arc", "Arc", 1.0),
                 EntityKind::Checkpoint | EntityKind::Key => unreachable!(),
             };
             let a_minus = actions.clone();

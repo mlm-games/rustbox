@@ -794,11 +794,17 @@ pub fn play_hazard_goal(
         let manual_reset = keys.just_pressed(KeyCode::KeyR);
 
         if hit_hazard || fell_off || out_of_bounds || manual_reset {
-            if hit_hazard && player.armor > 0 {
+            let vulnerable = player.pad_cooldown <= 0.0;
+            if hit_hazard && player.armor > 0 && vulnerable {
                 player.armor -= 1;
                 player.pad_cooldown = 0.6;
+
+                // Move away slightly so the player is not left inside the hazard.
+                player.velocity.y = JUMP_SPEED * 0.55;
+                player.on_ground = false;
+
                 ui.set_status(format!("Ouch! Armor left: {}", player.armor));
-            } else {
+            } else if !hit_hazard || vulnerable || player.armor == 0 {
                 if hit_hazard || fell_off || out_of_bounds {
                     ui.deaths += 1;
                 }

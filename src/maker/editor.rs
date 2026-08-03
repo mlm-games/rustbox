@@ -1110,6 +1110,15 @@ pub fn update_preview_and_edit(
                     if data.kind.uses_link() {
                         data.link = channel.0;
                     }
+                    if data.kind == EntityKind::Cannon {
+                        let yaw = place_yaw.0.to_radians();
+                        let dir = IVec3::new(
+                            (yaw.sin() * 4.0).round() as i32,
+                            0,
+                            (yaw.cos() * 4.0).round() as i32,
+                        );
+                        data.cell_b = Some((place_cell + dir).to_array());
+                    }
                     let world = place_cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
                     data.track = level.track_near(world, 1.5);
                     history.apply(&mut level, EditCommand::PlaceEntity { entity: data });
@@ -1346,6 +1355,7 @@ pub fn draw_selected_entity_gizmo(
         EntityKind::HealOrb => Vec3::splat(0.4),
         EntityKind::SpeedRing => Vec3::splat(0.6),
         EntityKind::CrumblePlate => Vec3::new(0.55, 0.15, 0.55),
+        EntityKind::Cannon => Vec3::new(0.45, 0.45, 0.45),
     };
     let color = Color::srgb(0.3, 0.8, 1.0);
     let min = center - half;

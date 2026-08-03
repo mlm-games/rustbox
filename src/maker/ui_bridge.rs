@@ -313,6 +313,7 @@ pub fn push_ui_state(
         EntityKind::HealOrb => 14,
         EntityKind::SpeedRing => 15,
         EntityKind::CrumblePlate => 16,
+        EntityKind::Cannon => 17,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,

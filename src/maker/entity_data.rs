@@ -27,6 +27,7 @@ impl EntityKindColor for EntityKind {
             Self::HealOrb => Color::srgb(1.0, 0.35, 0.45),
             Self::SpeedRing => Color::srgb(0.2, 0.95, 0.55),
             Self::CrumblePlate => Color::srgb(0.7, 0.65, 0.55),
+            Self::Cannon => Color::srgb(0.4, 0.45, 0.5),
         }
     }
 }
@@ -93,6 +94,8 @@ impl EntityDataExt for EntityData {
             EntityKind::SpeedRing => (2.5, None),
             // seconds before crumble after step
             EntityKind::CrumblePlate => (0.85, None),
+            // arc height; cell_b is the target cell
+            EntityKind::Cannon => (6.0, None),
         };
         EntityData {
             id,

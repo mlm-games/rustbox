@@ -24,6 +24,7 @@ pub enum EntityKind {
     HealOrb,
     SpeedRing,
     CrumblePlate,
+    Cannon,
 }
 
 impl EntityKind {
@@ -46,6 +47,7 @@ impl EntityKind {
             Self::HealOrb => "Heal Orb",
             Self::SpeedRing => "Speed Ring",
             Self::CrumblePlate => "Crumble Plate",
+            Self::Cannon => "Cannon",
         }
     }
 

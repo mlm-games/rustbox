@@ -154,6 +154,24 @@ pub struct CrumblePlate {
     pub gone: bool,
 }
 
+/// Cannon: `cell_b` is the world target cell, `param` is the arc height.
+#[derive(Component)]
+pub struct Cannon {
+    pub target: Vec3,
+    pub arc: f32,
+    pub cooldown: f32,
+}
+
+/// Simple procedural active visuals for kit entities: `base_y` anchors a bob,
+/// `spin` is radians/sec, `bob` is bob amplitude.
+#[derive(Component)]
+pub struct KitAnim {
+    pub base_y: f32,
+    pub spin: f32,
+    pub bob: f32,
+    pub seed: f32,
+}
+
 /// Last pulse time per channel, in seconds of play-session time.
 #[derive(Resource, Default)]
 pub struct LinkState {
@@ -219,6 +237,7 @@ pub fn setup_entity_assets(
         EntityKind::HealOrb,
         EntityKind::SpeedRing,
         EntityKind::CrumblePlate,
+        EntityKind::Cannon,
     ] {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
@@ -320,6 +339,7 @@ fn root_y_off(kind: EntityKind) -> f32 {
         EntityKind::HealOrb => 0.45,
         EntityKind::SpeedRing => 0.55,
         EntityKind::CrumblePlate => 0.08,
+        EntityKind::Cannon => 0.45,
     }
 }
 
@@ -348,7 +368,8 @@ fn visual_for(
         | EntityKind::LockGate
         | EntityKind::HealOrb
         | EntityKind::SpeedRing
-        | EntityKind::CrumblePlate => return None,
+        | EntityKind::CrumblePlate
+        | EntityKind::Cannon => return None,
     };
     let scene = assets.scenes[&kind].clone();
     let material = match kind {
@@ -788,6 +809,19 @@ pub fn reconcile_entities(
                     ))
                     .id(),
 
+                EntityKind::Cannon => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.5)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Cannon].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
                 _ => unreachable!("non-visual entity kind without primitive fallback"),
             }
         };
@@ -914,6 +948,12 @@ pub fn reconcile_entities(
                     dir,
                     strength: data.param.max(0.0),
                 });
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 2.5,
+                    bob: 0.0,
+                    seed: data.id as f32,
+                });
             }
             EntityKind::Bumper => {
                 ecmds.insert(Bumper {
@@ -921,6 +961,12 @@ pub fn reconcile_entities(
                 });
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 0.0,
+                    bob: 0.0,
+                    seed: data.id as f32,
+                });
             }
             EntityKind::Crate => {
                 ecmds.insert(CrateProp {
@@ -933,6 +979,12 @@ pub fn reconcile_entities(
                 });
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 2.0,
+                    bob: 0.08,
+                    seed: data.id as f32,
+                });
             }
             EntityKind::LockGate => {
                 ecmds.insert(LockGate {
@@ -946,6 +998,12 @@ pub fn reconcile_entities(
                 ecmds.insert(HealOrb);
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 1.5,
+                    bob: 0.08,
+                    seed: data.id as f32,
+                });
             }
             EntityKind::SpeedRing => {
                 ecmds.insert(SpeedRing {
@@ -953,6 +1011,12 @@ pub fn reconcile_entities(
                 });
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 2.0,
+                    bob: 0.0,
+                    seed: data.id as f32,
+                });
             }
             EntityKind::CrumblePlate => {
                 ecmds.insert(CrumblePlate {
@@ -960,6 +1024,27 @@ pub fn reconcile_entities(
                     timer: 0.0,
                     triggered: false,
                     gone: false,
+                });
+            }
+            EntityKind::Cannon => {
+                let from = data.cell_i().as_vec3() + Vec3::new(0.5, 0.45, 0.5);
+                let target = data
+                    .cell_b_i()
+                    .unwrap_or(data.cell_i() + IVec3::new(4, 0, 0))
+                    .as_vec3()
+                    + Vec3::new(0.5, 0.45, 0.5);
+                ecmds.insert(Cannon {
+                    target: (target - from) * Vec3::new(1.0, 0.0, 1.0) + from,
+                    arc: data.param.max(1.0),
+                    cooldown: 0.0,
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 1.0,
+                    bob: 0.0,
+                    seed: data.id as f32,
                 });
             }
         }
@@ -1000,6 +1085,17 @@ pub fn bob_glimmers(time: Res<Time>, mut q: Query<&mut Transform, With<GlimmerTa
         let bob = (t * 3.0 + i as f32).sin() * 0.04;
         tf.translation.y += bob;
         tf.rotate_y(time.delta_secs() * 2.0);
+    }
+}
+
+pub fn animate_kit(time: Res<Time>, mut q: Query<(&mut Transform, &KitAnim)>) {
+    let t = time.elapsed_secs();
+    let dt = time.delta_secs();
+    for (mut tf, anim) in &mut q {
+        if anim.bob > 0.0 {
+            tf.translation.y = anim.base_y + (t * 3.0 + anim.seed).sin() * anim.bob;
+        }
+        tf.rotate_y(dt * anim.spin);
     }
 }
 
@@ -1412,7 +1508,7 @@ pub fn use_teleporters(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
-    teleporters: Query<(&LevelEnt, &Transform, &Teleporter)>,
+    teleporters: Query<(&LevelEnt, &Transform, &Teleporter), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1461,7 +1557,7 @@ pub fn apply_fans(
     time: Res<Time>,
     mode: Res<MakerMode>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    fans: Query<(&Transform, &Fan)>,
+    fans: Query<(&Transform, &Fan), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1492,7 +1588,7 @@ pub fn touch_bumpers(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    bumpers: Query<(&Transform, &Bumper)>,
+    bumpers: Query<(&Transform, &Bumper), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1531,7 +1627,7 @@ pub fn break_crates(
     mut ui: ResMut<MakerUi>,
     mut map: ResMut<EntityEntities>,
     player_q: Query<(&Transform, &Player)>,
-    crates: Query<(Entity, &Transform, &LevelEnt, &CrateProp)>,
+    crates: Query<(Entity, &Transform, &LevelEnt, &CrateProp), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1572,7 +1668,7 @@ pub fn collect_keys(
     mut ui: ResMut<MakerUi>,
     mut map: ResMut<EntityEntities>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    keys: Query<(Entity, &Transform, &LevelEnt, &KeyPickup)>,
+    keys: Query<(Entity, &Transform, &LevelEnt, &KeyPickup), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1600,7 +1696,7 @@ pub fn update_lock_gates(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    mut gates: Query<(&mut LockGate, &mut Visibility, &Transform)>,
+    mut gates: Query<(&mut LockGate, &mut Visibility, &Transform), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1645,7 +1741,7 @@ pub fn collect_heal_orbs(
     mut ui: ResMut<MakerUi>,
     mut map: ResMut<EntityEntities>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    orbs: Query<(Entity, &Transform, &LevelEnt), With<HealOrb>>,
+    orbs: Query<(Entity, &Transform, &LevelEnt), (With<HealOrb>, Without<Player>)>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1669,7 +1765,7 @@ pub fn touch_speed_rings(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    rings: Query<(&Transform, &SpeedRing)>,
+    rings: Query<(&Transform, &SpeedRing), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1696,7 +1792,7 @@ pub fn update_crumble_plates(
     time: Res<Time>,
     mode: Res<MakerMode>,
     player_q: Query<(&Transform, &Player)>,
-    mut plates: Query<(&mut CrumblePlate, &mut Visibility, &Transform)>,
+    mut plates: Query<(&mut CrumblePlate, &mut Visibility, &Transform), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1729,5 +1825,53 @@ pub fn update_crumble_plates(
                 *vis = Visibility::Hidden;
             }
         }
+    }
+}
+
+pub fn launch_cannons(
+    time: Res<Time>,
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    mut cannons: Query<(&Transform, &mut Cannon), Without<Player>>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+    let dt = time.delta_secs();
+
+    for (tf, mut cannon) in &mut cannons {
+        cannon.cooldown = (cannon.cooldown - dt).max(0.0);
+        if cannon.cooldown > 0.0 {
+            continue;
+        }
+        let to_p = pt.translation - tf.translation;
+        let d = to_p * Vec3::new(1.0, 0.0, 1.0);
+        if d.length() > 0.8 || to_p.y < 0.0 || to_p.y > 1.2 {
+            continue;
+        }
+
+        let delta = cannon.target - tf.translation;
+        let horiz = (delta * Vec3::new(1.0, 0.0, 1.0)).length();
+        if horiz < 0.01 {
+            continue;
+        }
+        // Choose flight time from horizontal range and a fixed launch speed;
+        // apex is driven by `arc`.
+        let g = 25.0;
+        let t_peak = (2.0 * cannon.arc / g).sqrt();
+        let t = 2.0 * t_peak;
+        let dir = (delta * Vec3::new(1.0, 0.0, 1.0)).normalize();
+        let mut v = dir * (horiz / t);
+        v.y = g * t_peak + delta.y / t;
+
+        player.velocity = v;
+        player.on_ground = false;
+        player.pad_cooldown = 0.3;
+        cannon.cooldown = 0.5;
+        ui.set_status("Fired!");
     }
 }
