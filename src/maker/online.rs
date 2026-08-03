@@ -296,6 +296,80 @@ fn nonempty(mut s: String) -> String {
     s
 }
 
+/// Order online levels the way the UI / grid navigation expects.
+/// - `shelf == 1`: Popular (by likes)
+/// - `shelf == 2`: Hot (recency-weighted engagement)
+/// - otherwise client-side secondary sort from `mode` (0 new, 1 name, 2 likes, 3 plays).
+pub fn sort_online(
+    levels: &[LevelMeta],
+    mode: u8,
+    shelf: u8,
+) -> Vec<LevelMeta> {
+    let mut v = levels.to_vec();
+    if shelf == 1 {
+        v.sort_by(|a, b| b.likes.cmp(&a.likes));
+        return v;
+    }
+    if shelf == 2 {
+        v.sort_by(|a, b| hot_of(b).total_cmp(&hot_of(a)));
+        return v;
+    }
+    match mode % 4 {
+        0 => v.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
+        1 => v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        2 => v.sort_by(|a, b| b.likes.cmp(&a.likes)),
+        _ => v.sort_by(|a, b| b.plays.cmp(&a.plays)),
+    }
+    v
+}
+
+/// Recency-weighted "Hot" score: engagement normalized by how long the level
+/// has been published, so genuinely new/rising levels float to the top.
+pub fn hot_of(m: &LevelMeta) -> f64 {
+    let engagement = m.likes as f64 * 4.0 + m.plays as f64;
+    let age_hours = age_hours_from_created_at(&m.created_at).unwrap_or(72.0);
+    engagement / (age_hours + 2.0).powf(1.4)
+}
+
+fn age_hours_from_created_at(created_at: &str) -> Option<f64> {
+    const SECS_PER_DAY: i64 = 86_400;
+
+    let digits = |field: &str, start: usize, len: usize| -> Option<i64> {
+        field.get(start..start + len)?.parse::<i64>().ok()
+    };
+
+    // Parse the date prefix "YYYY-MM-DD" (ISO / sortable localtime formats).
+    let mut year = digits(created_at, 0, 4)?;
+    let month = digits(created_at, 5, 2)?;
+    let day = digits(created_at, 8, 2)?;
+    let (mut hour, mut minute, mut second) = (0i64, 0i64, 0i64);
+    if let Some(rest) = created_at.get(11..) {
+        hour = digits(&rest, 0, 2).unwrap_or(0);
+        minute = digits(&rest, 3, 2).unwrap_or(0);
+        second = digits(&rest, 6, 2).unwrap_or(0);
+    }
+
+    if month < 1 || month > 12 || day < 1 || day > 31 {
+        return None;
+    }
+
+    // Days-from-civil (Howard Hinnant) for a proleptic Gregorian date.
+    year -= if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+
+    let days_since_epoch = era * 146_097 + doe - 719_468;
+    let created = days_since_epoch * SECS_PER_DAY + hour * 3600 + minute * 60 + second;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(created);
+
+    Some(((now - created).max(0) as f64) / 3600.0)
+}
+
 pub struct OnlinePlugin;
 
 impl Plugin for OnlinePlugin {
@@ -339,6 +413,7 @@ pub fn flush_online_requests(
                     );
                     ui.online_preview_pending.retain(|id| *id != meta.id);
                     ui.online_previews.insert(meta.id, preview);
+                    touch_online_preview_lru(&mut ui, meta.id);
                 }
                 apply_download(
                     &mut level,
@@ -358,6 +433,21 @@ pub fn flush_online_requests(
     if ctx.config.token != ui.online_token {
         ctx.config.token = ui.online_token.trim().to_string();
     }
+}
+
+/// Bound the generated-preview cache: mark `id` most-recently-used and evict
+/// the oldest previews once we pass `MAX_PREVIEWS_CACHED`.
+pub fn touch_online_preview_lru(ui: &mut super::ui_bridge::MakerUi, id: u64) {
+    const MAX_PREVIEWS_CACHED: usize = 96;
+
+    ui.online_preview_lru.retain(|x| *x != id);
+    ui.online_preview_lru.push(id);
+
+    while ui.online_preview_lru.len() > MAX_PREVIEWS_CACHED {
+        let evict = ui.online_preview_lru.remove(0);
+        ui.online_previews.remove(&evict);
+    }
+    ui.online_preview_pending.retain(|x| *x != id);
 }
 
 fn apply_download(
@@ -434,6 +524,7 @@ pub fn poll_online_events(
                     ui.online_preview_pending.retain(|id| *id != meta.id);
                     ui.online_previews.insert(meta.id, preview);
                     cache.0.insert(meta.id, data.clone());
+                    touch_online_preview_lru(&mut ui, meta.id);
                     apply_download(
                         &mut level,
                         &mut history,

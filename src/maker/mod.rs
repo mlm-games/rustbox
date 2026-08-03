@@ -231,6 +231,7 @@ impl Plugin for MakerPlugin {
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(Update, entities_runtime::collect_clips)
+            .add_systems(Update, ui_bridge::browser_grid_nav)
             .add_systems(
                 OnEnter(AppState::InGame),
                 |mut ui: ResMut<ui_bridge::MakerUi>, storage: Res<storage::LevelStorage>| {

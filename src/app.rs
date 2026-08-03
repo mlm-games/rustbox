@@ -282,9 +282,12 @@ pub struct SharedUi {
     pub online_loading: bool,
     /// Selected online level id (detail panel).
     pub online_selected: Option<u64>,
+    /// When set, the online detail panel shows a Confirm/Cancel delete prompt.
+    pub online_confirm_delete: Option<u64>,
     /// Shelf tab: 0 = New, 1 = Popular, 2 = Hot.
     pub online_shelf: u8,
-    /// Dedicated Level/Maker ID search string.
+    /// Dedicated Level ID search string (backend `FetchById` looks up a single
+    /// level id, not a maker id).
     pub online_id_query: String,
 }
 
@@ -372,6 +375,7 @@ impl Default for SharedUi {
             online_sort: 0,
             online_loading: false,
             online_selected: None,
+            online_confirm_delete: None,
             online_shelf: 0,
             online_id_query: String::new(),
         }
@@ -541,6 +545,7 @@ fn sync_shared_ui(
         ui.online_sort = m.online_sort;
         ui.online_shelf = m.online_shelf;
         ui.online_selected = m.online_selected;
+        ui.online_confirm_delete = m.online_confirm_delete;
         ui.online_id_query = m.online_id_query.clone();
         ui.online_loading = m.online_loading;
         ui.brush_entities = m.brush_entities;
@@ -641,30 +646,11 @@ fn sort_online(
     mode: u8,
     shelf: u8,
 ) -> Vec<rustbox_format::api::LevelMeta> {
-    let mut v = levels.to_vec();
-    if shelf == 1 {
-        v.sort_by(|a, b| b.likes.cmp(&a.likes));
-        return v;
-    }
-    if shelf == 2 {
-        v.sort_by(|a, b| hot_of(b).total_cmp(&hot_of(a)));
-        return v;
-    }
-    match mode % 4 {
-        0 => v.sort_by(|a, b| b.created_at.cmp(&a.created_at)),
-        1 => v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-        2 => v.sort_by(|a, b| b.likes.cmp(&a.likes)),
-        _ => v.sort_by(|a, b| b.plays.cmp(&a.plays)),
-    }
-    v
+    crate::maker::online::sort_online(levels, mode, shelf)
 }
 
 fn hot_of(m: &rustbox_format::api::LevelMeta) -> f64 {
-    //HACK: Until the API exposes real recent-window stats, this is a stable
-    // "up-and-coming" approximation:
-    let engagement = m.likes as f64 * 4.0 + m.plays as f64;
-    let size_penalty = ((m.size_bytes as f64 / 1024.0).max(1.0)).sqrt();
-    engagement / size_penalty
+    crate::maker::online::hot_of(m)
 }
 
 fn process_ui_actions(
@@ -860,7 +846,13 @@ fn process_ui_actions(
             }
             UiAction::OnlinePreview(id) => {
                 if let Some(ref mut m) = maker_ui {
-                    if m.online_previews.contains_key(&id) || m.online_preview_pending.contains(&id)
+                    // Cap concurrent preview downloads so a 50-level grid doesn't
+                    // stampede the network just to draw cards (LRU evicts later).
+                    const MAX_PREVIEW_IN_FLIGHT: usize = 4;
+
+                    if m.online_previews.contains_key(&id)
+                        || m.online_preview_pending.contains(&id)
+                        || m.online_preview_pending.len() >= MAX_PREVIEW_IN_FLIGHT
                     {
                         continue;
                     }
@@ -925,7 +917,10 @@ fn process_ui_actions(
                         });
                     m.online_pending
                         .push(OnlineRequest::Download { meta, play: true });
+                    m.set_status("Downloading level...");
                 }
+                *overlay = OverlayMenu::None;
+                transition.begin_to_state(AppState::Loading);
             }
             UiAction::OnlineLike(id) => {
                 if let Some(ref mut m) = maker_ui {
@@ -939,7 +934,18 @@ fn process_ui_actions(
             }
             UiAction::OnlineDelete(id) => {
                 if let Some(ref mut m) = maker_ui {
-                    m.online_pending.push(OnlineRequest::Delete { id });
+                    if m.online_confirm_delete == Some(id) {
+                        m.online_confirm_delete = None;
+                        m.online_pending.push(OnlineRequest::Delete { id });
+                        m.set_status(format!("Deleting #{id}..."));
+                    } else {
+                        m.online_confirm_delete = Some(id);
+                    }
+                }
+            }
+            UiAction::OnlineDeleteCancel => {
+                if let Some(ref mut m) = maker_ui {
+                    m.online_confirm_delete = None;
                 }
             }
             UiAction::OnlineClearQuery => {

@@ -133,6 +133,8 @@ pub struct MakerUi {
     pub browse_confirm_delete: Option<String>,
     /// Key of the currently selected level card (identity-only grid).
     pub browse_selected: Option<String>,
+    /// Keyboard/gamepad grid cursor into the filtered browse grid (0 = top-left).
+    pub browse_cursor: usize,
 
     /// Key the current level is saved under (slot / collection entry), used by
     /// the Level Info metadata editor so it persists to the browsable copy.
@@ -160,6 +162,9 @@ pub struct MakerUi {
     pub online_previews: HashMap<u64, crate::maker::thumbnail::ThumbPreview>,
     /// Preview downloads currently requested so compose does not spam requests.
     pub online_preview_pending: Vec<u64>,
+    /// Bounded recency order for the generated-preview cache (LRU eviction).
+    /// `online_previews` stays unique; this list tracks which ids are newest.
+    pub online_preview_lru: Vec<u64>,
     pub online_query: String,
     pub online_token: String,
     /// 0 = new, 1 = name, 2 = likes, 3 = plays (client-side secondary ordering).
@@ -168,10 +173,16 @@ pub struct MakerUi {
     pub online_shelf: u8,
     /// Id of the currently selected online level card (detail panel).
     pub online_selected: Option<u64>,
-    /// Dedicated "Level / Maker ID" search field, distinct from the query box.
+    /// Keyboard/gamepad grid cursor into the sorted online grid (0 = top-left).
+    pub online_cursor: usize,
+    /// When set, the online detail panel shows a Confirm/Cancel delete prompt for
+    /// this id (matches the local delete UX).
+    pub online_confirm_delete: Option<u64>,
+    /// Dedicated "Level ID" search field, distinct from the query box. The
+    /// backend `FetchById` looks a level up by a single level id — NOT a maker id.
     pub online_id_query: String,
     pub online_loading: bool,
-    /// Requests the flush system turns into fetches (kept here so
+    /// Requests the pending loop turns into JSON requests (kept here so
     /// `drain_ui_commands` stays under Bevy's 16-param system limit).
     pub online_pending: Vec<OnlineRequest>,
 }
@@ -740,6 +751,122 @@ pub fn browse_text_input(
         {
             ui.browse_query.push_str(text);
         }
+    }
+}
+
+/// Keyboard/gamepad grid navigation for the Browse and Online shelves.
+pub fn browser_grid_nav(
+    keys: Res<ButtonInput<KeyCode>>,
+    overlay: Res<crate::app::OverlayMenu>,
+    bridge: Res<crate::menus::UiBridge>,
+    mut maker_ui: Option<ResMut<MakerUi>>,
+) {
+    const COLS: usize = 3;
+
+    let Some(mut ui) = maker_ui else {
+        return;
+    };
+
+    let right = || (keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD));
+    let left = || keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA);
+    let down = || keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
+    let up = || keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
+    let confirm = || keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space);
+
+    match *overlay {
+        crate::app::OverlayMenu::Browse => {
+            let visible = catalog::filter_catalog(
+                &ui.catalog,
+                &ui.browse_query,
+                &ui.browse_include_tags,
+                ui.browse_verified_only,
+                ui.browse_difficulty,
+                ui.browse_sort,
+            );
+            if visible.is_empty() {
+                ui.browse_cursor = 0;
+                ui.browse_selected = None;
+                return;
+            }
+
+            let mut c = ui.browse_cursor.min(visible.len() - 1);
+            if right() && c + 1 < visible.len() {
+                c += 1;
+            }
+            if left() && c > 0 {
+                c -= 1;
+            }
+            if down() && c + COLS < visible.len() {
+                c += COLS;
+            }
+            if up() && c >= COLS {
+                c -= COLS;
+            }
+
+            if c != ui.browse_cursor {
+                ui.browse_cursor = c;
+                ui.browse_selected = Some(visible[c].key.clone());
+                ui.browse_confirm_delete = None;
+            }
+
+            if confirm() {
+                let key = ui
+                    .browse_selected
+                    .clone()
+                    .unwrap_or_else(|| visible[c].key.clone());
+                if let Ok(mut acts) = bridge.actions.lock() {
+                    acts.push(crate::menus::UiAction::BrowsePlay(key));
+                }
+            }
+        }
+
+        crate::app::OverlayMenu::Online => {
+            if ui.online_levels.is_empty() {
+                ui.online_cursor = 0;
+                ui.online_selected = None;
+                return;
+            }
+
+            let visible = crate::maker::online::sort_online(
+                &ui.online_levels,
+                ui.online_sort,
+                ui.online_shelf,
+            );
+            if visible.is_empty() {
+                ui.online_cursor = 0;
+                ui.online_selected = None;
+                return;
+            }
+
+            let mut c = ui.online_cursor.min(visible.len() - 1);
+            if right() && c + 1 < visible.len() {
+                c += 1;
+            }
+            if left() && c > 0 {
+                c -= 1;
+            }
+            if down() && c + COLS < visible.len() {
+                c += COLS;
+            }
+            if up() && c >= COLS {
+                c -= COLS;
+            }
+
+            if c != ui.online_cursor {
+                ui.online_cursor = c;
+                ui.online_selected = Some(visible[c].id);
+                ui.online_confirm_delete = None;
+            }
+
+            if confirm() {
+                let id = ui.online_selected.unwrap_or(visible[c].id);
+                if let Ok(mut acts) = bridge.actions.lock() {
+                    acts.push(crate::menus::UiAction::OnlinePlay(id));
+                }
+            }
+        }
+
+        _ => {}
     }
 }
 

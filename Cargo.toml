@@ -161,4 +161,6 @@ strip = "debuginfo"
 # repose-app = { path = "../repose/crates/repose-app" }
 # repose-ui = { path = "../repose/crates/repose-ui" }
 # repose-material = { path = "../repose/crates/repose-material" }
+# repose-text = { path = "../repose/crates/repose-text" }
+# repose-tree = { path = "../repose/crates/repose-tree" }
 # repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }

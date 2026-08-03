@@ -145,6 +145,7 @@ pub enum UiAction {
     OnlineLike(u64),
     OnlineReport(u64),
     OnlineDelete(u64),
+    OnlineDeleteCancel,
     OnlineUpload,
     OnlineSelect(u64),
     OnlineClearSelection,
@@ -1791,18 +1792,7 @@ fn browse_card(s: &LevelSummary, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction
         );
     }
 
-    let card_config = CardConfig {
-        border: Some((
-            if selected { 2.0 } else { 1.0 },
-            if selected {
-                col(255, 217, 59)
-            } else {
-                RColor::from_rgba(255, 255, 255, 40)
-            },
-        )),
-        shape_radius: 12.0,
-        ..Default::default()
-    };
+    let card_config = selected_card_config(selected);
 
     ClickableOutlinedCard(
         move || push(&b_sel, UiAction::BrowseSelect(k.clone())),
@@ -1811,16 +1801,7 @@ fn browse_card(s: &LevelSummary, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction
         move || {
             Column(Modifier::new().gap(6.0).align_items(AlignItems::FLEX_START)).child((
                 // Thumbnail as the card's face (identity only).
-                Column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .align_items(AlignItems::CENTER)
-                        .justify_content(JustifyContent::CENTER)
-                        .background(col(30, 30, 42))
-                        .clip_rounded(8.0)
-                        .height(96.0),
-                )
-                .child(thumb_grid_view(&s.preview)),
+                card_preview_box(Some(thumb_grid_view(&s.preview)), 96.0),
                 Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(name_children),
                 Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
                     Column(
@@ -1963,16 +1944,7 @@ fn local_detail_panel(
     )
     .child((
         // Large preview
-        Column(
-            Modifier::new()
-                .fill_max_width()
-                .align_items(AlignItems::CENTER)
-                .justify_content(JustifyContent::CENTER)
-                .background(col(30, 30, 42))
-                .clip_rounded(8.0)
-                .height(120.0),
-        )
-        .child(thumb_grid_view(&s.preview)),
+        card_preview_box(Some(thumb_grid_view(&s.preview)), 120.0),
         Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(name_children),
         RText(if s.author.is_empty() {
             "Unknown".to_string()
@@ -2359,18 +2331,7 @@ fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>
     let preview = st.online_previews.get(&m.id).cloned();
     let pending = st.online_preview_pending.contains(&m.id);
 
-    let card_config = CardConfig {
-        border: Some((
-            if selected { 2.0 } else { 1.0 },
-            if selected {
-                col(255, 217, 59)
-            } else {
-                RColor::from_rgba(255, 255, 255, 40)
-            },
-        )),
-        shape_radius: 12.0,
-        ..Default::default()
-    };
+    let card_config = selected_card_config(selected);
 
     ClickableOutlinedCard(
         move || push(&b_sel, UiAction::OnlineSelect(id)),
@@ -2379,19 +2340,13 @@ fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>
         move || {
             let date: String = m.created_at.chars().take(10).collect();
 
-            let preview_view: View = match preview {
-                Some(p) => Column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .height(92.0)
-                        .align_items(AlignItems::CENTER)
-                        .justify_content(JustifyContent::CENTER)
-                        .background(col(30, 30, 42))
-                        .clip_rounded(8.0),
-                )
-                .child(thumb_grid_view(&p)),
-                None => online_preview_placeholder(m.id, pending),
-            };
+            let preview_view: View = card_preview_box(
+                Some(match preview {
+                    Some(p) => thumb_grid_view(&p),
+                    None => online_preview_placeholder(m.id, pending),
+                }),
+                92.0,
+            );
 
             let children: Vec<View> = vec![
                 preview_view,
@@ -2451,18 +2406,51 @@ fn online_detail_panel(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiA
     let a_report = actions.clone();
     let id = m.id;
 
-    let action_row: View = Column(Modifier::new().gap(6.0)).child((
-        FilledTonalButton(
-            Modifier::new().height(36.0).fill_max_width(),
-            move || push(&a_play, UiAction::OnlinePlay(id)),
-            ButtonConfig::default(),
-            move || {
-                Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
-                    Icon(Symbols::PLAY_ARROW).size(18.0).color(RColor::WHITE),
-                    RText("Play").size(14.0).color(RColor::WHITE),
-                ))
-            },
-        ),
+    let confirming = st.online_confirm_delete == Some(id);
+    let a_confirm_cancel = actions.clone();
+
+    let play_button = FilledTonalButton(
+        Modifier::new().height(36.0).fill_max_width(),
+        move || push(&a_play, UiAction::OnlinePlay(id)),
+        ButtonConfig::default(),
+        move || {
+            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                Icon(Symbols::PLAY_ARROW).size(18.0).color(RColor::WHITE),
+                RText("Play").size(14.0).color(RColor::WHITE),
+            ))
+        },
+    );
+
+    let secondary_row: View = if confirming {
+        Column(Modifier::new().gap(6.0)).child((
+            RText("Delete this level permanently?")
+                .size(12.0)
+                .color(col(232, 120, 120)),
+            Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                FilledTonalButton(
+                    Modifier::new()
+                        .height(34.0)
+                        .background(col(160, 60, 60))
+                        .clip_rounded(8.0),
+                    {
+                        let ac = a_confirm_cancel.clone();
+                        move || push(&ac, UiAction::OnlineDelete(id))
+                    },
+                    ButtonConfig::default(),
+                    move || RText("Confirm Delete").size(13.0).color(RColor::WHITE),
+                ),
+                FilledTonalButton(
+                    Modifier::new().height(34.0),
+                    {
+                        let ac = a_confirm_cancel.clone();
+                        move || push(&ac, UiAction::OnlineDeleteCancel)
+                    },
+                    ButtonConfig::default(),
+                    move || RText("Cancel").size(13.0).color(RColor::WHITE),
+                ),
+            )),
+        ))
+    } else {
         Row(Modifier::new().gap(6.0)).child((
             FilledTonalButton(
                 Modifier::new().height(34.0),
@@ -2497,8 +2485,10 @@ fn online_detail_panel(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiA
                     ))
                 },
             ),
-        )),
-    ));
+        ))
+    };
+
+    let action_row = Column(Modifier::new().gap(6.0)).child((play_button, secondary_row));
 
     let mut tag_pills: Vec<View> = Vec::new();
     for tag in &m.tags {
@@ -2523,19 +2513,13 @@ fn online_detail_panel(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiA
             .gap(8.0),
     )
     .child((
-        match st.online_previews.get(&m.id) {
-            Some(p) => Column(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(120.0)
-                    .align_items(AlignItems::CENTER)
-                    .justify_content(JustifyContent::CENTER)
-                    .background(col(30, 30, 42))
-                    .clip_rounded(8.0),
-            )
-            .child(thumb_grid_view(p)),
-            None => online_preview_placeholder(m.id, st.online_preview_pending.contains(&m.id)),
-        },
+        card_preview_box(
+            Some(match st.online_previews.get(&m.id) {
+                Some(p) => thumb_grid_view(p),
+                None => online_preview_placeholder(m.id, st.online_preview_pending.contains(&m.id)),
+            }),
+            120.0,
+        ),
         RText(m.name.clone()).size(19.0).color(RColor::WHITE),
         RText(if m.author.is_empty() {
             "Unknown".to_string()
@@ -2587,6 +2571,38 @@ fn thumb_grid_view(p: &ThumbPreview) -> View {
             .background(col(30, 30, 40)),
     )
     .child(rows)
+}
+
+/// Shared card chrome for the Browse / Online identity-only grids: a thin
+/// light border, a thicker amber border + highlight once selected.
+fn selected_card_config(selected: bool) -> CardConfig {
+    CardConfig {
+        border: Some((
+            if selected { 2.0 } else { 1.0 },
+            if selected {
+                col(255, 217, 59)
+            } else {
+                RColor::from_rgba(255, 255, 255, 40)
+            },
+        )),
+        shape_radius: 12.0,
+        ..Default::default()
+    }
+}
+
+/// Shared card face: a fixed-height box that centers either a generated
+/// thumbnail or a placeholder (used by both browse and online cards/detail).
+fn card_preview_box(content: Option<View>, height: f32) -> View {
+    Column(
+        Modifier::new()
+            .fill_max_width()
+            .height(height)
+            .align_items(AlignItems::CENTER)
+            .justify_content(JustifyContent::CENTER)
+            .background(col(30, 30, 42))
+            .clip_rounded(8.0),
+    )
+    .child(content.unwrap_or_else(|| RText("…").size(14.0).color(col(120, 120, 145))))
 }
 
 fn tag_color(tag: LevelTag) -> RColor {
