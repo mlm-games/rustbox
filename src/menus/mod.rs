@@ -1140,14 +1140,10 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             }
         }
 
-        if matches!(
-            e.kind,
-            EntityKind::TriggerOrb
-                | EntityKind::RelayGate
-                | EntityKind::Teleporter
-                | EntityKind::Key
-                | EntityKind::LockGate
-        ) {
+        let needs_link_for_contents =
+            matches!(e.contents, ContainedItem::Key) && e.kind.supports_contents();
+
+        if e.kind.uses_link() || needs_link_for_contents {
             let a_minus = actions.clone();
             let a_plus = actions.clone();
             body.push(stepper_row(

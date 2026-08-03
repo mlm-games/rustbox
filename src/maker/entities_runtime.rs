@@ -2046,10 +2046,14 @@ pub fn collect_heal_orbs(
 }
 
 pub fn touch_speed_rings(
+    mut commands: Commands,
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    rings: Query<(&Transform, &SpeedRing), Without<Player>>,
+    rings: Query<
+        (Entity, &Transform, &SpeedRing, Option<&DroppedItem>),
+        (Without<Player>, Without<DropPop>),
+    >,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -2061,12 +2065,17 @@ pub fn touch_speed_rings(
         return;
     }
 
-    for (tf, ring) in &rings {
+    for (e, tf, ring, dropped) in &rings {
         if pt.translation.distance(tf.translation) > 1.2 {
             continue;
         }
         player.speed_boost = player.speed_boost.max(ring.duration);
         player.pad_cooldown = 0.35;
+
+        if dropped.is_some() {
+            commands.entity(e).despawn();
+        }
+
         ui.set_status("Speed boost!");
         break;
     }

@@ -740,7 +740,13 @@ pub fn drain_ui_commands(
             }
             UiCommand::CycleEntityContents(id) => {
                 if let Some(e) = level.entity_by_id(id) {
+                    if !e.kind.supports_contents() {
+                        continue;
+                    }
+
                     let old = e.contents;
+                    let old_link = e.link;
+
                     let new = match old {
                         ContainedItem::None => ContainedItem::Glimmers(3),
                         ContainedItem::Glimmers(_) => ContainedItem::Key,
@@ -748,6 +754,18 @@ pub fn drain_ui_commands(
                         ContainedItem::HealOrb => ContainedItem::SpeedRing,
                         ContainedItem::SpeedRing => ContainedItem::None,
                     };
+
+                    if matches!(new, ContainedItem::Key) && old_link == 0 {
+                        history.apply(
+                            &mut level,
+                            EditCommand::SetEntityLink {
+                                id,
+                                old: old_link,
+                                new: 1,
+                            },
+                        );
+                    }
+
                     if new != old {
                         history.apply(&mut level, EditCommand::SetEntityContents { id, old, new });
                     }
