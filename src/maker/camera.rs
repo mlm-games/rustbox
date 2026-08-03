@@ -76,6 +76,7 @@ pub fn edit_camera_control(
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut rig: ResMut<CameraRig>,
+    level: Res<LevelDocument>,
     mut cam: Query<(&mut Transform, &mut CameraBase3d), With<WorldCamera>>,
 ) {
     let dt = time.delta_secs();
@@ -118,6 +119,21 @@ pub fn edit_camera_control(
             pan -= Vec3::Y;
         }
         rig.focus += pan * 12.0 * dt;
+
+        if let Some((min, max)) = level.content_bounds() {
+            const PAD: f32 = 4.0;
+            let (min, max) = (min.as_vec3(), max.as_vec3() + Vec3::ONE);
+            if rig.focus.x > max.x + PAD {
+                rig.focus.x = min.x - PAD;
+            } else if rig.focus.x < min.x - PAD {
+                rig.focus.x = max.x + PAD;
+            }
+            if rig.focus.z > max.z + PAD {
+                rig.focus.z = min.z - PAD;
+            } else if rig.focus.z < min.z - PAD {
+                rig.focus.z = max.z + PAD;
+            }
+        }
     }
 
     if let Ok((mut t, mut base)) = cam.single_mut() {

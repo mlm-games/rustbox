@@ -27,6 +27,7 @@ fn local_surface_height(shape: BlockShape, lx: f32, lz: f32) -> f32 {
                 0.0
             }
         }
+        BlockShape::Thin => 1.0,
     }
 }
 
@@ -44,7 +45,32 @@ fn local_column_solid(shape: BlockShape, lx: f32, lz: f32) -> bool {
         | BlockShape::OuterCorner => true,
         BlockShape::VerticalSlope => lx + lz <= 1.0,
         BlockShape::VerticalSlab => lz <= 0.5,
+        BlockShape::Thin => true,
     }
+}
+
+/// Local-space height where solid material *starts* in a column (the block's
+/// bottom surface). Used for upward collision so players can slide under
+/// overhanging slabs instead of bumping the full cell.
+fn local_bottom_height(shape: BlockShape, _lx: f32, _lz: f32) -> f32 {
+    match shape {
+        BlockShape::TopHalf => 0.5,
+        BlockShape::Thin => 1.0 - rustbox_format::block::THIN_HEIGHT,
+        _ => 0.0,
+    }
+}
+
+/// World-space bottom-surface height of a block at world position (wx, wz).
+/// Returns `None` when the column is empty (no material to hit).
+pub fn surface_bottom_height(block: &BlockData, wx: f32, wz: f32) -> Option<f32> {
+    let wx = (wx - block.position[0] as f32).clamp(0.0, 1.0);
+    let wz = (wz - block.position[2] as f32).clamp(0.0, 1.0);
+    let (lx, lz) = local_from_world(wx, wz, block.rot);
+    let (lx, lz) = (lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0));
+    if !local_column_solid(block.shape, lx, lz) {
+        return None;
+    }
+    Some(block.position[1] as f32 + local_bottom_height(block.shape, lx, lz))
 }
 
 /// Rotate a point inside a cell (world-local, [0,1]) into the shape's
@@ -94,6 +120,7 @@ fn face_solid_range(shape: BlockShape, rot: u8, axis: usize, side: u8) -> (f32, 
         BlockShape::Full => (0.0, 1.0),
         BlockShape::Half => (0.0, 0.5),
         BlockShape::TopHalf => (0.5, 1.0),
+        BlockShape::Thin => (1.0 - rustbox_format::block::THIN_HEIGHT, 1.0),
         BlockShape::VerticalSlab => {
             // Slab sits against the local -Z face; the +Z cell face is open.
             let local = local_axis_direction(axis, side, rot);
@@ -233,8 +260,21 @@ fn resolve_axis(
                             collided = true;
                         }
                     } else {
-                        p[1] = cell.y as f32 - he[1];
-                        collided = true;
+                        // Moving up into a shaped block: only collide if the
+                        // column has material, and stop just under the
+                        // material's bottom surface so overhangs (TopHalf, thin
+                        // slabs) leave crawl space.
+                        let bottom = match block {
+                            Some(b) if b.kind.is_solid() => surface_bottom_height(b, v.x, v.z),
+                            _ => Some(cell.y as f32),
+                        };
+                        let head = p[1] + he[1];
+                        if let Some(bottom) = bottom
+                            && head >= bottom - 0.001
+                        {
+                            p[1] = bottom - he[1];
+                            collided = true;
+                        }
                     }
                 } else {
                     // Horizontal: only block if the player's vertical span

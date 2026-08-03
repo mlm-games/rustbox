@@ -57,6 +57,8 @@ pub const KIND_HEAL_ORB: u32 = 1 << 14;
 pub const KIND_SPEED_RING: u32 = 1 << 15;
 pub const KIND_CRUMBLE_PLATE: u32 = 1 << 16;
 pub const KIND_CANNON: u32 = 1 << 17;
+pub const KIND_ON_OFF_SWITCH: u32 = 1 << 18;
+pub const KIND_TOSS_CRATE: u32 = 1 << 19;
 
 pub fn kind_flag(kind: EntityKind) -> u32 {
     match kind {
@@ -78,6 +80,8 @@ pub fn kind_flag(kind: EntityKind) -> u32 {
         EntityKind::SpeedRing => KIND_SPEED_RING,
         EntityKind::CrumblePlate => KIND_CRUMBLE_PLATE,
         EntityKind::Cannon => KIND_CANNON,
+        EntityKind::OnOffSwitch => KIND_ON_OFF_SWITCH,
+        EntityKind::TossCrate => KIND_TOSS_CRATE,
     }
 }
 

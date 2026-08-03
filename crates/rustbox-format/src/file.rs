@@ -6,7 +6,7 @@ use crate::entity::{ContainedItem, EntityData, EntityKind};
 use crate::level::{BlockData, BoundaryConfig, ClearCondition, LevelData, LevelTag, Theme};
 use crate::track::TrackData;
 
-pub const FORMAT_VERSION: u32 = 6;
+pub const FORMAT_VERSION: u32 = 7;
 
 /// Upper bound for inflating untrusted levels (tiny compressed input must not
 /// explode into gigabytes of memory).
@@ -519,6 +519,7 @@ pub fn decode_level(compressed: &[u8]) -> anyhow::Result<LevelData> {
         u32::from_le_bytes(head)
     };
     match version {
+        7 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
         6 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
         5 => Ok(upgrade_v5(
             bincode::deserialize::<LevelFileV5>(&bytes)?.level,

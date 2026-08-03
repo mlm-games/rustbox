@@ -25,6 +25,10 @@ pub enum EntityKind {
     SpeedRing,
     CrumblePlate,
     Cannon,
+    /// Stand-alone switch that toggles on/off when the player touches it.
+    OnOffSwitch,
+    /// A physics crate the player can pick up and throw (commit 20).
+    TossCrate,
 }
 
 impl EntityKind {
@@ -48,6 +52,8 @@ impl EntityKind {
             Self::SpeedRing => "Speed Ring",
             Self::CrumblePlate => "Crumble Plate",
             Self::Cannon => "Cannon",
+            Self::OnOffSwitch => "On/Off Switch",
+            Self::TossCrate => "Toss Crate",
         }
     }
 
@@ -67,6 +73,26 @@ impl EntityKind {
     /// Kinds that can hold a `ContainedItem` (v6+).
     pub fn supports_contents(self) -> bool {
         matches!(self, Self::Crate | Self::Prowler)
+    }
+
+    /// Kinds that may share a cell with others of the same kind (stacking).
+    pub fn stackable(self) -> bool {
+        matches!(
+            self,
+            Self::Glimmer | Self::TriggerOrb | Self::RelayGate | Self::Crate | Self::TossCrate
+        )
+    }
+
+    /// Max number of same-kind entities that can share one cell.
+    pub fn max_stack(self) -> usize {
+        match self {
+            Self::Glimmer => 8,
+            Self::TriggerOrb => 4,
+            Self::RelayGate => 4,
+            Self::Crate => 4,
+            Self::TossCrate => 4,
+            _ => 1,
+        }
     }
 }
 

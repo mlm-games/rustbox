@@ -7,11 +7,11 @@ use super::collision::raycast_present;
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{EntityData, EntityDataExt, EntityKind};
 use super::level::{BlockData, LevelDocument};
+use super::limits;
 use super::mode::{
     ActiveLinkChannel, BlockBrush, BlockPlaced, BoxFillStart, BrushTab, ClipboardBlock,
-    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MakerStats,
-    MirrorMode, PastePreview, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart,
-    SelectionSet,
+    ClipboardEntity, EditorClipboard, EditorCursor, InputCapture, MakerMode, MirrorMode,
+    PastePreview, PlaceYaw, SelectedEntity, SelectedEntityKind, SelectionBoxStart, SelectionSet,
 };
 use super::rendering::{MakerAssets, PlacementPreview, spawn_place_ghost};
 use super::track::{ActiveTrack, TrackData, TrackMode};
@@ -291,6 +291,8 @@ fn build_block_data(
     // Water is always a full, unlogged cell fill.
     let shape = if kind == BlockKind::Water {
         BlockShape::Full
+    } else if kind.is_thin() {
+        BlockShape::Thin
     } else {
         shape
     };
@@ -469,8 +471,8 @@ fn paste_clipboard(
     for item in &clipboard.entities {
         let pos = transformed_cell(item.offset, target, yaw);
 
-        // Keep one entity per cell, matching current editor behavior.
-        if level.entity_at_cell(pos).is_some() {
+        // Honor stacking rules when pasting into a cell.
+        if !level.can_place_entity_at(pos, item.data.kind) {
             continue;
         }
 
@@ -733,7 +735,7 @@ pub fn selection_hotkeys(
             selection.clear();
         }
 
-        if let Some(entity) = level.entity_at_cell(cell) {
+        if let Some(entity) = level.top_entity_at_cell(cell) {
             selection.toggle_entity(entity.id);
             selected_entity.0 = Some(entity.id);
         } else if level.get_block(cell).is_some() {
@@ -968,7 +970,7 @@ pub fn update_preview_and_edit(
     mut active: ResMut<ActiveTrack>,
     mut level: ResMut<LevelDocument>,
     mut history: ResMut<CommandHistory>,
-    mut stats: ResMut<MakerStats>,
+    limits: Res<limits::LevelLimits>,
     mut sel_ent: ResMut<SelectedEntity>,
     channel: Res<ActiveLinkChannel>,
     mut placed: MessageWriter<BlockPlaced>,
@@ -1007,7 +1009,7 @@ pub fn update_preview_and_edit(
             brush.rot = b.rot % 4;
             brush.waterlogged = b.waterlogged;
             *tab = BrushTab::Blocks;
-        } else if let Some(ent) = level.entity_at_cell(hit_cell) {
+        } else if let Some(ent) = level.top_entity_at_cell(hit_cell) {
             sel_e.0 = ent.kind;
             *tab = BrushTab::Entities;
         }
@@ -1044,7 +1046,7 @@ pub fn update_preview_and_edit(
                                     }
                                 }
                             }
-                            if !cells.is_empty() {
+                            if !cells.is_empty() && (level.map.len() as u32) < limits.max_blocks {
                                 history.apply(
                                     &mut level,
                                     EditCommand::BoxFill {
@@ -1063,7 +1065,10 @@ pub fn update_preview_and_edit(
                     }
                 } else {
                     for cell in mirror_cells(place_cell, mirror.0) {
-                        if level.get_block(cell).is_none() && !level.boundary_solid(cell) {
+                        if level.get_block(cell).is_none()
+                            && !level.boundary_solid(cell)
+                            && (level.map.len() as u32) < limits.max_blocks
+                        {
                             history.apply(
                                 &mut level,
                                 EditCommand::Place {
@@ -1078,7 +1083,6 @@ pub fn update_preview_and_edit(
                                     previous: None,
                                 },
                             );
-                            stats.blocks_placed += 1;
                             placed.write(BlockPlaced {
                                 cell,
                                 kind: brush.kind,
@@ -1101,9 +1105,9 @@ pub fn update_preview_and_edit(
                 }
             }
             BrushTab::Entities => {
-                if let Some(ent) = level.entity_at_cell(place_cell) {
-                    sel_ent.0 = Some(ent.id);
-                } else {
+                if (level.data.entities.len() as u32) < limits.max_entities
+                    && level.can_place_entity_at(place_cell, sel_e.0)
+                {
                     let id = level.alloc_id();
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
@@ -1140,7 +1144,7 @@ pub fn update_preview_and_edit(
                             },
                         );
                     }
-                } else {
+                } else if (level.data.tracks.len() as u32) < limits.max_tracks {
                     let id = level.alloc_track_id();
                     let track = TrackData {
                         id,
@@ -1204,13 +1208,12 @@ pub fn update_preview_and_edit(
                             previous: k,
                         },
                     );
-                    stats.blocks_placed = stats.blocks_placed.saturating_sub(1);
                 }
             }
             // Anchor erase stroke (prevents tunneling while held still).
             box_start.last_erase = Some(hit_cell);
             box_start.last_pointer = pointer;
-        } else if let Some(ent) = level.entity_at_cell(hit_cell).cloned() {
+        } else if let Some(ent) = level.top_entity_at_cell(hit_cell).cloned() {
             let removed_id = ent.id;
             history.apply(&mut level, EditCommand::RemoveEntity { entity: ent });
             if sel_ent.0 == Some(removed_id) {
@@ -1229,7 +1232,10 @@ pub fn update_preview_and_edit(
             && box_start.last_paint != Some(place_cell)
         {
             for cell in mirror_cells(place_cell, mirror.0) {
-                if level.get_block(cell).is_none() && !level.boundary_solid(cell) {
+                if level.get_block(cell).is_none()
+                    && !level.boundary_solid(cell)
+                    && (level.map.len() as u32) < limits.max_blocks
+                {
                     history.apply(
                         &mut level,
                         EditCommand::Place {
@@ -1244,7 +1250,6 @@ pub fn update_preview_and_edit(
                             previous: None,
                         },
                     );
-                    stats.blocks_placed += 1;
                     placed.write(BlockPlaced {
                         cell,
                         kind: brush.kind,
@@ -1277,7 +1282,6 @@ pub fn update_preview_and_edit(
                             previous: k,
                         },
                     );
-                    stats.blocks_placed = stats.blocks_placed.saturating_sub(1);
                 }
             }
             box_start.last_erase = Some(hit_cell);
@@ -1356,6 +1360,8 @@ pub fn draw_selected_entity_gizmo(
         EntityKind::SpeedRing => Vec3::splat(0.6),
         EntityKind::CrumblePlate => Vec3::new(0.55, 0.15, 0.55),
         EntityKind::Cannon => Vec3::new(0.45, 0.45, 0.45),
+        EntityKind::OnOffSwitch => Vec3::new(0.35, 0.15, 0.35),
+        EntityKind::TossCrate => Vec3::splat(0.5),
     };
     let color = Color::srgb(0.3, 0.8, 1.0);
     let min = center - half;

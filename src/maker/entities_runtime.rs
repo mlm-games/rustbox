@@ -126,6 +126,11 @@ pub struct CrateProp {
     pub breakable: bool,
 }
 
+/// Stand-alone on/off switch. Touching it flips the global on/off state
+/// (commit 18: toggles OnOffConveyorA/B).
+#[derive(Component)]
+pub struct OnOffSwitch;
+
 /// What a container (Crate / Prowler) will release when broken or defeated.
 #[derive(Component)]
 pub struct Contents {
@@ -342,6 +347,8 @@ pub fn setup_entity_assets(
         EntityKind::SpeedRing,
         EntityKind::CrumblePlate,
         EntityKind::Cannon,
+        EntityKind::OnOffSwitch,
+        EntityKind::TossCrate,
     ] {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
@@ -444,7 +451,25 @@ fn root_y_off(kind: EntityKind) -> f32 {
         EntityKind::SpeedRing => 0.55,
         EntityKind::CrumblePlate => 0.08,
         EntityKind::Cannon => 0.45,
+        EntityKind::OnOffSwitch => 0.15,
+        EntityKind::TossCrate => 0.5,
     }
+}
+
+/// Lateral fan-out offsets so several entities sharing one cell don't
+/// z-fight. Ring spreads outward; beyond the ring it just repeats the edge.
+fn stack_offset(index: usize) -> Vec3 {
+    let ring = [
+        Vec3::ZERO,
+        Vec3::new(0.22, 0.0, 0.0),
+        Vec3::new(-0.22, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, 0.22),
+        Vec3::new(0.0, 0.0, -0.22),
+        Vec3::new(0.16, 0.0, 0.16),
+        Vec3::new(-0.16, 0.0, 0.16),
+        Vec3::new(0.16, 0.0, -0.16),
+    ];
+    ring[index.min(ring.len() - 1)]
 }
 
 /// Per-kind visual config: (scene, material, scene scale, child y-offset).
@@ -473,7 +498,9 @@ fn visual_for(
         | EntityKind::HealOrb
         | EntityKind::SpeedRing
         | EntityKind::CrumblePlate
-        | EntityKind::Cannon => return None,
+        | EntityKind::Cannon
+        | EntityKind::OnOffSwitch
+        | EntityKind::TossCrate => return None,
     };
     let scene = assets.scenes[&kind].clone();
     let material = match kind {
@@ -728,8 +755,16 @@ pub fn reconcile_entities(
 
     let playing = *mode == MakerMode::Play;
 
+    // Per-cell index so stacked entities fan out instead of z-fighting.
+    let mut cell_counts: std::collections::HashMap<IVec3, usize> = std::collections::HashMap::new();
+
     for data in &level.data.entities {
-        let world = data.cell_i().as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let cell = data.cell_i();
+        let stack_index = cell_counts.entry(cell).or_insert(0);
+        let stack_offset = stack_offset(*stack_index);
+        *stack_index += 1;
+
+        let world = cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5) + stack_offset;
         let yaw = data.yaw_deg.to_radians();
         let rot = Quat::from_rotation_y(yaw);
 
@@ -918,6 +953,32 @@ pub fn reconcile_entities(
                         tf.with_scale(Vec3::splat(0.5)),
                         Mesh3d(assets.marker_mesh.clone()),
                         MeshMaterial3d(assets.mats[&EntityKind::Cannon].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::OnOffSwitch => commands
+                    .spawn((
+                        tf.with_scale(Vec3::new(0.6, 0.18, 0.6)),
+                        Mesh3d(assets.pad_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::OnOffSwitch].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::TossCrate => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.8)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::TossCrate].clone()),
                         LevelEnt {
                             id: data.id,
                             kind: data.kind,
@@ -1158,6 +1219,29 @@ pub fn reconcile_entities(
                     bob: 0.0,
                     seed: data.id as f32,
                 });
+            }
+            EntityKind::OnOffSwitch => {
+                ecmds.insert(OnOffSwitch);
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::TossCrate => {
+                ecmds.insert(CrateProp {
+                    breakable: data.param >= 0.5,
+                });
+                ecmds.insert(Contents {
+                    item: data.contents,
+                    link: data.link,
+                });
+                #[cfg(feature = "physics")]
+                if playing {
+                    ecmds.insert((
+                        RigidBody::Dynamic,
+                        Collider::cuboid(0.4, 0.4, 0.4),
+                        Velocity::default(),
+                        super::rapier::Throwable,
+                    ));
+                }
             }
         }
 

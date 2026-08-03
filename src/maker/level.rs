@@ -260,6 +260,21 @@ impl LevelDocument {
         )
     }
 
+    /// AABB of the actually-placed blocks (ignoring boundary/walls). `None` for
+    /// an empty level. Used for camera wrapping and content framing.
+    pub fn content_bounds(&self) -> Option<(IVec3, IVec3)> {
+        if self.map.is_empty() {
+            return None;
+        }
+        let mut min = IVec3::splat(i32::MAX);
+        let mut max = IVec3::splat(i32::MIN);
+        for c in self.map.keys() {
+            min = min.min(*c);
+            max = max.max(*c);
+        }
+        Some((min, max))
+    }
+
     pub fn mark_all_dirty(&mut self) {
         let chunks: HashSet<IVec3> = self
             .map
@@ -292,8 +307,29 @@ impl LevelDocument {
         }
     }
 
-    pub fn entity_at_cell(&self, cell: IVec3) -> Option<&EntityData> {
-        self.data.entities.iter().find(|e| e.cell_i() == cell)
+    /// All entities occupying `cell` (in document order).
+    pub fn entities_at_cell(&self, cell: IVec3) -> impl Iterator<Item = &EntityData> {
+        self.data
+            .entities
+            .iter()
+            .filter(move |e| e.cell_i() == cell)
+    }
+
+    /// The most-recently-added entity at `cell`, if any.
+    pub fn top_entity_at_cell(&self, cell: IVec3) -> Option<&EntityData> {
+        self.data.entities.iter().rev().find(|e| e.cell_i() == cell)
+    }
+
+    /// Whether an entity of `kind` may be placed at `cell` under stacking rules.
+    pub fn can_place_entity_at(&self, cell: IVec3, kind: EntityKind) -> bool {
+        if kind.stackable() {
+            self.entities_at_cell(cell)
+                .filter(|e| e.kind == kind)
+                .count()
+                < kind.max_stack()
+        } else {
+            self.entities_at_cell(cell).next().is_none()
+        }
     }
 
     pub fn entity_by_id(&self, id: LevelEntityId) -> Option<&EntityData> {

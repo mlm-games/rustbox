@@ -15,11 +15,54 @@ pub enum BlockKind {
     Conveyor,
     Bounce,
     Climb,
+    /// Conveyor rendered as a thin top slab (crawl space underneath).
+    ThinConveyor,
+    /// On/Off conveyor that runs while the switch state is ON.
+    OnOffConveyorA,
+    /// On/Off conveyor that runs while the switch state is OFF.
+    OnOffConveyorB,
+    /// Thin top slab you can hang under and traverse (no conveyor force).
+    HangRail,
 }
 
 impl BlockKind {
     pub fn is_solid(self) -> bool {
         !matches!(self, BlockKind::Spawn | BlockKind::Water)
+    }
+
+    pub fn is_conveyor(self) -> bool {
+        matches!(
+            self,
+            BlockKind::Conveyor
+                | BlockKind::ThinConveyor
+                | BlockKind::OnOffConveyorA
+                | BlockKind::OnOffConveyorB
+        )
+    }
+
+    /// Renders and collides as a thin top slab.
+    pub fn is_thin(self) -> bool {
+        matches!(self, BlockKind::ThinConveyor | BlockKind::HangRail)
+    }
+
+    /// Whether an on/off conveyor with this kind pushes while the switch is on.
+    pub fn conveyor_active(self, onoff: bool) -> bool {
+        match self {
+            BlockKind::OnOffConveyorA => onoff,
+            BlockKind::OnOffConveyorB => !onoff,
+            _ => self.is_conveyor(),
+        }
+    }
+
+    /// Whether the underside of this block is grab-able (hang verb).
+    pub fn has_hangable_underside(self) -> bool {
+        matches!(
+            self,
+            BlockKind::ThinConveyor
+                | BlockKind::OnOffConveyorA
+                | BlockKind::OnOffConveyorB
+                | BlockKind::HangRail
+        )
     }
 
     pub fn name(self) -> &'static str {
@@ -35,6 +78,10 @@ impl BlockKind {
             BlockKind::Conveyor => "Conveyor",
             BlockKind::Bounce => "Bounce",
             BlockKind::Climb => "Climb",
+            BlockKind::ThinConveyor => "Thin Conveyor",
+            BlockKind::OnOffConveyorA => "On/Off Conveyor A",
+            BlockKind::OnOffConveyorB => "On/Off Conveyor B",
+            BlockKind::HangRail => "Hang Rail",
         }
     }
 }
@@ -51,6 +98,10 @@ pub const ALL_BLOCK_KINDS: &[BlockKind] = &[
     BlockKind::Conveyor,
     BlockKind::Bounce,
     BlockKind::Climb,
+    BlockKind::ThinConveyor,
+    BlockKind::OnOffConveyorA,
+    BlockKind::OnOffConveyorB,
+    BlockKind::HangRail,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -75,6 +126,9 @@ pub enum BlockShape {
     VerticalSlope,
     /// Vertical half slab: a 1x1x0.5 slab against the local -Z face.
     VerticalSlab,
+    /// Thin top slab: 1x0.16x1 sitting at the top of the cell, with a crawl
+    /// space beneath (used by thin conveyors and hang rails).
+    Thin,
 }
 
 impl BlockShape {
@@ -89,9 +143,14 @@ impl BlockShape {
             BlockShape::OuterCorner => "Outer Corner",
             BlockShape::VerticalSlope => "V Slope",
             BlockShape::VerticalSlab => "V Slab",
+            BlockShape::Thin => "Thin",
         }
     }
 }
+
+/// Thickness (fraction of a cell) of thin top slabs: thin conveyors and hang
+/// rails. Leaves a crawl space underneath.
+pub const THIN_HEIGHT: f32 = 0.16;
 
 pub const ALL_BLOCK_SHAPES: &[BlockShape] = &[
     BlockShape::Full,
@@ -103,4 +162,5 @@ pub const ALL_BLOCK_SHAPES: &[BlockShape] = &[
     BlockShape::OuterCorner,
     BlockShape::VerticalSlope,
     BlockShape::VerticalSlab,
+    BlockShape::Thin,
 ];

@@ -11,6 +11,7 @@ use super::collision::{
 };
 use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::entity_data::LevelEntityId;
+use super::interactive_blocks::OnOffState;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
 use super::rendering::MakerAssets;
@@ -99,6 +100,15 @@ pub enum ActionState {
     Launch,
 }
 
+/// Whether the player is hanging from a hangable underside (thin conveyor /
+/// hang rail), holding E.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PlayerMoveMode {
+    #[default]
+    Normal,
+    Hanging,
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct MoveState {
     pub action: ActionState,
@@ -160,6 +170,10 @@ pub struct Player {
     pub speed_boost: f32,
     /// Brief bumper/teleport input lock so you don't re-trigger instantly.
     pub pad_cooldown: f32,
+    /// Hanging from a hangable underside (thin conveyor / hang rail).
+    pub move_mode: PlayerMoveMode,
+    /// Seconds until a new hang grab is allowed after releasing.
+    pub hang_cooldown: f32,
 }
 
 impl Default for Player {
@@ -187,6 +201,8 @@ impl Default for Player {
             armor: 0,
             speed_boost: 0.0,
             pad_cooldown: 0.0,
+            move_mode: PlayerMoveMode::Normal,
+            hang_cooldown: 0.0,
         }
     }
 }
@@ -225,6 +241,31 @@ fn ground_block_rot(level: &LevelDocument, wx: f32, wz: f32) -> Option<u8> {
             }
         } else if level.boundary_solid(cell) {
             return None;
+        }
+    }
+    None
+}
+
+/// A hangable underside directly above the player's head, if any. Returns the
+/// cell and the world height of the slab's bottom surface.
+fn find_hang_surface(level: &LevelDocument, pos: Vec3, he: Vec3) -> Option<(IVec3, f32)> {
+    let head = pos.y + he.y;
+    let cx = pos.x.floor() as i32;
+    let cz = pos.z.floor() as i32;
+    // Check the column the head is in and one above (in case the head just
+    // crossed a cell boundary).
+    let top = head.floor() as i32;
+    for y in (top - 1..=top + 1).rev() {
+        let cell = IVec3::new(cx, y, cz);
+        if let Some(b) = level.get_block(cell)
+            && b.kind.is_solid()
+            && b.kind.has_hangable_underside()
+            && let Some(bottom) = super::collision::surface_bottom_height(b, pos.x, pos.z)
+        {
+            // Only grab while the head is roughly against the underside.
+            if (bottom - head).abs() <= 0.35 {
+                return Some((cell, bottom));
+            }
         }
     }
     None
@@ -361,6 +402,7 @@ pub fn player_controller(
     mut trauma: ResMut<Trauma>,
     pads: Query<(&Transform, &LaunchPad), Without<Player>>,
     plates: Query<(&Transform, &DriftPlate), Without<Player>>,
+    onoff: Res<OnOffState>,
     mut q: Query<(Entity, &mut Transform, &mut Player, &mut MoveState)>,
 ) {
     let dt = time.delta_secs();
@@ -399,6 +441,60 @@ pub fn player_controller(
         let crouching = kb && keys.pressed(KeyCode::ShiftLeft);
         let crouch_pressed = keys.just_pressed(KeyCode::ShiftLeft);
         let he = player.half_extents;
+        let underwater = level.is_underwater_point(transform.translation);
+
+        // Hanging: hold E under a hangable underside (thin conveyor / hang
+        // rail). Overrides gravity while active.
+        let hang_key = kb && keys.pressed(KeyCode::KeyE);
+        player.hang_cooldown = (player.hang_cooldown - dt).max(0.0);
+        if player.move_mode == PlayerMoveMode::Hanging {
+            match find_hang_surface(&level, transform.translation, he) {
+                Some((_, bottom)) => {
+                    if !hang_key || underwater {
+                        player.move_mode = PlayerMoveMode::Normal;
+                        player.hang_cooldown = 0.25;
+                        player.velocity.y = -2.0;
+                    } else if keys.just_pressed(KeyCode::Space) {
+                        // Hop off.
+                        player.move_mode = PlayerMoveMode::Normal;
+                        player.hang_cooldown = 0.25;
+                        player.velocity.y = tuning.jump_speed * 0.7;
+                    } else {
+                        // Crawl along the underside.
+                        apply_accel_friction(
+                            &mut player.velocity,
+                            horiz,
+                            tuning.crouch_speed * 0.9,
+                            tuning.ground_accel * 0.8,
+                            tuning.ground_friction * 0.4,
+                            tuning.stop_speed,
+                            dt,
+                        );
+                        player.velocity.y = 0.0;
+                        transform.translation.y = bottom + he.y;
+                    }
+                }
+                None => {
+                    // Surface ended or moved out of reach: drop.
+                    player.move_mode = PlayerMoveMode::Normal;
+                    player.hang_cooldown = 0.3;
+                    player.velocity.y = -4.0;
+                }
+            }
+        } else if hang_key
+            && player.hang_cooldown <= 0.0
+            && !player.on_ground
+            && !underwater
+            && !player.slamming
+            && player.launch <= 0.0
+            && player.velocity.y <= 2.0
+            && let Some((_, bottom)) = find_hang_surface(&level, transform.translation, he)
+        {
+            player.move_mode = PlayerMoveMode::Hanging;
+            player.velocity = Vec3::ZERO;
+            transform.translation.y = bottom + he.y;
+        }
+        let hanging = player.move_mode == PlayerMoveMode::Hanging;
 
         // Formal floor normal (sampled surface gradient).
         if player.on_ground {
@@ -418,7 +514,6 @@ pub fn player_controller(
         let steep = player.on_ground && move_state.floor_normal.y < tuning.walkable_normal_y;
         let mut sliding = slope.is_some() || steep;
 
-        let underwater = level.is_underwater_point(transform.translation);
         let launch_locked = player.launch > 0.0;
 
         let ground_kind = if player.on_ground {
@@ -429,10 +524,11 @@ pub fn player_controller(
         let on_ice = ground_kind.is_some_and(|k| k == BlockKind::Ice);
 
         // Horizontal control: accel/friction (not instant wish velocity).
-        if player.slamming {
+        // While hanging, the crawl accel already ran; skip normal control.
+        if !hanging && player.slamming {
             player.velocity.x = 0.0;
             player.velocity.z = 0.0;
-        } else if sliding && !launch_locked && !underwater {
+        } else if !hanging && sliding && !launch_locked && !underwater {
             if let Some(dir) = slope {
                 player.velocity.x = dir.x * tuning.slide_speed;
                 player.velocity.z = dir.y * tuning.slide_speed;
@@ -447,7 +543,7 @@ pub fn player_controller(
                     sliding = false;
                 }
             }
-        } else if !launch_locked {
+        } else if !hanging && !launch_locked {
             let (accel, friction, max_speed) = if underwater {
                 (tuning.swim_accel, tuning.swim_friction, tuning.swim_speed)
             } else if player.on_ground {
@@ -479,7 +575,7 @@ pub fn player_controller(
                 tuning.stop_speed,
                 dt,
             );
-        } else {
+        } else if !hanging {
             // Light air steer while launched.
             apply_accel_friction(
                 &mut player.velocity,
@@ -518,7 +614,12 @@ pub fn player_controller(
             player.on_ground = false;
         }
 
-        if !underwater && crouch_pressed && !player.on_ground && player.velocity.y <= 2.0 {
+        if !underwater
+            && crouch_pressed
+            && !player.on_ground
+            && !hanging
+            && player.velocity.y <= 2.0
+        {
             player.velocity.y = tuning.slam_speed;
             player.velocity.x = 0.0;
             player.velocity.z = 0.0;
@@ -544,8 +645,10 @@ pub fn player_controller(
         }
 
         // Conveyor: push the player along the block's facing while on top.
-        if let Some(kind) = ground_kind
-            && kind == BlockKind::Conveyor
+        if !hanging
+            && let Some(kind) = ground_kind
+            && kind.is_conveyor()
+            && kind.conveyor_active(onoff.on)
             && let Some(rot) =
                 ground_block_rot(&level, transform.translation.x, transform.translation.z)
         {
@@ -553,7 +656,6 @@ pub fn player_controller(
             player.velocity += dir * 6.0 * dt;
         }
 
-        let underwater = level.is_underwater_point(transform.translation);
         let gravity = if underwater {
             tuning.water_gravity
         } else {
@@ -564,11 +666,13 @@ pub fn player_controller(
         } else {
             tuning.max_fall
         };
-        player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
+        if !hanging {
+            player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
+        }
 
         // Climb surface: hold W while overlapping a Climb block to ascend.
         let on_climb = overlaps_kind(transform.translation, he, &level, BlockKind::Climb);
-        if on_climb && kb && keys.pressed(KeyCode::KeyW) {
+        if on_climb && kb && !hanging && keys.pressed(KeyCode::KeyW) {
             player.velocity.y = 4.5;
         }
 
@@ -579,8 +683,10 @@ pub fn player_controller(
         };
 
         // Stay glued to the ground.
-        let grounding_ok =
-            (player.was_on_ground || player.on_ground) && !underwater && player.velocity.y <= 0.0;
+        let grounding_ok = (player.was_on_ground || player.on_ground)
+            && !underwater
+            && !hanging
+            && player.velocity.y <= 0.0;
         if grounding_ok {
             let top = ground_height(&level, transform.translation.x, transform.translation.z);
             if top.is_finite() {
@@ -636,8 +742,9 @@ pub fn player_controller(
                 break;
             }
         }
-        let grounded_now =
-            result.on_ground || on_plate || (player.was_on_ground && player.velocity.y <= 0.0);
+        let grounded_now = result.on_ground
+            || on_plate
+            || (!hanging && player.was_on_ground && player.velocity.y <= 0.0);
         if grounded_now && !on_plate && player.velocity.y <= 0.0 {
             let top = ground_height(&level, pos.x, pos.z);
             if top.is_finite() {

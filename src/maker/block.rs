@@ -21,6 +21,10 @@ impl BlockKindColor for BlockKind {
             BlockKind::Conveyor => Color::srgb(0.45, 0.75, 0.95),
             BlockKind::Bounce => Color::srgb(0.95, 0.45, 0.45),
             BlockKind::Climb => Color::srgb(0.45, 0.65, 0.45),
+            BlockKind::ThinConveyor => Color::srgb(0.45, 0.80, 0.95),
+            BlockKind::OnOffConveyorA => Color::srgb(0.45, 0.75, 0.95),
+            BlockKind::OnOffConveyorB => Color::srgb(0.40, 0.65, 0.90),
+            BlockKind::HangRail => Color::srgb(0.55, 0.55, 0.55),
         }
     }
 }

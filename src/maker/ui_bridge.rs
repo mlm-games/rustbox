@@ -12,9 +12,10 @@ use super::catalog;
 use super::commands::{CommandHistory, EditCommand};
 use super::entity_data::{ContainedItem, EntityData, EntityKind};
 use super::level::{BoundaryPreset, LevelDocument};
+use super::limits;
 use super::mode::{
-    ActiveLinkChannel, BlockBrush, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw,
-    SelectedEntity, SelectedEntityKind,
+    ActiveLinkChannel, BlockBrush, BrushTab, InputCapture, MakerMode, PlaceYaw, SelectedEntity,
+    SelectedEntityKind,
 };
 use super::online::OnlineRequest;
 use super::storage::{self, AUTOSAVE_KEY, LevelStorage, apply_level_data};
@@ -91,6 +92,13 @@ pub struct MakerUi {
     pub active_track: Option<TrackId>,
     pub active_track_label: String,
     pub blocks_placed: u32,
+    /// Live level-limit counters shown in the editor HUD bottom bar.
+    pub limit_blocks: u32,
+    pub limit_entities: u32,
+    pub limit_tracks: u32,
+    pub limit_vertices: u32,
+    pub limit_warning: bool,
+    pub limit_over: bool,
     pub can_undo: bool,
     pub can_redo: bool,
     pub status: String,
@@ -282,7 +290,7 @@ pub fn push_ui_state(
     brush: Res<BlockBrush>,
     tab: Res<BrushTab>,
     sel_e: Res<SelectedEntityKind>,
-    stats: Res<MakerStats>,
+    live: Res<limits::LevelStats>,
     history: Res<CommandHistory>,
     active: Res<ActiveTrack>,
     sel_ent: Res<SelectedEntity>,
@@ -316,6 +324,8 @@ pub fn push_ui_state(
         EntityKind::SpeedRing => 15,
         EntityKind::CrumblePlate => 16,
         EntityKind::Cannon => 17,
+        EntityKind::OnOffSwitch => 18,
+        EntityKind::TossCrate => 19,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,
@@ -339,7 +349,13 @@ pub fn push_ui_state(
             format!("Track #{id} · {mode} · {:.1} u/s", t.speed)
         })
         .unwrap_or_default();
-    ui.blocks_placed = stats.blocks_placed;
+    ui.blocks_placed = level.map.len() as u32;
+    ui.limit_blocks = live.blocks;
+    ui.limit_entities = live.entities;
+    ui.limit_tracks = live.tracks;
+    ui.limit_vertices = live.estimated_vertices;
+    ui.limit_warning = live.warning;
+    ui.limit_over = live.over_limit;
     ui.can_undo = !history.undo.is_empty();
     ui.can_redo = !history.redo.is_empty();
     ui.level_verified = level.data.is_verified;

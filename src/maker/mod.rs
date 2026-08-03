@@ -9,7 +9,9 @@ pub mod cursor;
 pub mod editor;
 pub mod entities_runtime;
 pub mod entity_data;
+pub mod interactive_blocks;
 pub mod level;
+pub mod limits;
 pub mod mode;
 pub mod online;
 pub mod player;
@@ -74,6 +76,9 @@ impl Plugin for MakerPlugin {
             .init_resource::<CommandHistory>()
             .init_resource::<LevelDocument>()
             .init_resource::<MakerStats>()
+            .init_resource::<limits::LevelLimits>()
+            .init_resource::<limits::LevelStats>()
+            .init_resource::<interactive_blocks::OnOffState>()
             .init_resource::<ActiveTrack>()
             .init_resource::<mode::SelectedEntity>()
             .init_resource::<mode::MirrorMode>()
@@ -159,6 +164,9 @@ impl Plugin for MakerPlugin {
                 Update,
                 (
                     entities_runtime::use_teleporters
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    interactive_blocks::touch_onoff_switches
                         .run_if(in_play)
                         .after(player::player_controller),
                     entities_runtime::apply_fans
@@ -274,6 +282,7 @@ impl Plugin for MakerPlugin {
                 (
                     rendering::rebuild_water_and_boundary.before(rendering::rebuild_dirty_chunks),
                     rendering::apply_theme,
+                    limits::update_level_stats,
                 )
                     .run_if(in_state(AppState::InGame)),
             )

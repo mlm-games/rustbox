@@ -551,6 +551,41 @@ fn shape_faces(shape: BlockShape) -> Vec<FaceSpec> {
                 ],
             });
         }
+        BlockShape::Thin => {
+            // Thin top slab: full footprint, y in [1-THIN, 1].
+            let h = 1.0 - rustbox_format::block::THIN_HEIGHT;
+            for (dir, corners) in [
+                (
+                    IVec3::X,
+                    [[1., h, 0.], [1., 1., 0.], [1., 1., 1.], [1., h, 1.]],
+                ),
+                (
+                    IVec3::NEG_X,
+                    [[0., h, 1.], [0., 1., 1.], [0., 1., 0.], [0., h, 0.]],
+                ),
+                (
+                    IVec3::Y,
+                    [[0., 1., 0.], [0., 1., 1.], [1., 1., 1.], [1., 1., 0.]],
+                ),
+                (
+                    IVec3::NEG_Y,
+                    [[0., h, 0.], [0., h, 1.], [1., h, 1.], [1., h, 0.]],
+                ),
+                (
+                    IVec3::Z,
+                    [[0., h, 1.], [1., h, 1.], [1., 1., 1.], [0., 1., 1.]],
+                ),
+                (
+                    IVec3::NEG_Z,
+                    [[0., h, 0.], [0., 1., 0.], [1., 1., 0.], [1., h, 0.]],
+                ),
+            ] {
+                faces.push(FaceSpec {
+                    dir,
+                    verts: corners.map(Vec3::from_array),
+                });
+            }
+        }
     }
     for f in &mut faces {
         for v in f.verts.iter_mut() {
@@ -573,10 +608,10 @@ fn face_occluded(shape: BlockShape, neighbor: Option<&BlockData>) -> bool {
     // holes), so only boxes cull boxes.
     let boxy = matches!(
         nb.shape,
-        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf
+        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf | BlockShape::Thin
     );
     match shape {
-        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf => boxy,
+        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf | BlockShape::Thin => boxy,
         BlockShape::VerticalSlab => false,
         _ => true,
     }

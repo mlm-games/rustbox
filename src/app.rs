@@ -196,6 +196,13 @@ pub struct SharedUi {
     pub translations: HashMap<String, String>,
     // Maker toolbar state
     pub blocks_placed: u32,
+    /// Live level-limit counters for the editor HUD bottom bar.
+    pub limit_blocks: u32,
+    pub limit_entities: u32,
+    pub limit_tracks: u32,
+    pub limit_vertices: u32,
+    pub limit_warning: bool,
+    pub limit_over: bool,
     pub maker_mode_edit: bool,
     pub selected_block: u8,
     pub brush_shape: u8,
@@ -311,6 +318,12 @@ impl Default for SharedUi {
             available_languages: vec!["en".to_string()],
             translations: HashMap::new(),
             blocks_placed: 0,
+            limit_blocks: 0,
+            limit_entities: 0,
+            limit_tracks: 0,
+            limit_vertices: 0,
+            limit_warning: false,
+            limit_over: false,
             maker_mode_edit: true,
             selected_block: 0,
             brush_shape: 0,
@@ -496,6 +509,12 @@ fn sync_shared_ui(
         ui.overlay = *overlay;
         ui.high_score = save.high_score;
         ui.blocks_placed = m.blocks_placed;
+        ui.limit_blocks = m.limit_blocks;
+        ui.limit_entities = m.limit_entities;
+        ui.limit_tracks = m.limit_tracks;
+        ui.limit_vertices = m.limit_vertices;
+        ui.limit_warning = m.limit_warning;
+        ui.limit_over = m.limit_over;
         ui.score = m.blocks_placed;
         ui.maker_mode_edit = m.mode == crate::maker::mode::MakerMode::Edit;
         ui.selected_block = m.selected as u8;
@@ -1225,6 +1244,10 @@ fn process_ui_actions(
                         8 => BlockKind::Conveyor,
                         9 => BlockKind::Bounce,
                         10 => BlockKind::Climb,
+                        11 => BlockKind::ThinConveyor,
+                        12 => BlockKind::OnOffConveyorA,
+                        13 => BlockKind::OnOffConveyorB,
+                        14 => BlockKind::HangRail,
                         _ => BlockKind::Grass,
                     };
                     m.commands.push(UiCommand::SelectBlock(kind));
@@ -1261,6 +1284,8 @@ fn process_ui_actions(
                         15 => EntityKind::SpeedRing,
                         16 => EntityKind::CrumblePlate,
                         17 => EntityKind::Cannon,
+                        18 => EntityKind::OnOffSwitch,
+                        19 => EntityKind::TossCrate,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));

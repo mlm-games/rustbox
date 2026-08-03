@@ -28,6 +28,8 @@ impl EntityKindColor for EntityKind {
             Self::SpeedRing => Color::srgb(0.2, 0.95, 0.55),
             Self::CrumblePlate => Color::srgb(0.7, 0.65, 0.55),
             Self::Cannon => Color::srgb(0.4, 0.45, 0.5),
+            Self::OnOffSwitch => Color::srgb(0.95, 0.6, 0.15),
+            Self::TossCrate => Color::srgb(0.6, 0.42, 0.25),
         }
     }
 }
@@ -96,6 +98,8 @@ impl EntityDataExt for EntityData {
             EntityKind::CrumblePlate => (0.85, None),
             // arc height; cell_b is the target cell
             EntityKind::Cannon => (6.0, None),
+            EntityKind::OnOffSwitch => (1.0, None),
+            EntityKind::TossCrate => (1.0, None),
         };
         EntityData {
             id,

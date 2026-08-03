@@ -746,12 +746,38 @@ fn edit_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             Modifier::new()
                 .fill_max_size()
                 .align_items(AlignItems::FLEX_END)
+                .justify_content(JustifyContent::FLEX_END)
+                .padding(16.0),
+        )
+        .child(limit_hud_bar(st)),
+        Column(
+            Modifier::new()
+                .fill_max_size()
+                .align_items(AlignItems::FLEX_END)
                 .justify_content(JustifyContent::CENTER)
                 .padding(16.0),
         )
         .child(inspector_panel(st, actions.clone())),
         toast_anchor(st),
     ))
+}
+
+/// Bottom-right live counters: blocks / entities / tracks / estimated vertices.
+/// Color shifts to amber at 80% of a limit and red when over.
+fn limit_hud_bar(st: &SharedUi) -> View {
+    let limit_color = if st.limit_over {
+        col(240, 80, 80)
+    } else if st.limit_warning {
+        col(240, 200, 80)
+    } else {
+        col(150, 150, 165)
+    };
+    RText(format!(
+        "{}b · {}e · {}t · {}v",
+        st.limit_blocks, st.limit_entities, st.limit_tracks, st.limit_vertices
+    ))
+    .size(12.0)
+    .color(limit_color)
 }
 
 fn edit_top_bar(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -859,7 +885,7 @@ fn palette_dock(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 11] = [
+    let items: [(u8, RColor); 15] = [
         (0, col(90, 170, 90)),
         (1, col(140, 140, 150)),
         (2, col(210, 70, 70)),
@@ -871,6 +897,10 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (8, col(115, 190, 240)),
         (9, col(240, 115, 115)),
         (10, col(115, 165, 115)),
+        (11, col(90, 205, 245)),
+        (12, col(115, 190, 240)),
+        (13, col(105, 170, 230)),
+        (14, col(150, 150, 155)),
     ];
     let mut row = Row(Modifier::new().gap(6.0));
     for (idx, color) in items {
@@ -886,7 +916,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_rot = actions.clone();
     let a_log = actions.clone();
     let shapes = [
-        "Full", "Half", "Top", "Slope", "DSlope", "Corner", "O.Corner", "V.Slope", "V.Slab",
+        "Full", "Half", "Top", "Slope", "DSlope", "Corner", "O.Corner", "V.Slope", "V.Slab", "Thin",
     ];
     let shape = shapes
         .get(st.brush_shape as usize)
@@ -914,7 +944,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 18] = [
+    let items: [(u8, RColor); 20] = [
         (0, col(255, 215, 70)),
         (1, col(90, 190, 255)),
         (2, col(190, 90, 230)),
@@ -933,6 +963,8 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (15, col(50, 240, 140)),
         (16, col(180, 165, 140)),
         (17, col(100, 115, 130)),
+        (18, col(240, 155, 40)),
+        (19, col(150, 105, 65)),
     ];
     let a_rot = actions.clone();
     let mut row = Row(Modifier::new().gap(6.0));
@@ -1033,6 +1065,8 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::SpeedRing => ("toolbar-speed", "Speed Ring"),
             EntityKind::CrumblePlate => ("toolbar-crumble", "Crumble Plate"),
             EntityKind::Cannon => ("toolbar-cannon", "Cannon"),
+            EntityKind::OnOffSwitch => ("toolbar-onoff", "On/Off Switch"),
+            EntityKind::TossCrate => ("toolbar-tosscrate", "Toss Crate"),
         };
         body.push(
             RText(t(tr, label_key, label_fb))
@@ -1070,6 +1104,8 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 EntityKind::CrumblePlate => ("inspector-delay", "Delay", 0.05),
                 EntityKind::LockGate => ("inspector-open-for", "Open For", 0.5),
                 EntityKind::Cannon => ("inspector-arc", "Arc", 1.0),
+                EntityKind::OnOffSwitch => ("inspector-starts-on", "Starts On", 1.0),
+                EntityKind::TossCrate => ("inspector-breakable", "Breakable", 1.0),
                 EntityKind::Checkpoint | EntityKind::Key => unreachable!(),
             };
             let a_minus = actions.clone();
