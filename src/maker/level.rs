@@ -8,7 +8,7 @@ use super::entity_data::{EntityData, EntityDataExt, EntityKind, LevelEntityId};
 use super::track::{TrackData, TrackDataExt, TrackId, TrackMode};
 
 pub use rustbox_format::level::{
-    BlockData, BoundaryConfig, BoundaryPreset, LevelData, LevelTag, Theme,
+    BlockData, BoundaryConfig, BoundaryPreset, ClearCondition, LevelData, LevelTag, Theme,
 };
 
 /// Default fallback half-extents for levels with no explicit size.
@@ -38,6 +38,7 @@ impl Default for LevelDocument {
                 author_time: None,
                 author_deaths: 0,
                 record_ms: None,
+                clear_condition: ClearCondition::ReachGoal,
                 is_verified: false,
                 description: String::new(),
                 tags: vec![],
@@ -69,6 +70,7 @@ impl LevelDocument {
         self.data.is_verified = false;
         self.data.author_time = None;
         self.data.author_deaths = 0;
+        self.data.clear_condition = ClearCondition::ReachGoal;
         self.data.size = None;
         self.data.water_level = None;
         self.data.theme = Theme::Grass;

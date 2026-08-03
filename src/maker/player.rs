@@ -9,6 +9,7 @@ use super::collision::{
     floor_normal_at, ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide,
 };
 use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
+use super::entity_data::LevelEntityId;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
 use super::rendering::MakerAssets;
@@ -145,6 +146,11 @@ pub struct Player {
     pub grip_cooldown: f32,
     /// How long the player has been hanging.
     pub grip_time: f32,
+    /// Current respawn position for this run. Starts at spawn, then moves to the
+    /// last touched checkpoint.
+    pub respawn_point: Vec3,
+    /// Active checkpoint id for this run, if any.
+    pub checkpoint_id: Option<LevelEntityId>,
 }
 
 impl Default for Player {
@@ -166,6 +172,8 @@ impl Default for Player {
             grip_anchor: Vec3::ZERO,
             grip_cooldown: 0.0,
             grip_time: 0.0,
+            respawn_point: Vec3::ZERO,
+            checkpoint_id: None,
         }
     }
 }
@@ -175,7 +183,7 @@ pub fn spawn_center(level: &LevelDocument) -> Vec3 {
     Vec3::new(s[0] as f32 + 0.5, s[1] as f32 + 0.9, s[2] as f32 + 0.5)
 }
 
-pub fn reset_player(
+pub fn respawn_player(
     transform: &mut Transform,
     player: &mut Player,
     move_state: &mut MoveState,
@@ -183,7 +191,12 @@ pub fn reset_player(
     level: &LevelDocument,
 ) {
     *vis = Visibility::Visible;
-    transform.translation = spawn_center(level);
+    let spawn = if player.checkpoint_id.is_some() {
+        player.respawn_point
+    } else {
+        spawn_center(level)
+    };
+    transform.translation = spawn;
     player.velocity = Vec3::ZERO;
     player.on_ground = false;
     player.coyote = 0.0;
@@ -199,6 +212,18 @@ pub fn reset_player(
     player.grip_cooldown = 0.0;
     player.grip_time = 0.0;
     *move_state = MoveState::default();
+}
+
+pub fn reset_player_run(
+    transform: &mut Transform,
+    player: &mut Player,
+    move_state: &mut MoveState,
+    vis: &mut Visibility,
+    level: &LevelDocument,
+) {
+    player.respawn_point = spawn_center(level);
+    player.checkpoint_id = None;
+    respawn_player(transform, player, move_state, vis, level);
 }
 
 pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
@@ -677,7 +702,7 @@ pub fn play_hazard_goal(
             if hit_hazard || fell_off || out_of_bounds {
                 ui.deaths += 1;
             }
-            reset_player(
+            respawn_player(
                 &mut transform,
                 &mut player,
                 &mut move_state,
@@ -698,7 +723,7 @@ pub fn sync_mode(
     }
     for (mut transform, mut player, mut move_state, mut vis) in &mut q {
         match *mode {
-            MakerMode::Play => reset_player(
+            MakerMode::Play => reset_player_run(
                 &mut transform,
                 &mut player,
                 &mut move_state,

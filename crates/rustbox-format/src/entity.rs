@@ -14,6 +14,7 @@ pub enum EntityKind {
     Prowler,
     TriggerOrb,
     RelayGate,
+    Checkpoint,
 }
 
 impl EntityKind {
@@ -26,6 +27,7 @@ impl EntityKind {
             Self::Prowler => "Prowler",
             Self::TriggerOrb => "Trigger Orb",
             Self::RelayGate => "Relay Gate",
+            Self::Checkpoint => "Checkpoint",
         }
     }
 }

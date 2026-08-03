@@ -46,6 +46,7 @@ pub const KIND_DRIFT_PLATE: u32 = 1 << 3;
 pub const KIND_PROWLER: u32 = 1 << 4;
 pub const KIND_TRIGGER_ORB: u32 = 1 << 5;
 pub const KIND_RELAY_GATE: u32 = 1 << 6;
+pub const KIND_CHECKPOINT: u32 = 1 << 7;
 
 pub fn kind_flag(kind: EntityKind) -> u32 {
     match kind {
@@ -56,6 +57,7 @@ pub fn kind_flag(kind: EntityKind) -> u32 {
         EntityKind::Prowler => KIND_PROWLER,
         EntityKind::TriggerOrb => KIND_TRIGGER_ORB,
         EntityKind::RelayGate => KIND_RELAY_GATE,
+        EntityKind::Checkpoint => KIND_CHECKPOINT,
     }
 }
 

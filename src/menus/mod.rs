@@ -160,6 +160,8 @@ pub enum UiAction {
     OnlineCycleSort,
     LevelInfoOpen,
     LevelInfoFocus(u8),
+    LevelInfoCycleClearCondition,
+    LevelInfoTimeLimitDelta(i32),
     LevelInfoToggleTag(LevelTag),
     LevelInfoSave,
     LevelInfoClose,
@@ -905,7 +907,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 7] = [
+    let items: [(u8, RColor); 8] = [
         (0, col(255, 215, 70)),
         (1, col(90, 190, 255)),
         (2, col(190, 90, 230)),
@@ -913,6 +915,7 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (4, col(215, 55, 90)),
         (5, col(75, 230, 190)),
         (6, col(110, 215, 110)),
+        (7, col(240, 240, 255)),
     ];
     let a_rot = actions.clone();
     let mut row = Row(Modifier::new().gap(6.0));
@@ -929,7 +932,7 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         icon_label(Symbols::ROTATE_RIGHT, "F".into()),
         move || push_ui(&a_rot, UiAction::MakerRotateBrush),
     ));
-    if st.selected_entity >= 5 {
+    if matches!(st.selected_entity, 5 | 6) {
         let a_ch = actions.clone();
         let label = if st.selected_entity == 5 {
             t(&st.translations, "toolbar-trigger", "Trigger Orb")
@@ -999,6 +1002,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::Glimmer => ("maker-ent-glimmer", "Glimmer"),
             EntityKind::TriggerOrb => ("toolbar-trigger", "Trigger Orb"),
             EntityKind::RelayGate => ("toolbar-gate", "Relay Gate"),
+            EntityKind::Checkpoint => ("toolbar-checkpoint", "Checkpoint"),
         };
         body.push(
             RText(t(tr, label_key, label_fb))
@@ -1018,23 +1022,26 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         );
         body.push(spacer(6.0));
 
-        let (param_key, param_fb, step) = match e.kind {
-            EntityKind::Glimmer => ("inspector-value", "Value", 0.5),
-            EntityKind::LaunchPad => ("inspector-impulse", "Impulse", 0.5),
-            EntityKind::Seal => ("inspector-glimmers", "Glimmers", 1.0),
-            EntityKind::DriftPlate => ("inspector-period", "Period", 0.5),
-            EntityKind::Prowler => ("inspector-speed", "Speed", 0.5),
-            EntityKind::TriggerOrb => ("inspector-cooldown", "Cooldown", 0.5),
-            EntityKind::RelayGate => ("inspector-duration", "Duration", 0.5),
-        };
-        let a_minus = actions.clone();
-        let a_plus = actions.clone();
-        body.push(stepper_row(
-            t(tr, param_key, param_fb),
-            format!("{:.1}", e.param),
-            move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
-            move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
-        ));
+        if !matches!(e.kind, EntityKind::Checkpoint) {
+            let (param_key, param_fb, step) = match e.kind {
+                EntityKind::Glimmer => ("inspector-value", "Value", 0.5),
+                EntityKind::LaunchPad => ("inspector-impulse", "Impulse", 0.5),
+                EntityKind::Seal => ("inspector-glimmers", "Glimmers", 1.0),
+                EntityKind::DriftPlate => ("inspector-period", "Period", 0.5),
+                EntityKind::Prowler => ("inspector-speed", "Speed", 0.5),
+                EntityKind::TriggerOrb => ("inspector-cooldown", "Cooldown", 0.5),
+                EntityKind::RelayGate => ("inspector-duration", "Duration", 0.5),
+                EntityKind::Checkpoint => unreachable!(),
+            };
+            let a_minus = actions.clone();
+            let a_plus = actions.clone();
+            body.push(stepper_row(
+                t(tr, param_key, param_fb),
+                format!("{:.1}", e.param),
+                move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
+                move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
+            ));
+        }
 
         if matches!(e.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
             let a_minus = actions.clone();
@@ -2905,6 +2912,49 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         .child(height_plus)
         .child(height_auto_btn);
 
+    let cond_label = match st.info_clear_condition {
+        crate::maker::level::ClearCondition::ReachGoal => "Reach Goal".to_string(),
+        crate::maker::level::ClearCondition::CollectAllGlimmers => {
+            "Collect All Glimmers".to_string()
+        }
+        crate::maker::level::ClearCondition::DefeatAllProwlers => "Defeat All Prowlers".to_string(),
+        crate::maker::level::ClearCondition::NoDeath => "No Death".to_string(),
+        crate::maker::level::ClearCondition::TimeLimitMs(ms) => {
+            format!("Time Limit · {}:{:02}", ms / 60_000, (ms / 1_000) % 60)
+        }
+    };
+
+    let a_cond = actions.clone();
+    let condition_row =
+        Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child(mk_pill_button(
+            RText(format!("Condition: {cond_label}"))
+                .size(12.0)
+                .color(RColor::WHITE),
+            move || push(&a_cond, UiAction::LevelInfoCycleClearCondition),
+        ));
+
+    let limit_label = match st.info_clear_condition {
+        crate::maker::level::ClearCondition::TimeLimitMs(ms) => {
+            format!(
+                "  {}:{:02}.{:03}  ",
+                ms / 60_000,
+                (ms / 1_000) % 60,
+                ms % 1_000
+            )
+        }
+        _ => "  Only used by Time Limit  ".to_string(),
+    };
+    let a_tup = actions.clone();
+    let a_tdn = actions.clone();
+    let time_row = Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER))
+        .child(mk_button_sm("-", move || {
+            push(&a_tdn, UiAction::LevelInfoTimeLimitDelta(-15))
+        }))
+        .child(RText(limit_label).size(12.0).color(col(200, 200, 210)))
+        .child(mk_button_sm("+", move || {
+            push(&a_tup, UiAction::LevelInfoTimeLimitDelta(15))
+        }));
+
     let stats = format!(
         "Blocks: {}   ·   Entities: {}",
         st.info_blocks, st.info_entities
@@ -2947,6 +2997,16 @@ fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(preset_row)
     .child(spacer(8.0))
     .child(settings_row)
+    .child(spacer(8.0))
+    .child(
+        RText("Cycle the level’s win rule. Time limit uses ±15s below.")
+            .size(11.0)
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(condition_row)
+    .child(spacer(8.0))
+    .child(time_row)
     .child(spacer(12.0))
     .child(
         RText("Type size: shrink from auto box, grow to enlarge.")

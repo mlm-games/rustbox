@@ -260,6 +260,7 @@ pub struct SharedUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
+    pub info_clear_condition: crate::maker::level::ClearCondition,
     // Level Settings (mirrors `LevelDocument` boundary / water on open).
     pub info_preset: Option<crate::maker::level::BoundaryPreset>,
     pub info_water: Option<i32>,
@@ -360,6 +361,7 @@ impl Default for SharedUi {
             info_description: String::new(),
             info_tags: Vec::new(),
             info_focus: 0,
+            info_clear_condition: crate::maker::level::ClearCondition::ReachGoal,
             info_preset: None,
             info_water: None,
             info_size: [16, 12, 16],
@@ -530,6 +532,7 @@ fn sync_shared_ui(
         ui.info_description = m.info_description.clone();
         ui.info_tags = m.info_tags.clone();
         ui.info_focus = m.info_focus;
+        ui.info_clear_condition = m.info_clear_condition;
         ui.info_preset = m.info_preset;
         ui.info_water = m.info_water;
         ui.info_size = m.info_size;
@@ -1034,6 +1037,28 @@ fn process_ui_actions(
                     }
                 }
             }
+            UiAction::LevelInfoCycleClearCondition => {
+                if let Some(ref mut m) = maker_ui {
+                    use crate::maker::level::ClearCondition::*;
+                    m.info_clear_condition = match m.info_clear_condition {
+                        ReachGoal => CollectAllGlimmers,
+                        CollectAllGlimmers => DefeatAllProwlers,
+                        DefeatAllProwlers => NoDeath,
+                        NoDeath => TimeLimitMs(60_000),
+                        TimeLimitMs(_) => ReachGoal,
+                    };
+                }
+            }
+            UiAction::LevelInfoTimeLimitDelta(delta_secs) => {
+                if let Some(ref mut m) = maker_ui {
+                    if let crate::maker::level::ClearCondition::TimeLimitMs(ms) =
+                        &mut m.info_clear_condition
+                    {
+                        let next = (*ms as i64 + delta_secs as i64 * 1000).max(5_000);
+                        *ms = next as u32;
+                    }
+                }
+            }
             UiAction::LevelInfoSave => {
                 if let Some(ref mut m) = maker_ui {
                     m.commands.push(UiCommand::SaveMetadata);
@@ -1220,6 +1245,7 @@ fn process_ui_actions(
                         4 => EntityKind::Prowler,
                         5 => EntityKind::TriggerOrb,
                         6 => EntityKind::RelayGate,
+                        7 => EntityKind::Checkpoint,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));

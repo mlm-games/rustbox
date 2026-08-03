@@ -17,6 +17,7 @@ impl EntityKindColor for EntityKind {
             Self::Prowler => Color::srgb(0.85, 0.2, 0.35),
             Self::TriggerOrb => Color::srgb(0.3, 0.9, 0.75),
             Self::RelayGate => Color::srgb(0.45, 0.85, 0.45),
+            Self::Checkpoint => Color::srgb(0.95, 0.95, 1.0),
         }
     }
 }
@@ -65,6 +66,7 @@ impl EntityDataExt for EntityData {
             EntityKind::Prowler => (2.5, None),
             EntityKind::TriggerOrb => (1.0, None),
             EntityKind::RelayGate => (3.0, None),
+            EntityKind::Checkpoint => (0.0, None),
         };
         EntityData {
             id,

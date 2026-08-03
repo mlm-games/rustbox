@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockKind, BlockShape};
 use crate::entity::EntityData;
-use crate::level::{BlockData, BoundaryConfig, LevelData, LevelTag, Theme};
+use crate::level::{BlockData, BoundaryConfig, ClearCondition, LevelData, LevelTag, Theme};
 use crate::track::TrackData;
 
-pub const FORMAT_VERSION: u32 = 4;
+pub const FORMAT_VERSION: u32 = 5;
 
 /// Upper bound for inflating untrusted levels (tiny compressed input must not
 /// explode into gigabytes of memory).
@@ -21,10 +21,62 @@ pub const MAX_TRACKS: usize = 64;
 pub const MAX_TRACK_POINTS: usize = 512;
 pub const MAX_COORD: i32 = 512;
 
+fn level_format_entities() -> u32 {
+    1
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct LevelFile {
     pub version: u32,
     pub level: LevelData,
+}
+
+/// Layout of version-4 levels (before clear conditions / checkpoints were added).
+#[derive(Serialize, Deserialize)]
+pub struct LevelFileV4 {
+    pub version: u32,
+    pub level: LevelDataV4,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelDataV4 {
+    pub name: String,
+    pub spawn: [i32; 3],
+    pub blocks: Vec<BlockData>,
+    #[serde(default)]
+    pub entities: Vec<EntityData>,
+    #[serde(default)]
+    pub tracks: Vec<TrackData>,
+    #[serde(default = "level_format_entities")]
+    pub entities_version: u32,
+    #[serde(default)]
+    pub author_time: Option<u32>,
+    #[serde(default)]
+    pub author_deaths: u32,
+    #[serde(default)]
+    pub record_ms: Option<u32>,
+    #[serde(default)]
+    pub is_verified: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<LevelTag>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub size: Option<[i32; 3]>,
+    #[serde(default)]
+    pub water_level: Option<i32>,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub boundary: BoundaryConfig,
+    #[serde(default)]
+    pub secret_stars: u8,
+    #[serde(default)]
+    pub coin_star: bool,
 }
 
 /// Layout of version-3 levels (before times moved to milliseconds).
@@ -124,6 +176,32 @@ fn secs_to_ms(t: Option<f32>) -> Option<u32> {
     t.map(|s| (s * 1000.0).round() as u32)
 }
 
+pub fn upgrade_v4(old: LevelDataV4) -> LevelData {
+    LevelData {
+        name: old.name,
+        spawn: old.spawn,
+        blocks: old.blocks,
+        entities: old.entities,
+        tracks: old.tracks,
+        entities_version: old.entities_version,
+        author_time: old.author_time,
+        author_deaths: old.author_deaths,
+        record_ms: old.record_ms,
+        clear_condition: ClearCondition::ReachGoal,
+        is_verified: old.is_verified,
+        description: old.description,
+        tags: old.tags,
+        author: old.author,
+        created_at: old.created_at,
+        size: old.size,
+        water_level: old.water_level,
+        theme: old.theme,
+        boundary: old.boundary,
+        secret_stars: old.secret_stars,
+        coin_star: old.coin_star,
+    }
+}
+
 pub fn upgrade_v3(old: LevelDataV3) -> LevelData {
     LevelData {
         name: old.name,
@@ -135,6 +213,7 @@ pub fn upgrade_v3(old: LevelDataV3) -> LevelData {
         author_time: secs_to_ms(old.author_time),
         author_deaths: old.author_deaths,
         record_ms: secs_to_ms(old.record_seconds),
+        clear_condition: ClearCondition::ReachGoal,
         is_verified: old.is_verified,
         description: old.description,
         tags: old.tags,
@@ -160,6 +239,7 @@ pub fn upgrade_v3pre(old: LevelDataV3Pre) -> LevelData {
         author_time: secs_to_ms(old.author_time),
         author_deaths: old.author_deaths,
         record_ms: None,
+        clear_condition: ClearCondition::ReachGoal,
         is_verified: old.is_verified,
         description: old.description,
         tags: old.tags,
@@ -267,6 +347,7 @@ fn upgrade_v2(old: LevelDataV2) -> LevelData {
         author_time: secs_to_ms(old.author_time),
         author_deaths: old.author_deaths,
         record_ms: None,
+        clear_condition: ClearCondition::ReachGoal,
         is_verified: old.is_verified,
         description: old.description,
         tags: old.tags,
@@ -324,11 +405,10 @@ pub fn decode_level(compressed: &[u8]) -> anyhow::Result<LevelData> {
         u32::from_le_bytes(head)
     };
     match version {
-        4 => {
-            let file: LevelFile =
-                bincode::deserialize(&bytes).map_err(|_| anyhow::anyhow!("corrupted level"))?;
-            Ok(file.level)
-        }
+        5 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
+        4 => Ok(upgrade_v4(
+            bincode::deserialize::<LevelFileV4>(&bytes)?.level,
+        )),
         3 => {
             // v3 levels exist in two layouts (before/after record_seconds).
             if let Ok(old) = bincode::deserialize::<LevelFileV3>(&bytes) {
@@ -423,6 +503,11 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
             bail!("water level out of bounds");
         }
     }
+    if let ClearCondition::TimeLimitMs(ms) = level.clear_condition
+        && ms == 0
+    {
+        bail!("time limit must be greater than zero");
+    }
     Ok(())
 }
 
@@ -463,6 +548,7 @@ mod tests {
             author_time: None,
             author_deaths: 0,
             record_ms: None,
+            clear_condition: ClearCondition::ReachGoal,
             is_verified: true,
             description: String::new(),
             tags: vec![],
@@ -557,5 +643,34 @@ mod tests {
         assert!(!lvl.blocks[0].waterlogged);
         assert_eq!(lvl.theme, Theme::Grass);
         assert_eq!(lvl.water_level, None);
+    }
+
+    #[test]
+    fn upgrade_v4_defaults_clear_condition() {
+        let old = LevelDataV4 {
+            name: "Old".into(),
+            spawn: [0, 1, 0],
+            blocks: vec![],
+            entities: vec![],
+            tracks: vec![],
+            entities_version: 1,
+            author_time: None,
+            author_deaths: 0,
+            record_ms: None,
+            is_verified: false,
+            description: String::new(),
+            tags: vec![],
+            author: String::new(),
+            created_at: 0,
+            size: None,
+            water_level: None,
+            theme: Theme::Grass,
+            boundary: BoundaryConfig::default(),
+            secret_stars: 0,
+            coin_star: false,
+        };
+
+        let upgraded = upgrade_v4(old);
+        assert_eq!(upgraded.clear_condition, ClearCondition::ReachGoal);
     }
 }

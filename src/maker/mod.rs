@@ -182,6 +182,7 @@ impl Plugin for MakerPlugin {
                         .after(player::player_controller)
                         .after(entities_runtime::move_prowlers)
                         .run_if(in_play),
+                    entities_runtime::touch_checkpoints.run_if(in_play),
                     entities_runtime::trigger_orbs.run_if(in_play),
                     entities_runtime::update_relay_gates
                         .after(entities_runtime::trigger_orbs)

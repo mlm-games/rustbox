@@ -1311,6 +1311,7 @@ pub fn draw_selected_entity_gizmo(
         EntityKind::Prowler => Vec3::new(0.5, 0.5, 0.5),
         EntityKind::TriggerOrb => Vec3::splat(0.45),
         EntityKind::RelayGate => Vec3::new(0.6, 1.1, 0.4),
+        EntityKind::Checkpoint => Vec3::splat(0.45),
     };
     let color = Color::srgb(0.3, 0.8, 1.0);
     let min = center - half;

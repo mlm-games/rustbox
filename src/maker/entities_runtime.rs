@@ -18,7 +18,7 @@ use super::collision::is_solid;
 use super::entity_data::{EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
-use super::player::{ActionState, JUMP_SPEED, MoveState, Player, spawn_center};
+use super::player::{ActionState, JUMP_SPEED, MoveState, Player, respawn_player};
 use super::track::{TrackDataExt, TrackId};
 use super::ui_bridge::MakerUi;
 #[cfg(feature = "physics")]
@@ -72,6 +72,12 @@ pub struct Prowler {
     pub base_y: f32,
     pub prev: Vec3,
     pub on_track: bool,
+}
+
+#[derive(Component)]
+pub struct Checkpoint {
+    pub active: bool,
+    pub respawn: Vec3,
 }
 
 #[derive(Component)]
@@ -148,7 +154,11 @@ pub fn setup_entity_assets(
     asset_server: Res<AssetServer>,
 ) {
     let mut mats = HashMap::new();
-    for kind in [EntityKind::Glimmer, EntityKind::LaunchPad] {
+    for kind in [
+        EntityKind::Glimmer,
+        EntityKind::LaunchPad,
+        EntityKind::Checkpoint,
+    ] {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
         m.metallic = 0.2;
@@ -239,6 +249,7 @@ fn root_y_off(kind: EntityKind) -> f32 {
         EntityKind::Prowler => 0.4,
         EntityKind::TriggerOrb => 1.0,
         EntityKind::RelayGate => 1.0,
+        EntityKind::Checkpoint => 0.55,
     }
 }
 
@@ -257,7 +268,7 @@ fn visual_for(
         EntityKind::Prowler => (0.34, -0.4),
         EntityKind::TriggerOrb => (0.8, -1.0),
         EntityKind::RelayGate => (0.5, -1.0),
-        EntityKind::LaunchPad => return None, // stays a primitive cylinder
+        EntityKind::LaunchPad | EntityKind::Checkpoint => return None,
     };
     let scene = assets.scenes[&kind].clone();
     let material = match kind {
@@ -553,18 +564,35 @@ pub fn reconcile_entities(
             });
             root
         } else {
-            commands
-                .spawn((
-                    tf,
-                    Mesh3d(assets.pad_mesh.clone()),
-                    MeshMaterial3d(assets.mats[&EntityKind::LaunchPad].clone()),
-                    LevelEnt {
-                        id: data.id,
-                        kind: data.kind,
-                    },
-                    MakerCleanup,
-                ))
-                .id()
+            match data.kind {
+                EntityKind::LaunchPad => commands
+                    .spawn((
+                        tf,
+                        Mesh3d(assets.pad_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::LaunchPad].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::Checkpoint => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.55)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Checkpoint].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                _ => unreachable!("non-visual entity kind without primitive fallback"),
+            }
         };
 
         let ecmds = &mut commands.entity(eid);
@@ -661,6 +689,19 @@ pub fn reconcile_entities(
                     ecmds.insert((RigidBody::Fixed, Collider::cuboid(0.5, 1.0, 0.2)));
                 }
             }
+            EntityKind::Checkpoint => {
+                let cell = data.cell_i();
+                ecmds.insert(Checkpoint {
+                    active: false,
+                    respawn: Vec3::new(
+                        cell.x as f32 + 0.5,
+                        cell.y as f32 + 1.4,
+                        cell.z as f32 + 0.5,
+                    ),
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
         }
 
         if let Some(track_id) = data.track {
@@ -707,6 +748,45 @@ pub fn tick_launch_pads_cooldown(time: Res<Time>, mut pads: Query<&mut LaunchPad
     for mut pad in &mut pads {
         pad.cooldown = (pad.cooldown - dt).max(0.0);
     }
+}
+
+pub fn touch_checkpoints(
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    mut checkpoints: Query<(&LevelEnt, &Transform, &mut Checkpoint)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+
+    let mut hit: Option<(LevelEntityId, Vec3)> = None;
+
+    for (ent, tf, cp) in &mut checkpoints {
+        if pt.translation.distance(tf.translation) < 1.2 {
+            if player.checkpoint_id != Some(ent.id) {
+                hit = Some((ent.id, cp.respawn));
+            }
+            break;
+        }
+    }
+
+    let Some((new_id, respawn)) = hit else {
+        return;
+    };
+
+    player.checkpoint_id = Some(new_id);
+    player.respawn_point = respawn;
+
+    for (ent, _, mut cp) in &mut checkpoints {
+        cp.active = ent.id == new_id;
+    }
+
+    ui.set_status("Checkpoint reached!");
 }
 
 pub fn collect_glimmers(
@@ -974,13 +1054,23 @@ pub fn prowler_touch(
     mut trauma: ResMut<Trauma>,
     mut flash: ResMut<FlashWhite>,
     mut map: ResMut<EntityEntities>,
-    mut player_q: Query<(Entity, &mut Transform, &mut Player), Without<Prowler>>,
+    mut player_q: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut Player,
+            &mut MoveState,
+            &mut Visibility,
+        ),
+        Without<Prowler>,
+    >,
     prowlers: Query<(Entity, &Transform, &LevelEnt), (With<Prowler>, Without<Player>)>,
 ) {
     if *mode != MakerMode::Play {
         return;
     }
-    let Ok((player_e, mut pt, mut player)) = player_q.single_mut() else {
+
+    let Ok((player_e, mut pt, mut player, mut move_state, mut vis)) = player_q.single_mut() else {
         return;
     };
 
@@ -1010,10 +1100,8 @@ pub fn prowler_touch(
             let total = ui.score;
             ui.set_status(format!("Prowler defeated! +{total}"));
         } else {
-            pt.translation = spawn_center(&level);
-            player.velocity = Vec3::ZERO;
-            player.on_ground = false;
             ui.deaths += 1;
+            respawn_player(&mut pt, &mut player, &mut move_state, &mut vis, &level);
             ScreenEffects::add_trauma(&mut trauma, 0.35);
             ScreenEffects::flash_white(&mut flash, 0.15);
             ui.set_status("Ouch!");

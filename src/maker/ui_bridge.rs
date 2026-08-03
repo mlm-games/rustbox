@@ -144,6 +144,7 @@ pub struct MakerUi {
     pub info_description: String,
     pub info_tags: Vec<crate::maker::level::LevelTag>,
     pub info_focus: u8,
+    pub info_clear_condition: crate::maker::level::ClearCondition,
     /// Which boundary preset the current flags match (`None` = custom combo).
     pub info_preset: Option<crate::maker::level::BoundaryPreset>,
     pub info_water: Option<i32>,
@@ -267,10 +268,7 @@ pub fn reconcile_online_nav(ui: &mut MakerUi) {
 
 /// Repose focus is only bridged while the browse/online overlays are visible.
 /// When they close, force keyboard capture off so gameplay/editor input resumes.
-pub fn clear_text_capture_when_not_browsing(
-    overlay: Res<OverlayMenu>,
-    mut ui: ResMut<MakerUi>,
-) {
+pub fn clear_text_capture_when_not_browsing(overlay: Res<OverlayMenu>, mut ui: ResMut<MakerUi>) {
     if !matches!(*overlay, OverlayMenu::Browse | OverlayMenu::Online) {
         ui.keyboard_captured = false;
     }
@@ -305,6 +303,7 @@ pub fn push_ui_state(
         EntityKind::Prowler => 4,
         EntityKind::TriggerOrb => 5,
         EntityKind::RelayGate => 6,
+        EntityKind::Checkpoint => 7,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,
@@ -438,7 +437,7 @@ pub fn drain_ui_commands(
                 ui.deaths = 0;
                 *mode = MakerMode::Play;
                 for (mut tf, mut player, mut move_state, mut vis) in &mut players {
-                    super::player::reset_player(
+                    super::player::reset_player_run(
                         &mut tf,
                         &mut player,
                         &mut move_state,
@@ -562,6 +561,7 @@ pub fn drain_ui_commands(
                 ui.info_author = level.data.author.clone();
                 ui.info_description = level.data.description.clone();
                 ui.info_tags = level.data.tags.clone();
+                ui.info_clear_condition = level.data.clear_condition;
                 ui.info_focus = 0;
                 ui.info_preset = level.data.boundary.boundary_preset();
                 ui.info_water = level.data.water_level;
@@ -628,6 +628,7 @@ pub fn drain_ui_commands(
                 level.data.author = ui.info_author.clone();
                 level.data.description = ui.info_description.clone();
                 level.data.tags = ui.info_tags.clone();
+                level.data.clear_condition = ui.info_clear_condition;
                 if level.data.created_at == 0 {
                     level.data.created_at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)

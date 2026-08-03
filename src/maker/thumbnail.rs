@@ -389,6 +389,7 @@ mod tests {
             author_time: None,
             author_deaths: 0,
             record_ms: None,
+            clear_condition: crate::maker::level::ClearCondition::ReachGoal,
             is_verified: true,
             description: String::new(),
             tags: vec![],

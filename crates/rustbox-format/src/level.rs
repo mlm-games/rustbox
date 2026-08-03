@@ -192,6 +192,30 @@ impl Default for BoundaryConfig {
     }
 }
 
+/// What the player must do for a level to count as cleared. `ReachGoal` is the
+/// classic rule; the others gate the goal touch in `win.rs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ClearCondition {
+    #[default]
+    ReachGoal,
+    CollectAllGlimmers,
+    DefeatAllProwlers,
+    NoDeath,
+    TimeLimitMs(u32),
+}
+
+impl ClearCondition {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ReachGoal => "Reach Goal",
+            Self::CollectAllGlimmers => "Collect All Glimmers",
+            Self::DefeatAllProwlers => "Defeat All Prowlers",
+            Self::NoDeath => "No Death",
+            Self::TimeLimitMs(_) => "Time Limit",
+        }
+    }
+}
+
 impl BoundaryConfig {
     /// The preset whose flags match this config, ignoring the independent
     /// `height`. `None` when the flags are a custom combination.
@@ -230,6 +254,9 @@ pub struct LevelData {
     /// Fastest clear time in milliseconds held by a **non-author** player.
     #[serde(default)]
     pub record_ms: Option<u32>,
+    /// What the player must do to clear the level.
+    #[serde(default)]
+    pub clear_condition: ClearCondition,
     #[serde(default)]
     pub is_verified: bool,
     #[serde(default)]
