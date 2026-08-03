@@ -860,7 +860,8 @@ fn process_ui_actions(
             }
             UiAction::OnlinePreview(id) => {
                 if let Some(ref mut m) = maker_ui {
-                    if m.online_previews.contains_key(&id) || m.online_preview_pending.contains(&id) {
+                    if m.online_previews.contains_key(&id) || m.online_preview_pending.contains(&id)
+                    {
                         continue;
                     }
 
