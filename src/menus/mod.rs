@@ -31,7 +31,7 @@ use repose_ui::{
 
 use crate::app::{AppState, OverlayMenu, SharedUi};
 use crate::maker::catalog::{LevelSourceKind, LevelSummary, difficulty_label};
-use crate::maker::entity_data::EntityKind;
+use crate::maker::entity_data::{ContainedItem, EntityKind};
 use crate::maker::level::LevelTag;
 use crate::maker::thumbnail::ThumbPreview;
 use crate::maker::track::TrackMode;
@@ -117,6 +117,8 @@ pub enum UiAction {
     MakerInspParamDelta(f32),
     MakerInspYawDelta(f32),
     MakerInspLinkDelta(i32),
+    MakerInspCycleContents,
+    MakerInspContentsDelta(i32),
     MakerInspTrackCycle,
     MakerInspDeleteEntity,
     MakerInspTrackModeToggle,
@@ -1078,6 +1080,28 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
                 move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
             ));
+        }
+
+        if e.kind.supports_contents() {
+            let a_cycle = actions.clone();
+            let a_cycle2 = actions.clone();
+            body.push(stepper_row(
+                t(tr, "inspector-contents", "Contains"),
+                e.contents.label(),
+                move || push_ui(&a_cycle, UiAction::MakerInspCycleContents),
+                move || push_ui(&a_cycle2, UiAction::MakerInspCycleContents),
+            ));
+
+            if matches!(e.contents, ContainedItem::Glimmers(_)) {
+                let a_minus = actions.clone();
+                let a_plus = actions.clone();
+                body.push(stepper_row(
+                    t(tr, "inspector-count", "Count"),
+                    e.contents.label(),
+                    move || push_ui(&a_minus, UiAction::MakerInspContentsDelta(-1)),
+                    move || push_ui(&a_plus, UiAction::MakerInspContentsDelta(1)),
+                ));
+            }
         }
 
         if matches!(

@@ -182,7 +182,15 @@ pub fn on_mode_changed(
             .data
             .entities
             .iter()
-            .filter(|e| e.kind == super::entity_data::EntityKind::Glimmer)
-            .count() as u32;
+            .map(|e| {
+                if e.kind == super::entity_data::EntityKind::Glimmer {
+                    1
+                } else if let super::entity_data::ContainedItem::Glimmers(n) = e.contents {
+                    n as u32
+                } else {
+                    0
+                }
+            })
+            .sum();
     }
 }

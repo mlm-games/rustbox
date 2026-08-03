@@ -2,11 +2,11 @@ use anyhow::bail;
 use serde::{Deserialize, Serialize};
 
 use crate::block::{BlockKind, BlockShape};
-use crate::entity::EntityData;
+use crate::entity::{ContainedItem, EntityData, EntityKind};
 use crate::level::{BlockData, BoundaryConfig, ClearCondition, LevelData, LevelTag, Theme};
 use crate::track::TrackData;
 
-pub const FORMAT_VERSION: u32 = 5;
+pub const FORMAT_VERSION: u32 = 6;
 
 /// Upper bound for inflating untrusted levels (tiny compressed input must not
 /// explode into gigabytes of memory).
@@ -23,6 +23,42 @@ pub const MAX_COORD: i32 = 512;
 
 fn level_format_entities() -> u32 {
     1
+}
+
+/// Entity layout used by format versions 2..=5 (before `contents`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EntityDataV5 {
+    pub id: u32,
+    pub kind: EntityKind,
+    pub cell: [i32; 3],
+    #[serde(default)]
+    pub yaw_deg: f32,
+    #[serde(default = "default_param_v5")]
+    pub param: f32,
+    #[serde(default)]
+    pub cell_b: Option<[i32; 3]>,
+    #[serde(default)]
+    pub track: Option<crate::track::TrackId>,
+    #[serde(default)]
+    pub link: u32,
+}
+
+fn default_param_v5() -> f32 {
+    1.0
+}
+
+pub fn upgrade_entity_v5(old: EntityDataV5) -> EntityData {
+    EntityData {
+        id: old.id,
+        kind: old.kind,
+        cell: old.cell,
+        yaw_deg: old.yaw_deg,
+        param: old.param,
+        cell_b: old.cell_b,
+        track: old.track,
+        link: old.link,
+        contents: ContainedItem::None,
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,7 +80,7 @@ pub struct LevelDataV4 {
     pub spawn: [i32; 3],
     pub blocks: Vec<BlockData>,
     #[serde(default)]
-    pub entities: Vec<EntityData>,
+    pub entities: Vec<EntityDataV5>,
     #[serde(default)]
     pub tracks: Vec<TrackData>,
     #[serde(default = "level_format_entities")]
@@ -79,6 +115,84 @@ pub struct LevelDataV4 {
     pub coin_star: bool,
 }
 
+/// Layout of version-5 levels. `LevelData` gained no fields in v6 — only its
+/// entities changed shape (each `EntityData` gained `contents`), so this
+/// snapshot differs from `LevelData` purely by its entity type.
+#[derive(Serialize, Deserialize)]
+pub struct LevelFileV5 {
+    pub version: u32,
+    pub level: LevelDataV5,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelDataV5 {
+    pub name: String,
+    pub spawn: [i32; 3],
+    pub blocks: Vec<BlockData>,
+    #[serde(default)]
+    pub entities: Vec<EntityDataV5>,
+    #[serde(default)]
+    pub tracks: Vec<TrackData>,
+    #[serde(default = "level_format_entities")]
+    pub entities_version: u32,
+    #[serde(default)]
+    pub author_time: Option<u32>,
+    #[serde(default)]
+    pub author_deaths: u32,
+    #[serde(default)]
+    pub record_ms: Option<u32>,
+    #[serde(default)]
+    pub clear_condition: ClearCondition,
+    #[serde(default)]
+    pub is_verified: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<LevelTag>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub size: Option<[i32; 3]>,
+    #[serde(default)]
+    pub water_level: Option<i32>,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub boundary: BoundaryConfig,
+    #[serde(default)]
+    pub secret_stars: u8,
+    #[serde(default)]
+    pub coin_star: bool,
+}
+
+pub fn upgrade_v5(old: LevelDataV5) -> LevelData {
+    LevelData {
+        name: old.name,
+        spawn: old.spawn,
+        blocks: old.blocks,
+        entities: old.entities.into_iter().map(upgrade_entity_v5).collect(),
+        tracks: old.tracks,
+        entities_version: old.entities_version,
+        author_time: old.author_time,
+        author_deaths: old.author_deaths,
+        record_ms: old.record_ms,
+        clear_condition: old.clear_condition,
+        is_verified: old.is_verified,
+        description: old.description,
+        tags: old.tags,
+        author: old.author,
+        created_at: old.created_at,
+        size: old.size,
+        water_level: old.water_level,
+        theme: old.theme,
+        boundary: old.boundary,
+        secret_stars: old.secret_stars,
+        coin_star: old.coin_star,
+    }
+}
+
 /// Layout of version-3 levels (before times moved to milliseconds).
 #[derive(Serialize, Deserialize)]
 pub struct LevelFileV3 {
@@ -92,7 +206,7 @@ pub struct LevelDataV3 {
     pub spawn: [i32; 3],
     pub blocks: Vec<BlockData>,
     #[serde(default)]
-    pub entities: Vec<EntityData>,
+    pub entities: Vec<EntityDataV5>,
     #[serde(default)]
     pub tracks: Vec<TrackData>,
     #[serde(default)]
@@ -139,7 +253,7 @@ pub struct LevelDataV3Pre {
     pub spawn: [i32; 3],
     pub blocks: Vec<BlockData>,
     #[serde(default)]
-    pub entities: Vec<EntityData>,
+    pub entities: Vec<EntityDataV5>,
     #[serde(default)]
     pub tracks: Vec<TrackData>,
     #[serde(default)]
@@ -181,7 +295,7 @@ pub fn upgrade_v4(old: LevelDataV4) -> LevelData {
         name: old.name,
         spawn: old.spawn,
         blocks: old.blocks,
-        entities: old.entities,
+        entities: old.entities.into_iter().map(upgrade_entity_v5).collect(),
         tracks: old.tracks,
         entities_version: old.entities_version,
         author_time: old.author_time,
@@ -207,7 +321,7 @@ pub fn upgrade_v3(old: LevelDataV3) -> LevelData {
         name: old.name,
         spawn: old.spawn,
         blocks: old.blocks,
-        entities: old.entities,
+        entities: old.entities.into_iter().map(upgrade_entity_v5).collect(),
         tracks: old.tracks,
         entities_version: old.entities_version,
         author_time: secs_to_ms(old.author_time),
@@ -233,7 +347,7 @@ pub fn upgrade_v3pre(old: LevelDataV3Pre) -> LevelData {
         name: old.name,
         spawn: old.spawn,
         blocks: old.blocks,
-        entities: old.entities,
+        entities: old.entities.into_iter().map(upgrade_entity_v5).collect(),
         tracks: old.tracks,
         entities_version: old.entities_version,
         author_time: secs_to_ms(old.author_time),
@@ -288,7 +402,7 @@ struct LevelDataV2 {
     spawn: [i32; 3],
     blocks: Vec<BlockDataV1>,
     #[serde(default)]
-    entities: Vec<EntityData>,
+    entities: Vec<EntityDataV5>,
     #[serde(default)]
     tracks: Vec<TrackData>,
     #[serde(default)]
@@ -323,7 +437,7 @@ struct LevelDataV1 {
     spawn: [i32; 3],
     blocks: Vec<BlockDataV1>,
     #[serde(default)]
-    entities: Vec<EntityData>,
+    entities: Vec<EntityDataV5>,
     #[serde(default)]
     tracks: Vec<TrackData>,
     #[serde(default)]
@@ -341,7 +455,7 @@ fn upgrade_v2(old: LevelDataV2) -> LevelData {
         name: old.name,
         spawn: old.spawn,
         blocks: old.blocks.into_iter().map(BlockDataV1::upgrade).collect(),
-        entities: old.entities,
+        entities: old.entities.into_iter().map(upgrade_entity_v5).collect(),
         tracks: old.tracks,
         entities_version: old.entities_version,
         author_time: secs_to_ms(old.author_time),
@@ -405,7 +519,10 @@ pub fn decode_level(compressed: &[u8]) -> anyhow::Result<LevelData> {
         u32::from_le_bytes(head)
     };
     match version {
-        5 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
+        6 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
+        5 => Ok(upgrade_v5(
+            bincode::deserialize::<LevelFileV5>(&bytes)?.level,
+        )),
         4 => Ok(upgrade_v4(
             bincode::deserialize::<LevelFileV4>(&bytes)?.level,
         )),
@@ -484,6 +601,22 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
         if !e.yaw_deg.is_finite() || !e.param.is_finite() {
             bail!("entity has a non-finite value");
         }
+        if e.contents != ContainedItem::None {
+            if !e.kind.supports_contents() {
+                bail!("{} cannot contain items", e.kind.label());
+            }
+            if e.kind == EntityKind::Crate && e.param < 0.5 {
+                bail!("an unbreakable crate contains an item that can never be reached");
+            }
+            if let ContainedItem::Glimmers(n) = e.contents
+                && n == 0
+            {
+                bail!("a container holds zero glimmers");
+            }
+            if e.contents == ContainedItem::Key && !(1..=9).contains(&e.link) {
+                bail!("a contained key needs its container on link channel 1-9");
+            }
+        }
     }
     for t in &level.tracks {
         if t.points.len() > MAX_TRACK_POINTS {
@@ -528,6 +661,11 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
             }
             _ => {}
         }
+
+        // Contained keys satisfy lock gates on the container's channel.
+        if e.contents == ContainedItem::Key && (1..=9).contains(&e.link) {
+            key_links[e.link as usize] += 1;
+        }
     }
 
     for ch in 1..=9 {
@@ -549,7 +687,7 @@ fn in_bounds(cell: &[i32; 3]) -> bool {
 mod tests {
     use super::*;
     use crate::block::{BlockKind, BlockShape};
-    use crate::entity::{EntityData, EntityKind};
+    use crate::entity::{ContainedItem, EntityData, EntityKind};
     use crate::level::BlockData;
 
     fn sample_level() -> LevelData {
@@ -572,6 +710,7 @@ mod tests {
                 cell_b: None,
                 track: None,
                 link: 0,
+                contents: ContainedItem::None,
             }],
             tracks: vec![],
             entities_version: 1,
@@ -702,5 +841,107 @@ mod tests {
 
         let upgraded = upgrade_v4(old);
         assert_eq!(upgraded.clear_condition, ClearCondition::ReachGoal);
+    }
+
+    #[test]
+    fn v6_contents_roundtrip() {
+        let mut level = sample_level();
+        level.entities.push(EntityData {
+            id: 99,
+            kind: EntityKind::Crate,
+            cell: [1, 1, 1],
+            yaw_deg: 0.0,
+            param: 1.0,
+            cell_b: None,
+            track: None,
+            link: 3,
+            contents: ContainedItem::Key,
+        });
+        let bytes = encode_level(&level).unwrap();
+        let back = decode_level(&bytes).unwrap();
+        assert_eq!(back.entities.last().unwrap().contents, ContainedItem::Key);
+        assert_eq!(back.entities.last().unwrap().link, 3);
+    }
+
+    #[test]
+    fn upgrade_v5_defaults_contents_to_none() {
+        let old = EntityDataV5 {
+            id: 1,
+            kind: EntityKind::Crate,
+            cell: [0, 0, 0],
+            yaw_deg: 0.0,
+            param: 1.0,
+            cell_b: None,
+            track: None,
+            link: 0,
+        };
+        assert_eq!(upgrade_entity_v5(old).contents, ContainedItem::None);
+    }
+
+    fn crate_with(contents: ContainedItem) -> EntityData {
+        EntityData {
+            id: 7,
+            kind: EntityKind::Crate,
+            cell: [1, 1, 1],
+            yaw_deg: 0.0,
+            param: 1.0,
+            cell_b: None,
+            track: None,
+            link: 1,
+            contents,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_bad_contents() {
+        let mut glimmer_in_key = sample_level();
+        glimmer_in_key.entities.push(EntityData {
+            id: 7,
+            kind: EntityKind::Glimmer,
+            cell: [1, 1, 1],
+            yaw_deg: 0.0,
+            param: 1.0,
+            cell_b: None,
+            track: None,
+            link: 0,
+            contents: ContainedItem::Key,
+        });
+        assert!(validate_level(&glimmer_in_key).is_err());
+
+        let mut unbreakable = sample_level();
+        unbreakable
+            .entities
+            .push(crate_with(ContainedItem::HealOrb));
+        if let Some(e) = unbreakable.entities.last_mut() {
+            e.param = 0.0;
+        }
+        assert!(validate_level(&unbreakable).is_err());
+
+        let mut zero = sample_level();
+        zero.entities.push(crate_with(ContainedItem::Glimmers(0)));
+        assert!(validate_level(&zero).is_err());
+
+        let mut unlinked_key = sample_level();
+        unlinked_key.entities.push(crate_with(ContainedItem::Key));
+        if let Some(e) = unlinked_key.entities.last_mut() {
+            e.link = 0;
+        }
+        assert!(validate_level(&unlinked_key).is_err());
+
+        // A contained key counts toward the lock gate's key requirement.
+        let mut crate_key = sample_level();
+        crate_key.entities.push(crate_with(ContainedItem::Key));
+        crate_key.entities.push(EntityData {
+            id: 8,
+            kind: EntityKind::LockGate,
+            cell: [2, 1, 1],
+            yaw_deg: 0.0,
+            param: 0.0,
+            cell_b: None,
+            track: None,
+            link: 1,
+            contents: ContainedItem::None,
+        });
+        assert!(validate_level(&crate_key).is_ok());
     }
 }

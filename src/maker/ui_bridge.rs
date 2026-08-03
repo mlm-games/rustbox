@@ -10,7 +10,7 @@ use super::block::{ALL_BLOCK_SHAPES, BlockKind};
 use super::campaign::{self, LevelSource};
 use super::catalog;
 use super::commands::{CommandHistory, EditCommand};
-use super::entity_data::{EntityData, EntityKind};
+use super::entity_data::{ContainedItem, EntityData, EntityKind};
 use super::level::{BoundaryPreset, LevelDocument};
 use super::mode::{
     ActiveLinkChannel, BlockBrush, BrushTab, InputCapture, MakerMode, MakerStats, PlaceYaw,
@@ -48,6 +48,8 @@ pub enum UiCommand {
     DeltaEntityParam(u32, f32),
     DeltaEntityYaw(u32, f32),
     DeltaEntityLink(u32, i32),
+    CycleEntityContents(u32),
+    DeltaEntityContents(u32, i32),
     CycleLinkChannel,
     CycleEntityTrack(u32),
     DeleteEntity(u32),
@@ -445,7 +447,10 @@ pub fn drain_ui_commands(
                 ui.goal_latched = false;
                 ui.play_timer = 0.0;
                 ui.deaths = 0;
+                ui.glimmers_collected = 0;
+                ui.score = 0;
                 *mode = MakerMode::Play;
+                level.entities_dirty = true;
                 for (mut tf, mut player, mut move_state, mut vis) in &mut players {
                     super::player::reset_player_run(
                         &mut tf,
@@ -714,6 +719,32 @@ pub fn drain_ui_commands(
                     let new = (old as i32 + delta).clamp(1, 9) as u32;
                     if new != old {
                         history.apply(&mut level, EditCommand::SetEntityLink { id, old, new });
+                    }
+                }
+            }
+            UiCommand::CycleEntityContents(id) => {
+                if let Some(e) = level.entity_by_id(id) {
+                    let old = e.contents;
+                    let new = match old {
+                        ContainedItem::None => ContainedItem::Glimmers(3),
+                        ContainedItem::Glimmers(_) => ContainedItem::Key,
+                        ContainedItem::Key => ContainedItem::HealOrb,
+                        ContainedItem::HealOrb => ContainedItem::SpeedRing,
+                        ContainedItem::SpeedRing => ContainedItem::None,
+                    };
+                    if new != old {
+                        history.apply(&mut level, EditCommand::SetEntityContents { id, old, new });
+                    }
+                }
+            }
+            UiCommand::DeltaEntityContents(id, delta) => {
+                if let Some(e) = level.entity_by_id(id)
+                    && let ContainedItem::Glimmers(n) = e.contents
+                {
+                    let old = e.contents;
+                    let new = ContainedItem::Glimmers((n as i32 + delta).clamp(1, 20) as u8);
+                    if new != old {
+                        history.apply(&mut level, EditCommand::SetEntityContents { id, old, new });
                     }
                 }
             }

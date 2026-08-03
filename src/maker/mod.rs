@@ -94,6 +94,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<rendering::WaterChunkEntities>()
             .init_resource::<EntityEntities>()
             .init_resource::<RuntimeSolids>()
+            .init_resource::<entities_runtime::DropIdCounter>()
             .init_resource::<player::MoveTuning>()
             .init_resource::<storage::LevelStorage>()
             .init_resource::<ui_bridge::MakerUi>()
@@ -187,6 +188,10 @@ impl Plugin for MakerPlugin {
                     entities_runtime::launch_cannons
                         .run_if(in_play)
                         .after(player::player_controller),
+                    entities_runtime::update_drops.run_if(in_play),
+                    entities_runtime::collect_dropped_glimmers.run_if(in_play),
+                    entities_runtime::despawn_drops_when_dirty
+                        .before(entities_runtime::reconcile_entities),
                     entities_runtime::animate_kit
                         .run_if(in_state(AppState::InGame))
                         .run_if(not_paused)

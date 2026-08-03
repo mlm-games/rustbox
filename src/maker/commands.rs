@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::entity_data::{EntityData, LevelEntityId};
+use super::entity_data::{ContainedItem, EntityData, LevelEntityId};
 use super::level::{BlockData, LevelDocument};
 use super::track::{TrackData, TrackId, TrackMode};
 
@@ -66,6 +66,11 @@ pub enum EditCommand {
         id: LevelEntityId,
         old: u32,
         new: u32,
+    },
+    SetEntityContents {
+        id: LevelEntityId,
+        old: ContainedItem,
+        new: ContainedItem,
     },
     ReverseTrackPoints {
         track_id: TrackId,
@@ -194,6 +199,11 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
                 e.link = *new;
             }
         }
+        EditCommand::SetEntityContents { id, new, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.contents = *new;
+            }
+        }
         EditCommand::ReverseTrackPoints { track_id } => {
             if let Some(t) = level.track_mut(*track_id) {
                 t.points.reverse();
@@ -310,6 +320,11 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::SetEntityLink { id, old, .. } => {
             if let Some(e) = level.entity_mut(*id) {
                 e.link = *old;
+            }
+        }
+        EditCommand::SetEntityContents { id, old, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.contents = *old;
             }
         }
         EditCommand::ReverseTrackPoints { track_id } => {

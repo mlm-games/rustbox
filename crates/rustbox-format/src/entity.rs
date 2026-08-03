@@ -63,6 +63,35 @@ impl EntityKind {
     pub fn has_param(self) -> bool {
         !matches!(self, Self::Checkpoint | Self::Key)
     }
+
+    /// Kinds that can hold a `ContainedItem` (v6+).
+    pub fn supports_contents(self) -> bool {
+        matches!(self, Self::Crate | Self::Prowler)
+    }
+}
+
+/// What pops out of a container when it is broken (Crate) or defeated
+/// (Prowler). v6+. A contained Key uses the **container's** link channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum ContainedItem {
+    #[default]
+    None,
+    Glimmers(u8),
+    Key,
+    HealOrb,
+    SpeedRing,
+}
+
+impl ContainedItem {
+    pub fn label(self) -> String {
+        match self {
+            Self::None => "Empty".to_string(),
+            Self::Glimmers(n) => format!("{n} Glimmers"),
+            Self::Key => "Key".to_string(),
+            Self::HealOrb => "Heal Orb".to_string(),
+            Self::SpeedRing => "Speed Ring".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,6 +110,9 @@ pub struct EntityData {
     /// Link channel (1-9). 0 = unlinked.
     #[serde(default)]
     pub link: u32,
+    /// v6+: item inside this container. Always `None` for non-containers.
+    #[serde(default)]
+    pub contents: ContainedItem,
 }
 
 fn default_param() -> f32 {

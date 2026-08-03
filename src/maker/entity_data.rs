@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-pub use rustbox_format::entity::{EntityData, EntityKind, LevelEntityId};
+pub use rustbox_format::entity::{ContainedItem, EntityData, EntityKind, LevelEntityId};
 
 /// Bevy-side color for an entity kind (materials, gizmos, thumbnails).
 pub trait EntityKindColor {
@@ -106,6 +106,7 @@ impl EntityDataExt for EntityData {
             cell_b,
             track: None,
             link: 0,
+            contents: ContainedItem::None,
         }
     }
 }

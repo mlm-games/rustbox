@@ -15,7 +15,9 @@ use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::MakerCleanup;
 use super::collision::is_solid;
-use super::entity_data::{EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color};
+use super::entity_data::{
+    ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
+};
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::{ActionState, JUMP_SPEED, MoveState, Player, respawn_player};
@@ -122,6 +124,108 @@ pub struct Bumper {
 #[derive(Component)]
 pub struct CrateProp {
     pub breakable: bool,
+}
+
+/// What a container (Crate / Prowler) will release when broken or defeated.
+#[derive(Component)]
+pub struct Contents {
+    pub item: ContainedItem,
+    /// Container's link channel — inherited by a contained Key.
+    pub link: u32,
+}
+
+/// Runtime-spawned pickups (from broken crates / defeated prowlers) get ids in
+/// this range so they can never collide with authored entity ids.
+pub const DROP_ID_BASE: LevelEntityId = 0xF000_0000;
+
+#[derive(Component)]
+pub struct DroppedItem;
+
+/// Simple pop-out ballistic. While present, the drop can't be picked up yet.
+#[derive(Component)]
+pub struct DropPop {
+    pub vel: Vec3,
+    pub rest_y: f32,
+}
+
+/// Dropped glimmers are self-contained; they don't route through the
+/// authored-glimmer collection path at all.
+#[derive(Component)]
+pub struct DropGlimmer;
+
+#[derive(Resource, Default)]
+pub struct DropIdCounter(pub u32);
+
+/// Spawns the pickups a container releases when broken (Crate) or defeated
+/// (Prowler). Multiple items fan out in a circle; single items pop straight up.
+pub fn spawn_drops(
+    commands: &mut Commands,
+    assets: &EntityAssets,
+    counter: &mut DropIdCounter,
+    origin: Vec3,
+    contents: &Contents,
+) {
+    let items: Vec<(EntityKind, u32)> = match contents.item {
+        ContainedItem::None => return,
+        ContainedItem::Glimmers(n) => (0..n).map(|_| (EntityKind::Glimmer, 0)).collect(),
+        ContainedItem::Key => vec![(EntityKind::Key, contents.link)],
+        ContainedItem::HealOrb => vec![(EntityKind::HealOrb, 0)],
+        ContainedItem::SpeedRing => vec![(EntityKind::SpeedRing, 0)],
+    };
+
+    let count = items.len().max(1) as f32;
+
+    for (i, (kind, link)) in items.into_iter().enumerate() {
+        counter.0 += 1;
+        let id = DROP_ID_BASE + counter.0;
+
+        // Fan drops out in a circle; single items pop straight up.
+        let angle = (i as f32 / count) * std::f32::consts::TAU;
+        let spread = if count > 1.0 { 2.2 } else { 0.0 };
+        let vel = Vec3::new(angle.cos() * spread, 7.5, angle.sin() * spread);
+
+        let scale = match kind {
+            EntityKind::Glimmer => 0.25,
+            EntityKind::Key => 0.35,
+            EntityKind::HealOrb => 0.35,
+            EntityKind::SpeedRing => 0.7,
+            _ => 0.3,
+        };
+
+        let mut ecmds = commands.spawn((
+            Transform::from_translation(origin + Vec3::Y * 0.4).with_scale(Vec3::splat(scale)),
+            Mesh3d(assets.marker_mesh.clone()),
+            MeshMaterial3d(assets.mats[&kind].clone()),
+            LevelEnt { id, kind },
+            DroppedItem,
+            DropPop {
+                vel,
+                rest_y: origin.y + 0.4,
+            },
+            MakerCleanup,
+        ));
+
+        match kind {
+            EntityKind::Glimmer => {
+                ecmds.insert(DropGlimmer);
+            }
+            EntityKind::Key => {
+                ecmds.insert(KeyPickup {
+                    link: link.clamp(1, 9),
+                });
+            }
+            EntityKind::HealOrb => {
+                ecmds.insert(HealOrb);
+            }
+            EntityKind::SpeedRing => {
+                ecmds.insert(SpeedRing { duration: 2.5 });
+            }
+            _ => {}
+        }
+
+        #[cfg(feature = "physics")]
+        ecmds.insert(Sensor);
+    }
 }
 
 #[derive(Component)]
@@ -897,6 +1001,10 @@ pub fn reconcile_entities(
                     prev: tf.translation,
                     on_track: data.track.is_some(),
                 });
+                ecmds.insert(Contents {
+                    item: data.contents,
+                    link: data.link,
+                });
             }
             EntityKind::TriggerOrb => {
                 ecmds.insert(TriggerOrb {
@@ -971,6 +1079,10 @@ pub fn reconcile_entities(
             EntityKind::Crate => {
                 ecmds.insert(CrateProp {
                     breakable: data.param >= 0.5,
+                });
+                ecmds.insert(Contents {
+                    item: data.contents,
+                    link: data.link,
                 });
             }
             EntityKind::Key => {
@@ -1404,6 +1516,8 @@ pub fn prowler_touch(
     mut trauma: ResMut<Trauma>,
     mut flash: ResMut<FlashWhite>,
     mut map: ResMut<EntityEntities>,
+    assets: Res<EntityAssets>,
+    mut counter: ResMut<DropIdCounter>,
     mut player_q: Query<
         (
             Entity,
@@ -1414,7 +1528,10 @@ pub fn prowler_touch(
         ),
         Without<Prowler>,
     >,
-    prowlers: Query<(Entity, &Transform, &LevelEnt), (With<Prowler>, Without<Player>)>,
+    prowlers: Query<
+        (Entity, &Transform, &LevelEnt, Option<&Contents>),
+        (With<Prowler>, Without<Player>),
+    >,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1427,7 +1544,7 @@ pub fn prowler_touch(
     let he = player.half_extents;
     let ph = Vec3::splat(0.35);
 
-    for (prow_e, prow_tf, ent) in &prowlers {
+    for (prow_e, prow_tf, ent, contents) in &prowlers {
         let d = (pt.translation - prow_tf.translation).abs();
         let overlap = d.x < he.x + ph.x && d.y < he.y + ph.y && d.z < he.z + ph.z;
         if !overlap {
@@ -1438,6 +1555,15 @@ pub fn prowler_touch(
         let is_stomp = player.velocity.y < -0.5 && player_bottom > prow_tf.translation.y - 0.05;
 
         if is_stomp {
+            if let Some(contents) = contents {
+                spawn_drops(
+                    &mut commands,
+                    &assets,
+                    &mut counter,
+                    prow_tf.translation,
+                    contents,
+                );
+            }
             commands.entity(prow_e).despawn();
             map.0.remove(&ent.id);
 
@@ -1626,8 +1752,10 @@ pub fn break_crates(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
     mut map: ResMut<EntityEntities>,
+    assets: Res<EntityAssets>,
+    mut counter: ResMut<DropIdCounter>,
     player_q: Query<(&Transform, &Player)>,
-    crates: Query<(Entity, &Transform, &LevelEnt, &CrateProp), Without<Player>>,
+    crates: Query<(Entity, &Transform, &LevelEnt, &CrateProp, Option<&Contents>), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1636,7 +1764,7 @@ pub fn break_crates(
         return;
     };
 
-    for (e, tf, ent, crate_prop) in &crates {
+    for (e, tf, ent, crate_prop, contents) in &crates {
         if !crate_prop.breakable {
             continue;
         }
@@ -1655,11 +1783,80 @@ pub fn break_crates(
             continue;
         }
 
+        if let Some(contents) = contents {
+            spawn_drops(
+                &mut commands,
+                &assets,
+                &mut counter,
+                tf.translation,
+                contents,
+            );
+        }
         commands.entity(e).despawn();
         map.0.remove(&ent.id);
         ui.score += 50;
         ui.set_status("Crate smashed!");
     }
+}
+
+pub fn update_drops(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut Transform, &mut DropPop), With<DroppedItem>>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut tf, mut pop) in &mut q {
+        pop.vel.y -= 22.0 * dt;
+        tf.translation += pop.vel * dt;
+        if pop.vel.y < 0.0 && tf.translation.y <= pop.rest_y {
+            tf.translation.y = pop.rest_y;
+            commands.entity(e).remove::<DropPop>();
+        }
+    }
+}
+
+pub fn collect_dropped_glimmers(
+    mut commands: Commands,
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    player_q: Query<(&Transform, &Player)>,
+    drops: Query<(Entity, &Transform), (With<DropGlimmer>, Without<DropPop>)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, _)) = player_q.single() else {
+        return;
+    };
+
+    for (e, tf) in &drops {
+        if pt.translation.distance(tf.translation) > 1.0 {
+            continue;
+        }
+        commands.entity(e).despawn();
+        ui.glimmers_collected += 1;
+        ui.score += 100;
+        let (c, t) = (ui.glimmers_collected, ui.glimmers_total);
+        ui.set_status(format!("Glimmer {c}/{t}"));
+    }
+}
+
+/// Drops are run-scoped: whenever the entity layer rebuilds (mode change,
+/// retry), clear them. Must run BEFORE `reconcile_entities` clears the flag.
+pub fn despawn_drops_when_dirty(
+    mut commands: Commands,
+    level: Res<LevelDocument>,
+    mode: Res<MakerMode>,
+    mut counter: ResMut<DropIdCounter>,
+    drops: Query<Entity, With<DroppedItem>>,
+) {
+    if !level.entities_dirty && !mode.is_changed() {
+        return;
+    }
+    for e in &drops {
+        commands.entity(e).despawn();
+    }
+    counter.0 = 0;
 }
 
 pub fn collect_keys(
@@ -1668,7 +1865,7 @@ pub fn collect_keys(
     mut ui: ResMut<MakerUi>,
     mut map: ResMut<EntityEntities>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    keys: Query<(Entity, &Transform, &LevelEnt, &KeyPickup), Without<Player>>,
+    keys: Query<(Entity, &Transform, &LevelEnt, &KeyPickup), (Without<Player>, Without<DropPop>)>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1741,7 +1938,10 @@ pub fn collect_heal_orbs(
     mut ui: ResMut<MakerUi>,
     mut map: ResMut<EntityEntities>,
     mut player_q: Query<(&Transform, &mut Player)>,
-    orbs: Query<(Entity, &Transform, &LevelEnt), (With<HealOrb>, Without<Player>)>,
+    orbs: Query<
+        (Entity, &Transform, &LevelEnt),
+        (With<HealOrb>, Without<Player>, Without<DropPop>),
+    >,
 ) {
     if *mode != MakerMode::Play {
         return;

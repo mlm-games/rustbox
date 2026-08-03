@@ -21,11 +21,12 @@ pub use api::{
     UploadMetadata, UploadResponse,
 };
 pub use block::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockKind, BlockShape};
-pub use entity::{EntityData, EntityKind, LevelEntityId};
+pub use entity::{ContainedItem, EntityData, EntityKind, LevelEntityId};
 pub use file::{
-    FORMAT_VERSION, LevelDataV3, LevelDataV3Pre, LevelDataV4, LevelFile, LevelFileV3,
-    LevelFileV3Pre, LevelFileV4, decode_level, encode_level, export_code, import_code, upgrade_v3,
-    upgrade_v3pre, upgrade_v4, validate_level,
+    EntityDataV5, FORMAT_VERSION, LevelDataV3, LevelDataV3Pre, LevelDataV4, LevelDataV5, LevelFile,
+    LevelFileV3, LevelFileV3Pre, LevelFileV4, LevelFileV5, decode_level, encode_level, export_code,
+    import_code, upgrade_entity_v5, upgrade_v3, upgrade_v3pre, upgrade_v4, upgrade_v5,
+    validate_level,
 };
 pub use level::{
     BlockData, BoundaryConfig, BoundaryPreset, ClearCondition, LevelData, LevelTag, Theme,

@@ -1333,6 +1333,20 @@ fn process_ui_actions(
                     m.commands.push(UiCommand::DeltaEntityParam(id, delta));
                 }
             }
+            UiAction::MakerInspCycleContents => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::CycleEntityContents(id));
+                }
+            }
+            UiAction::MakerInspContentsDelta(delta) => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                {
+                    m.commands.push(UiCommand::DeltaEntityContents(id, delta));
+                }
+            }
             UiAction::MakerInspYawDelta(delta) => {
                 if let Some(ref mut m) = maker_ui
                     && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
