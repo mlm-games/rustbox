@@ -10,6 +10,11 @@ pub enum BlockKind {
     Spawn,
     /// A cell-filling volume of water (swimmable, translucent, not solid).
     Water,
+    Ice,
+    Spikes,
+    Conveyor,
+    Bounce,
+    Climb,
 }
 
 impl BlockKind {
@@ -25,6 +30,11 @@ impl BlockKind {
             BlockKind::Goal => "Goal",
             BlockKind::Spawn => "Spawn",
             BlockKind::Water => "Water",
+            BlockKind::Ice => "Ice",
+            BlockKind::Spikes => "Spikes",
+            BlockKind::Conveyor => "Conveyor",
+            BlockKind::Bounce => "Bounce",
+            BlockKind::Climb => "Climb",
         }
     }
 }
@@ -36,6 +46,11 @@ pub const ALL_BLOCK_KINDS: &[BlockKind] = &[
     BlockKind::Goal,
     BlockKind::Spawn,
     BlockKind::Water,
+    BlockKind::Ice,
+    BlockKind::Spikes,
+    BlockKind::Conveyor,
+    BlockKind::Bounce,
+    BlockKind::Climb,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]

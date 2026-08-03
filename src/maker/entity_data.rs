@@ -18,6 +18,15 @@ impl EntityKindColor for EntityKind {
             Self::TriggerOrb => Color::srgb(0.3, 0.9, 0.75),
             Self::RelayGate => Color::srgb(0.45, 0.85, 0.45),
             Self::Checkpoint => Color::srgb(0.95, 0.95, 1.0),
+            Self::Teleporter => Color::srgb(0.55, 0.35, 1.0),
+            Self::Fan => Color::srgb(0.65, 0.85, 1.0),
+            Self::Bumper => Color::srgb(1.0, 0.45, 0.75),
+            Self::Crate => Color::srgb(0.72, 0.5, 0.28),
+            Self::Key => Color::srgb(1.0, 0.84, 0.2),
+            Self::LockGate => Color::srgb(0.55, 0.55, 0.65),
+            Self::HealOrb => Color::srgb(1.0, 0.35, 0.45),
+            Self::SpeedRing => Color::srgb(0.2, 0.95, 0.55),
+            Self::CrumblePlate => Color::srgb(0.7, 0.65, 0.55),
         }
     }
 }
@@ -67,6 +76,23 @@ impl EntityDataExt for EntityData {
             EntityKind::TriggerOrb => (1.0, None),
             EntityKind::RelayGate => (3.0, None),
             EntityKind::Checkpoint => (0.0, None),
+            // cooldown seconds
+            EntityKind::Teleporter => (0.6, None),
+            // wind strength
+            EntityKind::Fan => (12.0, None),
+            // knockback strength
+            EntityKind::Bumper => (16.0, None),
+            // 1.0 = breakable by stomp/slam
+            EntityKind::Crate => (1.0, None),
+            EntityKind::Key => (0.0, None),
+            // stays open this many seconds (0 = permanent until leave+reenter level)
+            EntityKind::LockGate => (0.0, None),
+            // heal amount (lives or HP units — mapped below)
+            EntityKind::HealOrb => (1.0, None),
+            // boost duration seconds
+            EntityKind::SpeedRing => (2.5, None),
+            // seconds before crumble after step
+            EntityKind::CrumblePlate => (0.85, None),
         };
         EntityData {
             id,

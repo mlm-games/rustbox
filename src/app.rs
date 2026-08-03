@@ -1220,6 +1220,11 @@ fn process_ui_actions(
                         3 => BlockKind::Goal,
                         4 => BlockKind::Spawn,
                         5 => BlockKind::Water,
+                        6 => BlockKind::Ice,
+                        7 => BlockKind::Spikes,
+                        8 => BlockKind::Conveyor,
+                        9 => BlockKind::Bounce,
+                        10 => BlockKind::Climb,
                         _ => BlockKind::Grass,
                     };
                     m.commands.push(UiCommand::SelectBlock(kind));
@@ -1246,6 +1251,15 @@ fn process_ui_actions(
                         5 => EntityKind::TriggerOrb,
                         6 => EntityKind::RelayGate,
                         7 => EntityKind::Checkpoint,
+                        8 => EntityKind::Teleporter,
+                        9 => EntityKind::Fan,
+                        10 => EntityKind::Bumper,
+                        11 => EntityKind::Crate,
+                        12 => EntityKind::Key,
+                        13 => EntityKind::LockGate,
+                        14 => EntityKind::HealOrb,
+                        15 => EntityKind::SpeedRing,
+                        16 => EntityKind::CrumblePlate,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));

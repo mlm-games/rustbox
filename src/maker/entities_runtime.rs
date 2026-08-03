@@ -102,6 +102,58 @@ pub struct RelayGate {
 #[derive(Component)]
 pub struct GateSolid;
 
+#[derive(Component)]
+pub struct Teleporter {
+    pub link: u32,
+    pub cooldown: f32,
+}
+
+#[derive(Component)]
+pub struct Fan {
+    pub dir: Vec3,
+    pub strength: f32,
+}
+
+#[derive(Component)]
+pub struct Bumper {
+    pub strength: f32,
+}
+
+#[derive(Component)]
+pub struct CrateProp {
+    pub breakable: bool,
+}
+
+#[derive(Component)]
+pub struct KeyPickup {
+    pub link: u32,
+}
+
+#[derive(Component)]
+pub struct LockGate {
+    pub link: u32,
+    pub open: bool,
+    /// 0 = stay open for the run once unlocked
+    pub open_for: f32,
+    pub open_timer: f32,
+}
+
+#[derive(Component)]
+pub struct HealOrb;
+
+#[derive(Component)]
+pub struct SpeedRing {
+    pub duration: f32,
+}
+
+#[derive(Component)]
+pub struct CrumblePlate {
+    pub delay: f32,
+    pub timer: f32,
+    pub triggered: bool,
+    pub gone: bool,
+}
+
 /// Last pulse time per channel, in seconds of play-session time.
 #[derive(Resource, Default)]
 pub struct LinkState {
@@ -158,6 +210,15 @@ pub fn setup_entity_assets(
         EntityKind::Glimmer,
         EntityKind::LaunchPad,
         EntityKind::Checkpoint,
+        EntityKind::Teleporter,
+        EntityKind::Fan,
+        EntityKind::Bumper,
+        EntityKind::Crate,
+        EntityKind::Key,
+        EntityKind::LockGate,
+        EntityKind::HealOrb,
+        EntityKind::SpeedRing,
+        EntityKind::CrumblePlate,
     ] {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
@@ -250,6 +311,15 @@ fn root_y_off(kind: EntityKind) -> f32 {
         EntityKind::TriggerOrb => 1.0,
         EntityKind::RelayGate => 1.0,
         EntityKind::Checkpoint => 0.55,
+        EntityKind::Teleporter => 0.15,
+        EntityKind::Fan => 0.5,
+        EntityKind::Bumper => 0.35,
+        EntityKind::Crate => 0.5,
+        EntityKind::Key => 0.45,
+        EntityKind::LockGate => 0.5,
+        EntityKind::HealOrb => 0.45,
+        EntityKind::SpeedRing => 0.55,
+        EntityKind::CrumblePlate => 0.08,
     }
 }
 
@@ -268,7 +338,17 @@ fn visual_for(
         EntityKind::Prowler => (0.34, -0.4),
         EntityKind::TriggerOrb => (0.8, -1.0),
         EntityKind::RelayGate => (0.5, -1.0),
-        EntityKind::LaunchPad | EntityKind::Checkpoint => return None,
+        EntityKind::LaunchPad
+        | EntityKind::Checkpoint
+        | EntityKind::Teleporter
+        | EntityKind::Fan
+        | EntityKind::Bumper
+        | EntityKind::Crate
+        | EntityKind::Key
+        | EntityKind::LockGate
+        | EntityKind::HealOrb
+        | EntityKind::SpeedRing
+        | EntityKind::CrumblePlate => return None,
     };
     let scene = assets.scenes[&kind].clone();
     let material = match kind {
@@ -591,6 +671,123 @@ pub fn reconcile_entities(
                     ))
                     .id(),
 
+                EntityKind::Teleporter => commands
+                    .spawn((
+                        tf.with_scale(Vec3::new(0.9, 0.15, 0.9)),
+                        Mesh3d(assets.pad_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Teleporter].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::Fan => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.5)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Fan].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::Bumper => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.55)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Bumper].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::Crate => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.9)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Crate].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::Key => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.35)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Key].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::LockGate => commands
+                    .spawn((
+                        tf.with_scale(Vec3::new(1.0, 1.2, 0.25)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::LockGate].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::HealOrb => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.35)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::HealOrb].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::SpeedRing => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.7)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::SpeedRing].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::CrumblePlate => commands
+                    .spawn((
+                        tf.with_scale(Vec3::new(1.0, 0.12, 1.0)),
+                        Mesh3d(assets.pad_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::CrumblePlate].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
                 _ => unreachable!("non-visual entity kind without primitive fallback"),
             }
         };
@@ -701,6 +898,69 @@ pub fn reconcile_entities(
                 });
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
+            }
+            EntityKind::Teleporter => {
+                ecmds.insert(Teleporter {
+                    link: data.link,
+                    cooldown: data.param.max(0.15),
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::Fan => {
+                let yaw = data.yaw_deg.to_radians();
+                let dir = Vec3::new(yaw.sin(), 0.0, yaw.cos()).normalize_or_zero();
+                ecmds.insert(Fan {
+                    dir,
+                    strength: data.param.max(0.0),
+                });
+            }
+            EntityKind::Bumper => {
+                ecmds.insert(Bumper {
+                    strength: data.param.max(1.0),
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::Crate => {
+                ecmds.insert(CrateProp {
+                    breakable: data.param >= 0.5,
+                });
+            }
+            EntityKind::Key => {
+                ecmds.insert(KeyPickup {
+                    link: data.link.max(1).min(9),
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::LockGate => {
+                ecmds.insert(LockGate {
+                    link: data.link.max(1).min(9),
+                    open: false,
+                    open_for: data.param.max(0.0),
+                    open_timer: 0.0,
+                });
+            }
+            EntityKind::HealOrb => {
+                ecmds.insert(HealOrb);
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::SpeedRing => {
+                ecmds.insert(SpeedRing {
+                    duration: data.param.max(0.25),
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
+            EntityKind::CrumblePlate => {
+                ecmds.insert(CrumblePlate {
+                    delay: data.param.max(0.05),
+                    timer: 0.0,
+                    triggered: false,
+                    gone: false,
+                });
             }
         }
 
@@ -927,28 +1187,22 @@ pub fn update_relay_gates(
     }
 }
 
-/// Edit-mode gizmos: dashed lines between same-channel orbs and gates.
+/// Edit-mode gizmos: dashed lines between same-channel linked entities.
 pub fn draw_link_gizmos(mode: Res<MakerMode>, level: Res<LevelDocument>, mut gizmos: Gizmos) {
     if *mode != MakerMode::Edit {
         return;
     }
-    let orbs: Vec<_> = level
+    let linked: Vec<_> = level
         .data
         .entities
         .iter()
-        .filter(|e| e.kind == EntityKind::TriggerOrb && e.link != 0)
+        .filter(|e| e.link != 0 && e.kind.uses_link())
         .collect();
-    let gates: Vec<_> = level
-        .data
-        .entities
-        .iter()
-        .filter(|e| e.kind == EntityKind::RelayGate && e.link != 0)
-        .collect();
-    for orb in &orbs {
-        for gate in gates.iter().filter(|g| g.link == orb.link) {
-            let a = orb.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
-            let b = gate.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
-            gizmos.line(a, b, link_color(orb.link));
+    for a in &linked {
+        for b in linked.iter().filter(|g| g.link == a.link && g.id != a.id) {
+            let pa = a.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
+            let pb = b.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
+            gizmos.line(pa, pb, link_color(a.link));
         }
     }
 }
@@ -1114,6 +1368,9 @@ pub fn rebuild_runtime_solids(
     mut solids: ResMut<RuntimeSolids>,
     seals: Query<(&Transform, &Seal), With<SealSolid>>,
     gates: Query<(&Transform, &RelayGate), With<GateSolid>>,
+    lock_gates: Query<(&Transform, &LockGate)>,
+    crates: Query<(&Transform, &CrateProp)>,
+    plates: Query<(&Transform, &CrumblePlate)>,
 ) {
     solids.boxes.clear();
     for (tf, seal) in &seals {
@@ -1128,6 +1385,349 @@ pub fn rebuild_runtime_solids(
             solids
                 .boxes
                 .push((tf.translation, Vec3::new(0.5, 1.0, 0.2)));
+        }
+    }
+    for (tf, lock) in &lock_gates {
+        if !lock.open {
+            solids
+                .boxes
+                .push((tf.translation, Vec3::new(0.55, 1.2, 0.3)));
+        }
+    }
+    for (tf, _crate) in &crates {
+        solids
+            .boxes
+            .push((tf.translation, Vec3::new(0.5, 0.5, 0.5)));
+    }
+    for (tf, plate) in &plates {
+        if !plate.gone {
+            solids
+                .boxes
+                .push((tf.translation, Vec3::new(0.5, 0.12, 0.5)));
+        }
+    }
+}
+
+pub fn use_teleporters(
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut player_q: Query<(&mut Transform, &mut Player)>,
+    teleporters: Query<(&LevelEnt, &Transform, &Teleporter)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((mut pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+    if player.pad_cooldown > 0.0 {
+        return;
+    }
+
+    let mut from_link = None;
+    for (_ent, tf, tp) in &teleporters {
+        if tp.link == 0 {
+            continue;
+        }
+        if pt.translation.distance(tf.translation) < 1.1 {
+            from_link = Some((tp.link, tp.cooldown, tf.translation));
+            break;
+        }
+    }
+    let Some((link, cd, from_pos)) = from_link else {
+        return;
+    };
+
+    // Destination = other teleporter on same link, else no-op.
+    let mut dest = None;
+    for (_ent, tf, tp) in &teleporters {
+        if tp.link == link && tf.translation.distance(from_pos) > 0.5 {
+            dest = Some(tf.translation + Vec3::Y * 0.9);
+            break;
+        }
+    }
+    let Some(to) = dest else {
+        ui.set_status("Teleporter needs a linked pair");
+        return;
+    };
+
+    pt.translation = to;
+    player.velocity = Vec3::ZERO;
+    player.pad_cooldown = cd;
+    ui.set_status("Warped!");
+}
+
+pub fn apply_fans(
+    time: Res<Time>,
+    mode: Res<MakerMode>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    fans: Query<(&Transform, &Fan)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+    let dt = time.delta_secs();
+
+    for (tf, fan) in &fans {
+        // Simple axis-aligned volume in front of the fan.
+        let to_p = pt.translation - tf.translation;
+        let ahead = to_p.dot(fan.dir);
+        if ahead < 0.0 || ahead > 4.0 {
+            continue;
+        }
+        let lateral = (to_p - fan.dir * ahead).length();
+        if lateral > 1.4 {
+            continue;
+        }
+        player.velocity += fan.dir * fan.strength * dt;
+        // slight lift so fans feel useful in 3D platforming
+        player.velocity.y += fan.strength * 0.15 * dt;
+    }
+}
+
+pub fn touch_bumpers(
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    bumpers: Query<(&Transform, &Bumper)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+    if player.pad_cooldown > 0.0 {
+        return;
+    }
+
+    for (tf, bumper) in &bumpers {
+        let delta = pt.translation - tf.translation;
+        if delta.length() > 1.15 {
+            continue;
+        }
+        let dir = if delta.length_squared() < 1e-4 {
+            Vec3::Y
+        } else {
+            delta.normalize()
+        };
+        // Mostly horizontal pop with upward bias (mushroom feel).
+        let mut kick = dir * bumper.strength;
+        kick.y = kick.y.abs().max(bumper.strength * 0.55);
+        player.velocity = kick;
+        player.on_ground = false;
+        player.pad_cooldown = 0.2;
+        ui.set_status("Boing!");
+        break;
+    }
+}
+
+pub fn break_crates(
+    mut commands: Commands,
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut map: ResMut<EntityEntities>,
+    player_q: Query<(&Transform, &Player)>,
+    crates: Query<(Entity, &Transform, &LevelEnt, &CrateProp)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, player)) = player_q.single() else {
+        return;
+    };
+
+    for (e, tf, ent, crate_prop) in &crates {
+        if !crate_prop.breakable {
+            continue;
+        }
+        let d = (pt.translation - tf.translation).abs();
+        let he = player.half_extents;
+        let ph = Vec3::splat(0.45);
+        let overlap = d.x < he.x + ph.x && d.y < he.y + ph.y && d.z < he.z + ph.z;
+        if !overlap {
+            continue;
+        }
+
+        let player_bottom = pt.translation.y - he.y;
+        let stomp = player.velocity.y < -0.5 && player_bottom > tf.translation.y - 0.05;
+        let slam = player.slamming;
+        if !(stomp || slam) {
+            continue;
+        }
+
+        commands.entity(e).despawn();
+        map.0.remove(&ent.id);
+        ui.score += 50;
+        ui.set_status("Crate smashed!");
+    }
+}
+
+pub fn collect_keys(
+    mut commands: Commands,
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut map: ResMut<EntityEntities>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    keys: Query<(Entity, &Transform, &LevelEnt, &KeyPickup)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+
+    for (e, tf, ent, key) in &keys {
+        if pt.translation.distance(tf.translation) > 1.0 {
+            continue;
+        }
+        let ch = key.link as usize;
+        if ch < player.keys.len() {
+            player.keys[ch] = player.keys[ch].saturating_add(1);
+        }
+        commands.entity(e).despawn();
+        map.0.remove(&ent.id);
+        ui.set_status(format!("Key (ch {ch})"));
+    }
+}
+
+pub fn update_lock_gates(
+    time: Res<Time>,
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    mut gates: Query<(&mut LockGate, &mut Visibility, &Transform)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+    let dt = time.delta_secs();
+
+    for (mut gate, mut vis, tf) in &mut gates {
+        if gate.open {
+            if gate.open_for > 0.0 {
+                gate.open_timer -= dt;
+                if gate.open_timer <= 0.0 {
+                    gate.open = false;
+                    *vis = Visibility::Visible;
+                }
+            }
+            continue;
+        }
+
+        // Unlock when player touches and holds matching key.
+        if pt.translation.distance(tf.translation) > 1.3 {
+            continue;
+        }
+        let ch = gate.link as usize;
+        if ch >= player.keys.len() || player.keys[ch] == 0 {
+            ui.set_status(format!("Need key (ch {})", gate.link));
+            continue;
+        }
+        player.keys[ch] -= 1;
+        gate.open = true;
+        gate.open_timer = gate.open_for;
+        *vis = Visibility::Hidden;
+        ui.set_status("Gate unlocked!");
+    }
+}
+
+pub fn collect_heal_orbs(
+    mut commands: Commands,
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut map: ResMut<EntityEntities>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    orbs: Query<(Entity, &Transform, &LevelEnt), With<HealOrb>>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+
+    for (e, tf, ent) in &orbs {
+        if pt.translation.distance(tf.translation) > 1.0 {
+            continue;
+        }
+        player.armor = (player.armor + 1).min(3);
+        commands.entity(e).despawn();
+        map.0.remove(&ent.id);
+        ui.set_status(format!("Armor {}", player.armor));
+    }
+}
+
+pub fn touch_speed_rings(
+    mode: Res<MakerMode>,
+    mut ui: ResMut<MakerUi>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    rings: Query<(&Transform, &SpeedRing)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, mut player)) = player_q.single_mut() else {
+        return;
+    };
+    if player.pad_cooldown > 0.0 {
+        return;
+    }
+
+    for (tf, ring) in &rings {
+        if pt.translation.distance(tf.translation) > 1.2 {
+            continue;
+        }
+        player.speed_boost = player.speed_boost.max(ring.duration);
+        player.pad_cooldown = 0.35;
+        ui.set_status("Speed boost!");
+        break;
+    }
+}
+
+pub fn update_crumble_plates(
+    time: Res<Time>,
+    mode: Res<MakerMode>,
+    player_q: Query<(&Transform, &Player)>,
+    mut plates: Query<(&mut CrumblePlate, &mut Visibility, &Transform)>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok((pt, player)) = player_q.single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+
+    for (mut plate, mut vis, tf) in &mut plates {
+        if plate.gone {
+            *vis = Visibility::Hidden;
+            continue;
+        }
+
+        let on_top = {
+            let d = pt.translation - tf.translation;
+            d.x.abs() < 0.65 && d.z.abs() < 0.65 && d.y > 0.2 && d.y < 1.4 && player.on_ground
+        };
+
+        if on_top && !plate.triggered {
+            plate.triggered = true;
+            plate.timer = plate.delay;
+        }
+
+        if plate.triggered && !plate.gone {
+            plate.timer -= dt;
+            if plate.timer <= 0.0 {
+                plate.gone = true;
+                *vis = Visibility::Hidden;
+            }
         }
     }
 }

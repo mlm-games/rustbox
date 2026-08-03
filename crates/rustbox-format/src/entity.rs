@@ -15,6 +15,15 @@ pub enum EntityKind {
     TriggerOrb,
     RelayGate,
     Checkpoint,
+    Teleporter,
+    Fan,
+    Bumper,
+    Crate,
+    Key,
+    LockGate,
+    HealOrb,
+    SpeedRing,
+    CrumblePlate,
 }
 
 impl EntityKind {
@@ -28,7 +37,29 @@ impl EntityKind {
             Self::TriggerOrb => "Trigger Orb",
             Self::RelayGate => "Relay Gate",
             Self::Checkpoint => "Checkpoint",
+            Self::Teleporter => "Teleporter",
+            Self::Fan => "Fan",
+            Self::Bumper => "Bumper",
+            Self::Crate => "Crate",
+            Self::Key => "Key",
+            Self::LockGate => "Lock Gate",
+            Self::HealOrb => "Heal Orb",
+            Self::SpeedRing => "Speed Ring",
+            Self::CrumblePlate => "Crumble Plate",
         }
+    }
+
+    /// Shown in the entity swatch bar / needs link channel UI.
+    pub fn uses_link(self) -> bool {
+        matches!(
+            self,
+            Self::TriggerOrb | Self::RelayGate | Self::Teleporter | Self::Key | Self::LockGate
+        )
+    }
+
+    /// Hide meaningless param steppers in the inspector.
+    pub fn has_param(self) -> bool {
+        !matches!(self, Self::Checkpoint | Self::Key)
     }
 }
 

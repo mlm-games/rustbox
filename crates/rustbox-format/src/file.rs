@@ -508,6 +508,36 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
     {
         bail!("time limit must be greater than zero");
     }
+
+    // Link sanity: teleporters should come in pairs per channel; lock gates
+    // need at least one matching key on the same channel.
+    let mut tele_links = [0u32; 10];
+    let mut key_links = [0u32; 10];
+    let mut lock_links = [0u32; 10];
+
+    for e in &level.entities {
+        match e.kind {
+            crate::entity::EntityKind::Teleporter if e.link >= 1 && e.link <= 9 => {
+                tele_links[e.link as usize] += 1
+            }
+            crate::entity::EntityKind::Key if e.link >= 1 && e.link <= 9 => {
+                key_links[e.link as usize] += 1
+            }
+            crate::entity::EntityKind::LockGate if e.link >= 1 && e.link <= 9 => {
+                lock_links[e.link as usize] += 1
+            }
+            _ => {}
+        }
+    }
+
+    for ch in 1..=9 {
+        if tele_links[ch] == 1 {
+            bail!("teleporter link {ch} needs a pair");
+        }
+        if lock_links[ch] > 0 && key_links[ch] == 0 {
+            bail!("lock gate on channel {ch} has no key");
+        }
+    }
     Ok(())
 }
 

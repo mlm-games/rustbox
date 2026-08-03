@@ -857,13 +857,18 @@ fn palette_dock(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 6] = [
+    let items: [(u8, RColor); 11] = [
         (0, col(90, 170, 90)),
         (1, col(140, 140, 150)),
         (2, col(210, 70, 70)),
         (3, col(230, 195, 70)),
         (4, col(70, 170, 220)),
         (5, col(50, 130, 230)),
+        (6, col(165, 215, 240)),
+        (7, col(140, 140, 160)), 
+        (8, col(115, 190, 240)),
+        (9, col(240, 115, 115)), 
+        (10, col(115, 165, 115)),
     ];
     let mut row = Row(Modifier::new().gap(6.0));
     for (idx, color) in items {
@@ -907,7 +912,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 8] = [
+    let items: [(u8, RColor); 17] = [
         (0, col(255, 215, 70)),
         (1, col(90, 190, 255)),
         (2, col(190, 90, 230)),
@@ -916,6 +921,15 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (5, col(75, 230, 190)),
         (6, col(110, 215, 110)),
         (7, col(240, 240, 255)),
+        (8, col(140, 90, 255)), 
+        (9, col(165, 215, 255)),
+        (10, col(255, 115, 190)),
+        (11, col(185, 130, 70)), 
+        (12, col(255, 215, 50)), 
+        (13, col(140, 140, 165)),
+        (14, col(255, 90, 115)),
+        (15, col(50, 240, 140)), 
+        (16, col(180, 165, 140)),
     ];
     let a_rot = actions.clone();
     let mut row = Row(Modifier::new().gap(6.0));
@@ -932,12 +946,15 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         icon_label(Symbols::ROTATE_RIGHT, "F".into()),
         move || push_ui(&a_rot, UiAction::MakerRotateBrush),
     ));
-    if matches!(st.selected_entity, 5 | 6) {
+    let needs_link = matches!(st.selected_entity, 5 | 6 | 8 | 12 | 13);
+    if needs_link {
         let a_ch = actions.clone();
-        let label = if st.selected_entity == 5 {
-            t(&st.translations, "toolbar-trigger", "Trigger Orb")
-        } else {
-            t(&st.translations, "toolbar-gate", "Relay Gate")
+        let label = match st.selected_entity {
+            5 => t(&st.translations, "toolbar-trigger", "Trigger Orb"),
+            6 => t(&st.translations, "toolbar-gate", "Relay Gate"),
+            8 => t(&st.translations, "toolbar-teleport", "Teleporter"),
+            12 => t(&st.translations, "toolbar-key", "Key"),
+            _ => t(&st.translations, "toolbar-lock", "Lock Gate"),
         };
         row = row.child(mk_pill_button(
             icon_label(
@@ -1003,6 +1020,15 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::TriggerOrb => ("toolbar-trigger", "Trigger Orb"),
             EntityKind::RelayGate => ("toolbar-gate", "Relay Gate"),
             EntityKind::Checkpoint => ("toolbar-checkpoint", "Checkpoint"),
+            EntityKind::Teleporter => ("toolbar-teleport", "Teleporter"),
+            EntityKind::Fan => ("toolbar-fan", "Fan"),
+            EntityKind::Bumper => ("toolbar-bumper", "Bumper"),
+            EntityKind::Crate => ("toolbar-crate", "Crate"),
+            EntityKind::Key => ("toolbar-key", "Key"),
+            EntityKind::LockGate => ("toolbar-lock", "Lock Gate"),
+            EntityKind::HealOrb => ("toolbar-heal", "Heal Orb"),
+            EntityKind::SpeedRing => ("toolbar-speed", "Speed Ring"),
+            EntityKind::CrumblePlate => ("toolbar-crumble", "Crumble Plate"),
         };
         body.push(
             RText(t(tr, label_key, label_fb))
@@ -1022,7 +1048,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         );
         body.push(spacer(6.0));
 
-        if !matches!(e.kind, EntityKind::Checkpoint) {
+        if !matches!(e.kind, EntityKind::Checkpoint | EntityKind::Key) {
             let (param_key, param_fb, step) = match e.kind {
                 EntityKind::Glimmer => ("inspector-value", "Value", 0.5),
                 EntityKind::LaunchPad => ("inspector-impulse", "Impulse", 0.5),
@@ -1031,7 +1057,15 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 EntityKind::Prowler => ("inspector-speed", "Speed", 0.5),
                 EntityKind::TriggerOrb => ("inspector-cooldown", "Cooldown", 0.5),
                 EntityKind::RelayGate => ("inspector-duration", "Duration", 0.5),
-                EntityKind::Checkpoint => unreachable!(),
+                EntityKind::Teleporter => ("inspector-cooldown", "Cooldown", 0.1),
+                EntityKind::Fan => ("inspector-strength", "Strength", 1.0),
+                EntityKind::Bumper => ("inspector-strength", "Strength", 1.0),
+                EntityKind::Crate => ("inspector-breakable", "Breakable", 1.0),
+                EntityKind::HealOrb => ("inspector-armor", "Armor", 1.0),
+                EntityKind::SpeedRing => ("inspector-duration", "Duration", 0.25),
+                EntityKind::CrumblePlate => ("inspector-delay", "Delay", 0.05),
+                EntityKind::LockGate => ("inspector-open-for", "Open For", 0.5),
+                EntityKind::Checkpoint | EntityKind::Key => unreachable!(),
             };
             let a_minus = actions.clone();
             let a_plus = actions.clone();
@@ -1043,7 +1077,14 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             ));
         }
 
-        if matches!(e.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
+        if matches!(
+            e.kind,
+            EntityKind::TriggerOrb
+                | EntityKind::RelayGate
+                | EntityKind::Teleporter
+                | EntityKind::Key
+                | EntityKind::LockGate
+        ) {
             let a_minus = actions.clone();
             let a_plus = actions.clone();
             body.push(stepper_row(
@@ -1054,7 +1095,10 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             ));
         }
 
-        if matches!(e.kind, EntityKind::LaunchPad | EntityKind::Prowler) {
+        if matches!(
+            e.kind,
+            EntityKind::LaunchPad | EntityKind::Prowler | EntityKind::Fan | EntityKind::Teleporter
+        ) {
             let a_minus = actions.clone();
             let a_plus = actions.clone();
             body.push(stepper_row(

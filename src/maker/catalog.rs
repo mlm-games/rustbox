@@ -47,6 +47,15 @@ pub const KIND_PROWLER: u32 = 1 << 4;
 pub const KIND_TRIGGER_ORB: u32 = 1 << 5;
 pub const KIND_RELAY_GATE: u32 = 1 << 6;
 pub const KIND_CHECKPOINT: u32 = 1 << 7;
+pub const KIND_TELEPORTER: u32 = 1 << 8;
+pub const KIND_FAN: u32 = 1 << 9;
+pub const KIND_BUMPER: u32 = 1 << 10;
+pub const KIND_CRATE: u32 = 1 << 11;
+pub const KIND_KEY: u32 = 1 << 12;
+pub const KIND_LOCK_GATE: u32 = 1 << 13;
+pub const KIND_HEAL_ORB: u32 = 1 << 14;
+pub const KIND_SPEED_RING: u32 = 1 << 15;
+pub const KIND_CRUMBLE_PLATE: u32 = 1 << 16;
 
 pub fn kind_flag(kind: EntityKind) -> u32 {
     match kind {
@@ -58,6 +67,15 @@ pub fn kind_flag(kind: EntityKind) -> u32 {
         EntityKind::TriggerOrb => KIND_TRIGGER_ORB,
         EntityKind::RelayGate => KIND_RELAY_GATE,
         EntityKind::Checkpoint => KIND_CHECKPOINT,
+        EntityKind::Teleporter => KIND_TELEPORTER,
+        EntityKind::Fan => KIND_FAN,
+        EntityKind::Bumper => KIND_BUMPER,
+        EntityKind::Crate => KIND_CRATE,
+        EntityKind::Key => KIND_KEY,
+        EntityKind::LockGate => KIND_LOCK_GATE,
+        EntityKind::HealOrb => KIND_HEAL_ORB,
+        EntityKind::SpeedRing => KIND_SPEED_RING,
+        EntityKind::CrumblePlate => KIND_CRUMBLE_PLATE,
     }
 }
 

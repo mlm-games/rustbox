@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::WorldAssetRoot;
 
 use super::MakerCleanup;
+use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
     floor_normal_at, ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide,
@@ -151,6 +152,14 @@ pub struct Player {
     pub respawn_point: Vec3,
     /// Active checkpoint id for this run, if any.
     pub checkpoint_id: Option<LevelEntityId>,
+    /// Keys held this run, by link channel (1-9).
+    pub keys: [u8; 10],
+    /// Extra hits before death; HealOrb adds 1, max 3.
+    pub armor: u8,
+    /// Speed boost timer (seconds remaining).
+    pub speed_boost: f32,
+    /// Brief bumper/teleport input lock so you don't re-trigger instantly.
+    pub pad_cooldown: f32,
 }
 
 impl Default for Player {
@@ -174,6 +183,10 @@ impl Default for Player {
             grip_time: 0.0,
             respawn_point: Vec3::ZERO,
             checkpoint_id: None,
+            keys: [0; 10],
+            armor: 0,
+            speed_boost: 0.0,
+            pad_cooldown: 0.0,
         }
     }
 }
@@ -181,6 +194,40 @@ impl Default for Player {
 pub fn spawn_center(level: &LevelDocument) -> Vec3 {
     let s = level.data.spawn;
     Vec3::new(s[0] as f32 + 0.5, s[1] as f32 + 0.9, s[2] as f32 + 0.5)
+}
+
+fn ground_block(level: &LevelDocument, wx: f32, wz: f32) -> Option<BlockKind> {
+    let cx = wx.floor() as i32;
+    let cz = wz.floor() as i32;
+    let from = wx.max(wz).max(0.0) as i32 + 8;
+    for y in ((-512 + 8)..=from).rev() {
+        let cell = IVec3::new(cx, y, cz);
+        if let Some(b) = level.get_block(cell) {
+            if b.kind.is_solid() {
+                return Some(b.kind);
+            }
+        } else if level.boundary_solid(cell) {
+            return None;
+        }
+    }
+    None
+}
+
+fn ground_block_rot(level: &LevelDocument, wx: f32, wz: f32) -> Option<u8> {
+    let cx = wx.floor() as i32;
+    let cz = wz.floor() as i32;
+    let from = wx.max(wz).max(0.0) as i32 + 8;
+    for y in ((-512 + 8)..=from).rev() {
+        let cell = IVec3::new(cx, y, cz);
+        if let Some(b) = level.get_block(cell) {
+            if b.kind.is_solid() {
+                return Some(b.rot);
+            }
+        } else if level.boundary_solid(cell) {
+            return None;
+        }
+    }
+    None
 }
 
 pub fn respawn_player(
@@ -211,6 +258,7 @@ pub fn respawn_player(
     player.grip_anchor = Vec3::ZERO;
     player.grip_cooldown = 0.0;
     player.grip_time = 0.0;
+    player.pad_cooldown = 0.0;
     *move_state = MoveState::default();
 }
 
@@ -221,6 +269,10 @@ pub fn reset_player_run(
     vis: &mut Visibility,
     level: &LevelDocument,
 ) {
+    player.keys = [0; 10];
+    player.armor = 0;
+    player.speed_boost = 0.0;
+    player.pad_cooldown = 0.0;
     player.respawn_point = spawn_center(level);
     player.checkpoint_id = None;
     respawn_player(transform, player, move_state, vis, level);
@@ -369,6 +421,13 @@ pub fn player_controller(
         let underwater = level.is_underwater_point(transform.translation);
         let launch_locked = player.launch > 0.0;
 
+        let ground_kind = if player.on_ground {
+            ground_block(&level, transform.translation.x, transform.translation.z)
+        } else {
+            None
+        };
+        let on_ice = ground_kind.is_some_and(|k| k == BlockKind::Ice);
+
         // Horizontal control: accel/friction (not instant wish velocity).
         if player.slamming {
             player.velocity.x = 0.0;
@@ -404,10 +463,17 @@ pub fn player_controller(
             } else {
                 (tuning.air_accel, tuning.air_friction, tuning.move_speed)
             };
+            let (accel, friction) = if on_ice {
+                // Ice: keep momentum, weak control.
+                (accel * 0.45, friction * 0.06)
+            } else {
+                (accel, friction)
+            };
+            let speed_mul = if player.speed_boost > 0.0 { 1.55 } else { 1.0 };
             apply_accel_friction(
                 &mut player.velocity,
                 horiz,
-                max_speed,
+                max_speed * speed_mul,
                 accel,
                 friction,
                 tuning.stop_speed,
@@ -431,6 +497,8 @@ pub fn player_controller(
         player.coyote = (player.coyote - dt).max(0.0);
         player.jump_buffer = (player.jump_buffer - dt).max(0.0);
         player.launch = (player.launch - dt).max(0.0);
+        player.speed_boost = (player.speed_boost - dt).max(0.0);
+        player.pad_cooldown = (player.pad_cooldown - dt).max(0.0);
 
         if keys.just_pressed(KeyCode::Space) {
             player.jump_buffer = tuning.jump_buffer;
@@ -475,6 +543,15 @@ pub fn player_controller(
             }
         }
 
+        // Conveyor: push the player along the block's facing while on top.
+        if let Some(kind) = ground_kind
+            && kind == BlockKind::Conveyor
+            && let Some(rot) = ground_block_rot(&level, transform.translation.x, transform.translation.z)
+        {
+            let dir = Quat::from_rotation_y(rot as f32 * std::f32::consts::FRAC_PI_2) * Vec3::X;
+            player.velocity += dir * 6.0 * dt;
+        }
+
         let underwater = level.is_underwater_point(transform.translation);
         let gravity = if underwater {
             tuning.water_gravity
@@ -488,18 +565,24 @@ pub fn player_controller(
         };
         player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
 
+        // Climb surface: hold W while overlapping a Climb block to ascend.
+        let on_climb = overlaps_kind(
+            transform.translation,
+            he,
+            &level,
+            BlockKind::Climb,
+        );
+        if on_climb && kb && keys.pressed(KeyCode::KeyW) {
+            player.velocity.y = 4.5;
+        }
+
         let move_he = if crouching {
             Vec3::new(he.x, he.y * 0.55, he.z)
         } else {
             he
         };
 
-        // Stay glued to the ground: when grounded (walking / landing / holding
-        // a stance), seat the feet exactly on the top surface *before* the
-        // move so the box never starts embedded. This is the robust mitigation
-        // for crouch/stand: growing the box downward while embedded makes the
-        // horizontal sweep treat the floor as a wall and jams the player into
-        // geometry (fall-through). Pre-seating keeps the box top-up always.
+        // Stay glued to the ground.
         let grounding_ok =
             (player.was_on_ground || player.on_ground) && !underwater && player.velocity.y <= 0.0;
         if grounding_ok {
@@ -673,6 +756,17 @@ pub fn player_controller(
         } else {
             ActionState::Run
         };
+
+        if player.on_ground
+            && player.velocity.y <= 0.0
+            && ground_block(&level, transform.translation.x, transform.translation.z)
+                == Some(BlockKind::Bounce)
+        {
+            player.velocity.y = JUMP_SPEED * 1.35;
+            player.on_ground = false;
+            player.coyote = 0.0;
+            player.was_on_ground = false;
+        }
     }
 }
 
@@ -689,6 +783,11 @@ pub fn play_hazard_goal(
             he,
             &level,
             super::block::BlockKind::Hazard,
+        ) || overlaps_kind(
+            transform.translation,
+            he,
+            &level,
+            super::block::BlockKind::Spikes,
         );
         let fell_off = transform.translation.y < -20.0;
         let bounds = level.play_bounds();
@@ -699,16 +798,22 @@ pub fn play_hazard_goal(
         let manual_reset = keys.just_pressed(KeyCode::KeyR);
 
         if hit_hazard || fell_off || out_of_bounds || manual_reset {
-            if hit_hazard || fell_off || out_of_bounds {
-                ui.deaths += 1;
+            if hit_hazard && player.armor > 0 {
+                player.armor -= 1;
+                player.pad_cooldown = 0.6;
+                ui.set_status(format!("Ouch! Armor left: {}", player.armor));
+            } else {
+                if hit_hazard || fell_off || out_of_bounds {
+                    ui.deaths += 1;
+                }
+                respawn_player(
+                    &mut transform,
+                    &mut player,
+                    &mut move_state,
+                    &mut vis,
+                    &level,
+                );
             }
-            respawn_player(
-                &mut transform,
-                &mut player,
-                &mut move_state,
-                &mut vis,
-                &level,
-            );
         }
     }
 }

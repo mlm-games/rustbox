@@ -157,6 +157,41 @@ impl Plugin for MakerPlugin {
             .add_systems(
                 Update,
                 (
+                    entities_runtime::use_teleporters
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::apply_fans
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::touch_bumpers
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::break_crates
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::collect_keys
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::update_lock_gates
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::collect_heal_orbs
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::touch_speed_rings
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                    entities_runtime::update_crumble_plates
+                        .run_if(in_play)
+                        .after(player::player_controller),
+                )
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
+            )
+            .add_systems(
+                Update,
+                (
                     editor::selection_hotkeys
                         .run_if(in_edit)
                         .after(ui_bridge::update_input_capture)

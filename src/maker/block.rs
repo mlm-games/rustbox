@@ -16,6 +16,11 @@ impl BlockKindColor for BlockKind {
             BlockKind::Goal => Color::srgb(0.95, 0.82, 0.25),
             BlockKind::Spawn => Color::srgb(0.25, 0.55, 0.95),
             BlockKind::Water => Color::srgb(0.20, 0.55, 0.95),
+            BlockKind::Ice => Color::srgb(0.65, 0.85, 0.95),
+            BlockKind::Spikes => Color::srgb(0.55, 0.55, 0.62),
+            BlockKind::Conveyor => Color::srgb(0.45, 0.75, 0.95),
+            BlockKind::Bounce => Color::srgb(0.95, 0.45, 0.45),
+            BlockKind::Climb => Color::srgb(0.45, 0.65, 0.45),
         }
     }
 }

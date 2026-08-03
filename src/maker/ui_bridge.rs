@@ -304,6 +304,15 @@ pub fn push_ui_state(
         EntityKind::TriggerOrb => 5,
         EntityKind::RelayGate => 6,
         EntityKind::Checkpoint => 7,
+        EntityKind::Teleporter => 8,
+        EntityKind::Fan => 9,
+        EntityKind::Bumper => 10,
+        EntityKind::Crate => 11,
+        EntityKind::Key => 12,
+        EntityKind::LockGate => 13,
+        EntityKind::HealOrb => 14,
+        EntityKind::SpeedRing => 15,
+        EntityKind::CrumblePlate => 16,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,

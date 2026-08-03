@@ -65,6 +65,22 @@ pub fn block_palette_hotkeys(
         brush.kind = BlockKind::Water;
         ui.set_status("Water: fills a cell with swimmable water");
     }
+    if keys.just_pressed(KeyCode::Digit7) {
+        brush.kind = BlockKind::Ice;
+        ui.set_status("Ice: slippery surface");
+    }
+    if keys.just_pressed(KeyCode::Digit8) {
+        brush.kind = BlockKind::Spikes;
+        ui.set_status("Spikes: floor/ceiling hazard");
+    }
+    if keys.just_pressed(KeyCode::Digit9) {
+        brush.kind = BlockKind::Conveyor;
+        ui.set_status("Conveyor: pushes along its facing (R rotates)");
+    }
+    if keys.just_pressed(KeyCode::Digit0) {
+        brush.kind = BlockKind::Bounce;
+        ui.set_status("Bounce: springs you up");
+    }
     if keys.just_pressed(KeyCode::KeyR) {
         brush.rot = (brush.rot.wrapping_add(1)) % 4;
         ui.set_status(format!("Block rotation: {}°", (brush.rot as u16) * 90));
@@ -137,6 +153,15 @@ pub fn entity_palette_hotkeys(
     }
     if keys.just_pressed(KeyCode::Digit7) {
         sel_e.0 = EntityKind::RelayGate;
+    }
+    if keys.just_pressed(KeyCode::Digit8) {
+        sel_e.0 = EntityKind::Teleporter;
+    }
+    if keys.just_pressed(KeyCode::Digit9) {
+        sel_e.0 = EntityKind::Fan;
+    }
+    if keys.just_pressed(KeyCode::Digit0) {
+        sel_e.0 = EntityKind::Bumper;
     }
 }
 
@@ -1082,7 +1107,7 @@ pub fn update_preview_and_edit(
                     let id = level.alloc_id();
                     let mut data = EntityData::defaults_for(sel_e.0, place_cell, id);
                     data.yaw_deg = place_yaw.0;
-                    if matches!(data.kind, EntityKind::TriggerOrb | EntityKind::RelayGate) {
+                    if data.kind.uses_link() {
                         data.link = channel.0;
                     }
                     let world = place_cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
@@ -1312,6 +1337,15 @@ pub fn draw_selected_entity_gizmo(
         EntityKind::TriggerOrb => Vec3::splat(0.45),
         EntityKind::RelayGate => Vec3::new(0.6, 1.1, 0.4),
         EntityKind::Checkpoint => Vec3::splat(0.45),
+        EntityKind::Teleporter => Vec3::new(0.55, 0.3, 0.55),
+        EntityKind::Fan => Vec3::splat(0.5),
+        EntityKind::Bumper => Vec3::splat(0.55),
+        EntityKind::Crate => Vec3::splat(0.5),
+        EntityKind::Key => Vec3::splat(0.4),
+        EntityKind::LockGate => Vec3::new(0.55, 1.2, 0.3),
+        EntityKind::HealOrb => Vec3::splat(0.4),
+        EntityKind::SpeedRing => Vec3::splat(0.6),
+        EntityKind::CrumblePlate => Vec3::new(0.55, 0.15, 0.55),
     };
     let color = Color::srgb(0.3, 0.8, 1.0);
     let min = center - half;
