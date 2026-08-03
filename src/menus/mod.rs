@@ -16,8 +16,8 @@ use repose_core::{
 use repose_material::material3::{
     ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, DropdownMenu, DropdownMenuConfig,
     DropdownMenuEntry, DropdownMenuItem, FilledTonalButton, FilledTonalIconButton,
-    IconButtonColors, IconButtonConfig, InputChip, MenuState, OutlinedTextField,
-    OutlinedTextFieldConfig,
+    IconButtonColors, IconButtonConfig, InputChip, MenuState, OutlinedTextFieldConfig,
+    OutlinedTextFieldState,
 };
 use repose_material::{Icon, Symbol, material_symbols};
 use repose_ui::anim_ext::{
@@ -2222,17 +2222,19 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let id_change = actions.clone();
     let id_submit = actions.clone();
     let a_id_go = actions.clone();
-    let id_field = OutlinedTextField(
+    let id_field = OutlinedTextFieldState(
         Modifier::new().width(170.0),
-        st.online_id_query.clone(),
+        id_state.clone(),
         move |v: String| push(&id_change, UiAction::OnlineSetIdQuery(v)),
         OutlinedTextFieldConfig {
             label: Some("Level ID".into()),
             placeholder: None,
             single_line: true,
-            on_submit: Some(Rc::new(move |_v: String| {
-                push(&id_submit, UiAction::OnlineSearchId)
+            on_submit: Some(Rc::new(move |v: String| {
+                push(&id_submit, UiAction::OnlineSetIdQuery(v));
+                push(&id_submit, UiAction::OnlineSearchId);
             })),
+            focus_tracker: Some(id_focus.clone()),
             ..Default::default()
         },
     );
@@ -2311,7 +2313,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
             upload_button,
             verified_hint,
-            Column(Modifier::new().fill_max_width()),
+            Column(Modifier::new().weight(1.0)),
             id_row,
         )),
     )
@@ -2319,7 +2321,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(
         Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
             shelf_row,
-            Column(Modifier::new().fill_max_width()),
+            Column(Modifier::new().weight(1.0)),
             sort_button,
             count_text,
         )),
