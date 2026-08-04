@@ -132,6 +132,10 @@ pub enum UiAction {
     MakerInspTrackSpeedDelta(f32),
     MakerInspTrackReverse,
     MakerInspTrackDelete,
+    MakerInspEditSignText,
+    MakerInspSetSignText(String),
+    MakerInspCancelSignText,
+    MakerCloseSignDialog,
     BrowseOpen,
     BrowsePlay(String),
     BrowseEdit(String),
@@ -230,6 +234,111 @@ fn modal_shell(inner: View) -> View {
     .child(inner)
 }
 
+/// Play-mode dialog showing a sign's text (mirrors MB64's message panel).
+/// Dismissed by pressing I / Space / Escape (handled on the Bevy side in
+/// `read_signs`) or by the Close button.
+fn sign_dialog_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let lines = st.sign_dialog_lines.clone();
+    let mut body: Vec<View> = vec![
+        RText(t(tr, "sign-dialog-title", "Sign"))
+            .size(26.0)
+            .color(col(217, 184, 115)),
+        spacer(12.0),
+    ];
+    for line in lines {
+        body.push(RText(line).size(16.0).color(RColor::WHITE));
+    }
+    body.push(spacer(16.0));
+    let a_close = actions.clone();
+    body.push(mk_button(
+        &t(tr, "sign-dialog-close", "Close (I)"),
+        col(60, 140, 90),
+        move || push(&a_close, UiAction::MakerCloseSignDialog),
+    ));
+
+    modal_shell(
+        Column(
+            Modifier::new()
+                .width(440.0)
+                .padding(24.0)
+                .background(col(20, 20, 28))
+                .clip_rounded(12.0)
+                .align_items(AlignItems::CENTER),
+        )
+        .children(body),
+    )
+}
+
+/// Edit-mode modal for editing a sign's text. The field keeps its own
+/// `TextFieldState`; Save pushes the text back through a `UiCommand` so it is
+/// undoable.
+fn sign_editor_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let text_state: Rc<RefCell<TextFieldState>> = remember(|| RefCell::new(TextFieldState::new()));
+    let focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if !focus.get() && text_state.borrow().text != st.sign_editor_text {
+        text_state.borrow_mut().text = st.sign_editor_text.clone();
+    }
+    // Keep Bevy-side hotkeys from firing while the field owns focus.
+    push(&actions, UiAction::SetKeyboardCaptured(focus.get()));
+
+    let field = BasicTextField(
+        text_state.clone(),
+        Modifier::new()
+            .width(380.0)
+            .height(150.0)
+            .align_self(AlignSelf::CENTER),
+        t(tr, "sign-editor-hint", "What does the sign say?"),
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::MultiLine {
+                min_height_in_lines: 5,
+                max_height_in_lines: 8,
+            },
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Text,
+                ime_action: ImeAction::Default,
+                ..KeyboardOptions::DEFAULT
+            },
+            focus_tracker: Some(focus.clone()),
+            ..Default::default()
+        },
+    );
+
+    let a_save = actions.clone();
+    let a_cancel = actions.clone();
+    let ts_save = text_state.clone();
+    modal_shell(
+        Column(
+            Modifier::new()
+                .width(460.0)
+                .padding(24.0)
+                .background(col(20, 20, 28))
+                .clip_rounded(12.0)
+                .align_items(AlignItems::CENTER),
+        )
+        .child((
+            RText(t(tr, "sign-editor-title", "Sign Text"))
+                .size(26.0)
+                .color(col(217, 184, 115)),
+            spacer(12.0),
+            field,
+            spacer(12.0),
+            Row(Modifier::new().gap(10.0)).children(vec![
+                mk_pill_button(
+                    RText(t(tr, "sign-editor-save", "Save")).size(16.0),
+                    move || push(&a_save, UiAction::MakerInspSetSignText(ts_save.borrow().text.clone())),
+                ),
+                mk_pill_button(
+                    RText(t(tr, "sign-editor-cancel", "Cancel")).size(16.0),
+                    move || push(&a_cancel, UiAction::MakerInspCancelSignText),
+                ),
+            ]),
+        )),
+    )
+}
+
+
 pub fn compose_root(
     overlay: OverlayHandle,
     st: SharedUi,
@@ -314,6 +423,16 @@ pub fn compose_root(
                     st.overlay == OverlayMenu::Online,
                     online_ui(&st, actions.clone()),
                     popup_anim_config("ingame_online"),
+                ))
+                .child(AnimatedVisibility(
+                    st.sign_dialog_open && !st.sign_editor_open,
+                    sign_dialog_ui(&st, actions.clone()),
+                    popup_anim_config("sign_dialog"),
+                ))
+                .child(AnimatedVisibility(
+                    st.sign_editor_open,
+                    sign_editor_ui(&st, actions.clone()),
+                    popup_anim_config("sign_editor"),
                 ))
         }
     };
@@ -955,7 +1074,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 20] = [
+    let items: [(u8, RColor); 21] = [
         (0, col(255, 215, 70)),
         (1, col(90, 190, 255)),
         (2, col(190, 90, 230)),
@@ -976,6 +1095,7 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (17, col(100, 115, 130)),
         (18, col(240, 155, 40)),
         (19, col(150, 105, 65)),
+        (20, col(217, 184, 115)),
     ];
     let a_rot = actions.clone();
     let mut row = Row(Modifier::new().gap(6.0));
@@ -1078,6 +1198,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             EntityKind::Cannon => ("toolbar-cannon", "Cannon"),
             EntityKind::OnOffSwitch => ("toolbar-onoff", "On/Off Switch"),
             EntityKind::TossCrate => ("toolbar-tosscrate", "Toss Crate"),
+            EntityKind::Sign => ("toolbar-sign", "Sign"),
         };
         body.push(
             RText(t(tr, label_key, label_fb))
@@ -1097,7 +1218,10 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         );
         body.push(spacer(6.0));
 
-        if !matches!(e.kind, EntityKind::Checkpoint | EntityKind::Key) {
+        if !matches!(
+            e.kind,
+            EntityKind::Checkpoint | EntityKind::Key | EntityKind::Sign
+        ) {
             let (param_key, param_fb, step) = match e.kind {
                 EntityKind::Glimmer => ("inspector-value", "Value", 0.5),
                 EntityKind::LaunchPad => ("inspector-impulse", "Impulse", 0.5),
@@ -1117,7 +1241,7 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 EntityKind::Cannon => ("inspector-arc", "Arc", 1.0),
                 EntityKind::OnOffSwitch => ("inspector-starts-on", "Starts On", 1.0),
                 EntityKind::TossCrate => ("inspector-breakable", "Breakable", 1.0),
-                EntityKind::Checkpoint | EntityKind::Key => unreachable!(),
+                EntityKind::Checkpoint | EntityKind::Key | EntityKind::Sign => unreachable!(),
             };
             let a_minus = actions.clone();
             let a_plus = actions.clone();
@@ -1127,6 +1251,27 @@ fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
                 move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
             ));
+        }
+
+        if e.kind == EntityKind::Sign {
+            let a_edit = actions.clone();
+            body.push(
+                Row(Modifier::new()
+                    .fill_max_width()
+                    .align_items(AlignItems::CENTER)
+                    .gap(6.0))
+                .children(vec![
+                    RText(t(tr, "inspector-sign-text", "Sign Text"))
+                        .size(12.0)
+                        .color(col(200, 200, 210)),
+                    mk_pill_button(
+                        RText(t(tr, "inspector-edit-text", "Edit Text"))
+                            .size(12.0)
+                            .color(RColor::WHITE),
+                        move || push_ui(&a_edit, UiAction::MakerInspEditSignText),
+                    ),
+                ]),
+            );
         }
 
         if e.kind.supports_contents() {

@@ -197,6 +197,9 @@ impl Plugin for MakerPlugin {
                     entities_runtime::launch_cannons
                         .run_if(in_play)
                         .after(player::player_controller),
+                    entities_runtime::read_signs
+                        .run_if(in_play)
+                        .after(player::player_controller),
                     entities_runtime::update_drops.run_if(in_play),
                     entities_runtime::collect_dropped_glimmers.run_if(in_play),
                     entities_runtime::despawn_drops_when_dirty

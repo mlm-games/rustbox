@@ -29,6 +29,9 @@ pub enum EntityKind {
     OnOffSwitch,
     /// A physics crate the player can pick up and throw (commit 20).
     TossCrate,
+    /// A readable wooden signpost that shows its `sign_text` in a dialog when
+    /// the player interacts with it.
+    Sign,
 }
 
 impl EntityKind {
@@ -54,6 +57,7 @@ impl EntityKind {
             Self::Cannon => "Cannon",
             Self::OnOffSwitch => "On/Off Switch",
             Self::TossCrate => "Toss Crate",
+            Self::Sign => "Sign",
         }
     }
 
@@ -67,7 +71,7 @@ impl EntityKind {
 
     /// Hide meaningless param steppers in the inspector.
     pub fn has_param(self) -> bool {
-        !matches!(self, Self::Checkpoint | Self::Key)
+        !matches!(self, Self::Checkpoint | Self::Key | Self::Sign)
     }
 
     /// Kinds that can hold a `ContainedItem` (v6+).
@@ -139,6 +143,9 @@ pub struct EntityData {
     /// v6+: item inside this container. Always `None` for non-containers.
     #[serde(default)]
     pub contents: ContainedItem,
+    /// v8+: text shown when the player reads a `Sign`. `\n` splits lines.
+    #[serde(default)]
+    pub sign_text: String,
 }
 
 fn default_param() -> f32 {

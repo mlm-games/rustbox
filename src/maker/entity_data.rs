@@ -30,6 +30,7 @@ impl EntityKindColor for EntityKind {
             Self::Cannon => Color::srgb(0.4, 0.45, 0.5),
             Self::OnOffSwitch => Color::srgb(0.95, 0.6, 0.15),
             Self::TossCrate => Color::srgb(0.6, 0.42, 0.25),
+            Self::Sign => Color::srgb(0.85, 0.72, 0.45),
         }
     }
 }
@@ -100,6 +101,12 @@ impl EntityDataExt for EntityData {
             EntityKind::Cannon => (6.0, None),
             EntityKind::OnOffSwitch => (1.0, None),
             EntityKind::TossCrate => (1.0, None),
+            EntityKind::Sign => (0.0, None),
+        };
+        let sign_text = if kind == EntityKind::Sign {
+            "A wooden sign.\nNothing is written on it.".to_string()
+        } else {
+            String::new()
         };
         EntityData {
             id,
@@ -111,6 +118,7 @@ impl EntityDataExt for EntityData {
             track: None,
             link: 0,
             contents: ContainedItem::None,
+            sign_text,
         }
     }
 }

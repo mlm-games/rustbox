@@ -1362,6 +1362,7 @@ pub fn draw_selected_entity_gizmo(
         EntityKind::Cannon => Vec3::new(0.45, 0.45, 0.45),
         EntityKind::OnOffSwitch => Vec3::new(0.35, 0.15, 0.35),
         EntityKind::TossCrate => Vec3::splat(0.5),
+        EntityKind::Sign => Vec3::new(0.5, 1.0, 0.3),
     };
     let color = Color::srgb(0.3, 0.8, 1.0);
     let min = center - half;

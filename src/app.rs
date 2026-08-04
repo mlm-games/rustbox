@@ -212,6 +212,16 @@ pub struct SharedUi {
     pub can_redo: bool,
     pub maker_status: String,
     pub pointer_over_ui: bool,
+    /// Runtime sign-read dialog (Play mode): `sign_dialog_open` gates the
+    /// overlay; `sign_dialog_lines` holds the pre-wrapped text.
+    pub sign_dialog_open: bool,
+    pub sign_dialog_lines: Vec<String>,
+    /// Sign text editor (Edit mode): `sign_editor_open` gates the modal;
+    /// `sign_editor_id` is the entity being edited; `sign_editor_text` is the
+    /// live text field content.
+    pub sign_editor_open: bool,
+    pub sign_editor_id: u32,
+    pub sign_editor_text: String,
     // Level clear
     pub clear_time_secs: f32,
     pub clear_deaths: u32,
@@ -341,6 +351,11 @@ impl Default for SharedUi {
             can_redo: false,
             maker_status: String::new(),
             pointer_over_ui: false,
+            sign_dialog_open: false,
+            sign_dialog_lines: Vec::new(),
+            sign_editor_open: false,
+            sign_editor_id: 0,
+            sign_editor_text: String::new(),
             clear_time_secs: 0.0,
             clear_deaths: 0,
             first_clear: false,
@@ -536,6 +551,8 @@ fn sync_shared_ui(
         ui.can_undo = m.can_undo;
         ui.can_redo = m.can_redo;
         ui.maker_status = m.status.clone();
+        ui.sign_dialog_open = m.sign_dialog_open;
+        ui.sign_dialog_lines = m.sign_dialog_lines.clone();
         ui.clear_time_secs = m.clear_time_secs;
         ui.clear_deaths = m.clear_deaths;
         ui.first_clear = m.first_clear;
@@ -1318,6 +1335,7 @@ fn process_ui_actions(
                         17 => EntityKind::Cannon,
                         18 => EntityKind::OnOffSwitch,
                         19 => EntityKind::TossCrate,
+                        20 => EntityKind::Sign,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));
@@ -1458,6 +1476,49 @@ fn process_ui_actions(
                     && let Some(id) = m.active_track_data.as_ref().map(|t| t.id)
                 {
                     m.commands.push(UiCommand::DeleteTrack(id));
+                }
+            }
+            UiAction::MakerInspEditSignText => {
+                if let Some(ref mut m) = maker_ui
+                    && let Some(id) = m.selected_entity_data.as_ref().map(|e| e.id)
+                    && let Ok(mut ui) = bridge.shared.lock()
+                {
+                    ui.sign_editor_id = id;
+                    ui.sign_editor_text = m
+                        .selected_entity_data
+                        .as_ref()
+                        .map(|e| e.sign_text.clone())
+                        .unwrap_or_default();
+                    ui.sign_editor_open = true;
+                }
+            }
+            UiAction::MakerInspSetSignText(text) => {
+                if let Some(ref mut m) = maker_ui
+                    && let Ok(ui) = bridge.shared.lock()
+                    && ui.sign_editor_open
+                {
+                    let id = ui.sign_editor_id;
+                    m.commands.push(UiCommand::SetEntitySignText { id, text });
+                }
+                if let Ok(mut ui) = bridge.shared.lock() {
+                    ui.sign_editor_open = false;
+                    ui.sign_editor_text.clear();
+                }
+            }
+            UiAction::MakerInspCancelSignText => {
+                if let Ok(mut ui) = bridge.shared.lock() {
+                    ui.sign_editor_open = false;
+                    ui.sign_editor_text.clear();
+                }
+            }
+            UiAction::MakerCloseSignDialog => {
+                if let Ok(mut ui) = bridge.shared.lock() {
+                    ui.sign_dialog_open = false;
+                    ui.sign_dialog_lines.clear();
+                }
+                if let Some(ref mut m) = maker_ui {
+                    m.sign_dialog_open = false;
+                    m.sign_dialog_lines.clear();
                 }
             }
             UiAction::MakerLoad => {

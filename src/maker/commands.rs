@@ -72,6 +72,11 @@ pub enum EditCommand {
         old: ContainedItem,
         new: ContainedItem,
     },
+    SetEntitySignText {
+        id: LevelEntityId,
+        old: String,
+        new: String,
+    },
     ReverseTrackPoints {
         track_id: TrackId,
     },
@@ -204,6 +209,12 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
                 e.contents = *new;
             }
         }
+        EditCommand::SetEntitySignText { id, new, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.sign_text = new.clone();
+            }
+            level.entities_dirty = true;
+        }
         EditCommand::ReverseTrackPoints { track_id } => {
             if let Some(t) = level.track_mut(*track_id) {
                 t.points.reverse();
@@ -326,6 +337,12 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
             if let Some(e) = level.entity_mut(*id) {
                 e.contents = *old;
             }
+        }
+        EditCommand::SetEntitySignText { id, old, .. } => {
+            if let Some(e) = level.entity_mut(*id) {
+                e.sign_text = old.clone();
+            }
+            level.entities_dirty = true;
         }
         EditCommand::ReverseTrackPoints { track_id } => {
             if let Some(t) = level.track_mut(*track_id) {

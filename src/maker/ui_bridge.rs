@@ -79,6 +79,11 @@ pub enum UiCommand {
     OnlineUpload,
     /// Copy the anonymous creator recovery key to the clipboard.
     CopyCreatorKey,
+    /// Replace a sign entity's text (Undo-friendly; no-op unless entity is a Sign).
+    SetEntitySignText {
+        id: u32,
+        text: String,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -105,6 +110,11 @@ pub struct MakerUi {
     pub can_redo: bool,
     pub status: String,
     pub status_timer: f32,
+
+    /// Runtime sign-read dialog (Play mode). While `sign_dialog_open` the modal
+    /// is shown and player input is blocked; `sign_dialog_lines` holds the text.
+    pub sign_dialog_open: bool,
+    pub sign_dialog_lines: Vec<String>,
 
     pub commands: Vec<UiCommand>,
     pub pointer_over_ui: bool,
@@ -336,6 +346,7 @@ pub fn push_ui_state(
         EntityKind::Cannon => 17,
         EntityKind::OnOffSwitch => 18,
         EntityKind::TossCrate => 19,
+        EntityKind::Sign => 20,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,
@@ -801,6 +812,16 @@ pub fn drain_ui_commands(
                     }
                 }
             }
+            UiCommand::SetEntitySignText { id, text } => {
+                if let Some(e) = level.entity_by_id(id) {
+                    let old = e.sign_text.clone();
+                    let text: String = text.chars().take(rustbox_format::MAX_SIGN_TEXT).collect();
+                    if text != old {
+                        history.apply(&mut level, EditCommand::SetEntitySignText { id, old, new: text });
+                        ui.set_status("Sign text updated");
+                    }
+                }
+            }
             UiCommand::CycleLinkChannel => {
                 channel.0 = channel.0 % 9 + 1;
                 ui.set_status(format!("Link channel: {}", channel.0));
@@ -1064,8 +1085,10 @@ pub fn update_input_capture(
     bridge: Res<crate::menus::UiBridge>,
     mut capture: ResMut<InputCapture>,
 ) {
-    let modal_open =
-        paused.0 || transition.block_input || !matches!(*overlay, crate::app::OverlayMenu::None);
+    let modal_open = paused.0
+        || transition.block_input
+        || ui.sign_dialog_open
+        || !matches!(*overlay, crate::app::OverlayMenu::None);
     let pending_ui_touch = bridge
         .actions
         .lock()

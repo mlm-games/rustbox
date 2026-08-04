@@ -59,6 +59,7 @@ pub const KIND_CRUMBLE_PLATE: u32 = 1 << 16;
 pub const KIND_CANNON: u32 = 1 << 17;
 pub const KIND_ON_OFF_SWITCH: u32 = 1 << 18;
 pub const KIND_TOSS_CRATE: u32 = 1 << 19;
+pub const KIND_SIGN: u32 = 1 << 20;
 
 pub fn kind_flag(kind: EntityKind) -> u32 {
     match kind {
@@ -82,6 +83,7 @@ pub fn kind_flag(kind: EntityKind) -> u32 {
         EntityKind::Cannon => KIND_CANNON,
         EntityKind::OnOffSwitch => KIND_ON_OFF_SWITCH,
         EntityKind::TossCrate => KIND_TOSS_CRATE,
+        EntityKind::Sign => KIND_SIGN,
     }
 }
 
@@ -241,6 +243,7 @@ pub fn parse_browse_query(raw: &str) -> BrowseQuery {
                 "pad" | "launch" => q.has_kinds.push(EntityKind::LaunchPad),
                 "drift" => q.has_kinds.push(EntityKind::DriftPlate),
                 "glimmer" => q.has_kinds.push(EntityKind::Glimmer),
+                "sign" | "signs" => q.has_kinds.push(EntityKind::Sign),
                 _ => q.text_terms.push(lower),
             }
         } else {

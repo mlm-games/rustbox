@@ -15,11 +15,12 @@ use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::MakerCleanup;
 use super::collision::is_solid;
+use super::camera::CameraRig;
 use super::entity_data::{
     ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
 };
 use super::level::LevelDocument;
-use super::mode::MakerMode;
+use super::mode::{InputCapture, MakerMode};
 use super::player::{ActionState, JUMP_SPEED, MoveState, Player, respawn_player};
 use super::track::{TrackDataExt, TrackId};
 use super::ui_bridge::MakerUi;
@@ -130,6 +131,15 @@ pub struct CrateProp {
 /// (commit 18: toggles OnOffConveyorA/B).
 #[derive(Component)]
 pub struct OnOffSwitch;
+
+/// A readable wooden signpost. Pressing the interact key while nearby and
+/// facing it opens a dialog showing `text` (MB64 "Bill Board").
+#[derive(Component)]
+pub struct Sign {
+    pub text: String,
+    /// Facing direction (radians, Y-up), used for the read-facing check.
+    pub yaw_rad: f32,
+}
 
 /// What a container (Crate / Prowler) will release when broken or defeated.
 #[derive(Component)]
@@ -299,6 +309,7 @@ pub struct EntityAssets {
     pub albedo_mats: HashMap<EntityKind, Handle<StandardMaterial>>,
     pub pad_mesh: Handle<Mesh>,
     pub marker_mesh: Handle<Mesh>,
+    pub sign_board_mesh: Handle<Mesh>,
     pub mats: HashMap<EntityKind, Handle<StandardMaterial>>,
     pub link_mats: HashMap<u32, Handle<StandardMaterial>>,
 }
@@ -349,6 +360,7 @@ pub fn setup_entity_assets(
         EntityKind::Cannon,
         EntityKind::OnOffSwitch,
         EntityKind::TossCrate,
+        EntityKind::Sign,
     ] {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
@@ -396,6 +408,7 @@ pub fn setup_entity_assets(
 
     let pad_mesh = meshes.add(Cylinder::new(0.45, 0.15));
     let marker_mesh = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
+    let sign_board_mesh = meshes.add(Cuboid::new(0.9, 0.45, 0.08));
 
     let mut albedo_mats = HashMap::new();
     let mut albedo = |path: &'static str| {
@@ -424,6 +437,7 @@ pub fn setup_entity_assets(
         albedo_mats,
         pad_mesh,
         marker_mesh,
+        sign_board_mesh,
         mats,
         link_mats,
     });
@@ -453,6 +467,7 @@ fn root_y_off(kind: EntityKind) -> f32 {
         EntityKind::Cannon => 0.45,
         EntityKind::OnOffSwitch => 0.15,
         EntityKind::TossCrate => 0.5,
+        EntityKind::Sign => 0.1,
     }
 }
 
@@ -500,7 +515,8 @@ fn visual_for(
         | EntityKind::CrumblePlate
         | EntityKind::Cannon
         | EntityKind::OnOffSwitch
-        | EntityKind::TossCrate => return None,
+        | EntityKind::TossCrate
+        | EntityKind::Sign => return None,
     };
     let scene = assets.scenes[&kind].clone();
     let material = match kind {
@@ -987,6 +1003,35 @@ pub fn reconcile_entities(
                     ))
                     .id(),
 
+                EntityKind::Sign => {
+                    let root = commands
+                        .spawn((
+                            tf,
+                            LevelEnt {
+                                id: data.id,
+                                kind: data.kind,
+                            },
+                            MakerCleanup,
+                        ))
+                        .id();
+                    commands.entity(root).with_children(|p| {
+                        p.spawn((
+                            Transform::from_xyz(0.0, 0.25, 0.0)
+                                .with_scale(Vec3::new(0.18, 0.5, 0.18)),
+                            Mesh3d(assets.pad_mesh.clone()),
+                            MeshMaterial3d(assets.mats[&EntityKind::Sign].clone()),
+                            MakerCleanup,
+                        ));
+                        p.spawn((
+                            Transform::from_xyz(0.0, 0.55, 0.0),
+                            Mesh3d(assets.sign_board_mesh.clone()),
+                            MeshMaterial3d(assets.mats[&EntityKind::Sign].clone()),
+                            MakerCleanup,
+                        ));
+                    });
+                    root
+                }
+
                 _ => unreachable!("non-visual entity kind without primitive fallback"),
             }
         };
@@ -1225,6 +1270,14 @@ pub fn reconcile_entities(
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
             }
+            EntityKind::Sign => {
+                ecmds.insert(Sign {
+                    text: data.sign_text.clone(),
+                    yaw_rad: data.yaw_deg.to_radians(),
+                });
+                #[cfg(feature = "physics")]
+                ecmds.insert(Sensor);
+            }
             EntityKind::TossCrate => {
                 ecmds.insert(CrateProp {
                     breakable: data.param >= 0.5,
@@ -1293,6 +1346,96 @@ pub fn animate_kit(time: Res<Time>, mut q: Query<(&mut Transform, &KitAnim)>) {
         }
         tf.rotate_y(dt * anim.spin);
     }
+}
+
+/// Split sign text into dialog lines of at most 30 chars, honoring `\n`
+/// (mirrors MB64's 5x30 dialog buffer).
+pub fn wrap_sign_text(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in text.split('\n') {
+        let mut line = String::new();
+        for ch in raw.chars() {
+            if ch == '\r' {
+                continue;
+            }
+            if line.chars().count() >= 30 {
+                out.push(std::mem::take(&mut line));
+            }
+            line.push(ch);
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// Play-mode sign reading. Pressing the interact key (I) while in front of a
+/// sign opens a modal dialog with its text; pressing it again (or Space /
+/// Escape) closes it. While open the dialog blocks player input via
+/// `InputCapture` (see `update_input_capture`).
+pub fn read_signs(
+    mode: Res<MakerMode>,
+    capture: Res<InputCapture>,
+    keys: Res<ButtonInput<KeyCode>>,
+    rig: Res<CameraRig>,
+    mut ui: ResMut<MakerUi>,
+    player_q: Query<&Transform, With<Player>>,
+    signs: Query<(&Transform, &Sign), Without<Player>>,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let Ok(pt) = player_q.single() else {
+        return;
+    };
+
+    if ui.sign_dialog_open {
+        if keys.just_pressed(KeyCode::KeyI)
+            || keys.just_pressed(KeyCode::Space)
+            || keys.just_pressed(KeyCode::Escape)
+        {
+            ui.sign_dialog_open = false;
+            ui.sign_dialog_lines.clear();
+        }
+        return;
+    }
+
+    if capture.ui_wants_keyboard || !keys.just_pressed(KeyCode::KeyI) {
+        return;
+    }
+
+    // The play camera's yaw is the look direction (matches player_controller).
+    let (sin, cos) = rig.yaw.sin_cos();
+    let player_forward = Vec3::new(-sin, 0.0, -cos);
+
+    let mut best: Option<(f32, String)> = None;
+    for (tf, sign) in &signs {
+        let dist = pt.translation.distance(tf.translation);
+        if dist > 1.8 {
+            continue;
+        }
+        let to_player = (pt.translation - tf.translation) * Vec3::new(1.0, 0.0, 1.0);
+        if to_player.length_squared() < 1e-6 {
+            continue;
+        }
+        let to_player_n = to_player.normalize();
+        let sign_forward = Vec3::new(-sign.yaw_rad.sin(), 0.0, -sign.yaw_rad.cos());
+        if sign_forward.dot(to_player_n) < 0.2 {
+            continue;
+        }
+        if player_forward.dot(-to_player_n) < 0.2 {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(bd, _)| dist < *bd) {
+            best = Some((dist, sign.text.clone()));
+        }
+    }
+
+    let Some((_, text)) = best else {
+        return;
+    };
+    ui.status.clear();
+    ui.sign_dialog_open = true;
+    ui.sign_dialog_lines = wrap_sign_text(&text);
 }
 
 pub fn tick_launch_pads_cooldown(time: Res<Time>, mut pads: Query<&mut LaunchPad>) {

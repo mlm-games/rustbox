@@ -6,7 +6,7 @@ use crate::entity::{ContainedItem, EntityData, EntityKind};
 use crate::level::{BlockData, BoundaryConfig, ClearCondition, LevelData, LevelTag, Theme};
 use crate::track::TrackData;
 
-pub const FORMAT_VERSION: u32 = 7;
+pub const FORMAT_VERSION: u32 = 8;
 
 /// Upper bound for inflating untrusted levels (tiny compressed input must not
 /// explode into gigabytes of memory).
@@ -20,6 +20,8 @@ pub const MAX_ENTITIES: usize = 2_000;
 pub const MAX_TRACKS: usize = 64;
 pub const MAX_TRACK_POINTS: usize = 512;
 pub const MAX_COORD: i32 = 512;
+/// Upper bound on a sign's readable text (chars). Same as the builder. (MB64)
+pub const MAX_SIGN_TEXT: usize = 160;
 
 fn level_format_entities() -> u32 {
     1
@@ -58,6 +60,43 @@ pub fn upgrade_entity_v5(old: EntityDataV5) -> EntityData {
         track: old.track,
         link: old.link,
         contents: ContainedItem::None,
+        sign_text: String::new(),
+    }
+}
+
+/// Entity layout used by format versions 6..=7 (before `sign_text`). `contents`
+/// already exists here, only the sign text is new in v8.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EntityDataV6 {
+    pub id: u32,
+    pub kind: EntityKind,
+    pub cell: [i32; 3],
+    #[serde(default)]
+    pub yaw_deg: f32,
+    #[serde(default = "default_param_v5")]
+    pub param: f32,
+    #[serde(default)]
+    pub cell_b: Option<[i32; 3]>,
+    #[serde(default)]
+    pub track: Option<crate::track::TrackId>,
+    #[serde(default)]
+    pub link: u32,
+    #[serde(default)]
+    pub contents: ContainedItem,
+}
+
+pub fn upgrade_entity_v6(old: EntityDataV6) -> EntityData {
+    EntityData {
+        id: old.id,
+        kind: old.kind,
+        cell: old.cell,
+        yaw_deg: old.yaw_deg,
+        param: old.param,
+        cell_b: old.cell_b,
+        track: old.track,
+        link: old.link,
+        contents: old.contents,
+        sign_text: String::new(),
     }
 }
 
@@ -171,6 +210,84 @@ pub fn upgrade_v5(old: LevelDataV5) -> LevelData {
         spawn: old.spawn,
         blocks: old.blocks,
         entities: old.entities.into_iter().map(upgrade_entity_v5).collect(),
+        tracks: old.tracks,
+        entities_version: old.entities_version,
+        author_time: old.author_time,
+        author_deaths: old.author_deaths,
+        record_ms: old.record_ms,
+        clear_condition: old.clear_condition,
+        is_verified: old.is_verified,
+        description: old.description,
+        tags: old.tags,
+        author: old.author,
+        created_at: old.created_at,
+        size: old.size,
+        water_level: old.water_level,
+        theme: old.theme,
+        boundary: old.boundary,
+        secret_stars: old.secret_stars,
+        coin_star: old.coin_star,
+    }
+}
+
+/// Layout of version-6 and version-7 levels. v6 and v7 both used the
+/// `contents`-era entity layout; only v8 adds `sign_text`, so both are decoded
+/// through this struct and upgraded.
+#[derive(Serialize, Deserialize)]
+pub struct LevelFileV7 {
+    pub version: u32,
+    pub level: LevelDataV7,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelDataV7 {
+    pub name: String,
+    pub spawn: [i32; 3],
+    pub blocks: Vec<BlockData>,
+    #[serde(default)]
+    pub entities: Vec<EntityDataV6>,
+    #[serde(default)]
+    pub tracks: Vec<TrackData>,
+    #[serde(default)]
+    pub entities_version: u32,
+    #[serde(default)]
+    pub author_time: Option<u32>,
+    #[serde(default)]
+    pub author_deaths: u32,
+    #[serde(default)]
+    pub record_ms: Option<u32>,
+    #[serde(default)]
+    pub clear_condition: ClearCondition,
+    #[serde(default)]
+    pub is_verified: bool,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<LevelTag>,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub created_at: u64,
+    #[serde(default)]
+    pub size: Option<[i32; 3]>,
+    #[serde(default)]
+    pub water_level: Option<i32>,
+    #[serde(default)]
+    pub theme: Theme,
+    #[serde(default)]
+    pub boundary: BoundaryConfig,
+    #[serde(default)]
+    pub secret_stars: u8,
+    #[serde(default)]
+    pub coin_star: bool,
+}
+
+pub fn upgrade_v7(old: LevelDataV7) -> LevelData {
+    LevelData {
+        name: old.name,
+        spawn: old.spawn,
+        blocks: old.blocks,
+        entities: old.entities.into_iter().map(upgrade_entity_v6).collect(),
         tracks: old.tracks,
         entities_version: old.entities_version,
         author_time: old.author_time,
@@ -517,8 +634,11 @@ pub fn decode_level(compressed: &[u8]) -> anyhow::Result<LevelData> {
         u32::from_le_bytes(head)
     };
     match version {
-        7 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
-        6 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
+        8 => Ok(bincode::deserialize::<LevelFile>(&bytes)?.level),
+        // v6 and v7 shared the same entity layout; both upgrade to v8.
+        7 | 6 => Ok(upgrade_v7(
+            bincode::deserialize::<LevelFileV7>(&bytes)?.level,
+        )),
         5 => Ok(upgrade_v5(
             bincode::deserialize::<LevelFileV5>(&bytes)?.level,
         )),
@@ -599,6 +719,12 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
         }
         if !e.yaw_deg.is_finite() || !e.param.is_finite() {
             bail!("entity has a non-finite value");
+        }
+        if e.sign_text.chars().count() > MAX_SIGN_TEXT {
+            bail!("sign text too long");
+        }
+        if e.sign_text.contains('\0') {
+            bail!("sign text contains a null byte");
         }
         if e.contents != ContainedItem::None {
             if !e.kind.supports_contents() {
@@ -710,6 +836,7 @@ mod tests {
                 track: None,
                 link: 0,
                 contents: ContainedItem::None,
+                sign_text: String::new(),
             }],
             tracks: vec![],
             entities_version: 1,
@@ -855,6 +982,7 @@ mod tests {
             track: None,
             link: 3,
             contents: ContainedItem::Key,
+            sign_text: String::new(),
         });
         let bytes = encode_level(&level).unwrap();
         let back = decode_level(&bytes).unwrap();
@@ -888,6 +1016,7 @@ mod tests {
             track: None,
             link: 1,
             contents,
+            sign_text: String::new(),
         }
     }
 
@@ -904,6 +1033,7 @@ mod tests {
             track: None,
             link: 0,
             contents: ContainedItem::Key,
+            sign_text: String::new(),
         });
         assert!(validate_level(&glimmer_in_key).is_err());
 
@@ -940,7 +1070,77 @@ mod tests {
             track: None,
             link: 1,
             contents: ContainedItem::None,
+            sign_text: String::new(),
         });
         assert!(validate_level(&crate_key).is_ok());
+    }
+
+    #[test]
+    fn v7_upgrades_to_empty_sign_text() {
+        let old = LevelDataV7 {
+            name: "Old7".into(),
+            spawn: [0, 1, 0],
+            blocks: vec![],
+            entities: vec![EntityDataV6 {
+                id: 1,
+                kind: EntityKind::Sign,
+                cell: [0, 1, 0],
+                yaw_deg: 0.0,
+                param: 1.0,
+                cell_b: None,
+                track: None,
+                link: 0,
+                contents: ContainedItem::None,
+            }],
+            tracks: vec![],
+            entities_version: 1,
+            author_time: None,
+            author_deaths: 0,
+            record_ms: None,
+            clear_condition: ClearCondition::ReachGoal,
+            is_verified: false,
+            description: String::new(),
+            tags: vec![],
+            author: String::new(),
+            created_at: 0,
+            size: None,
+            water_level: None,
+            theme: Theme::Grass,
+            boundary: BoundaryConfig::default(),
+            secret_stars: 0,
+            coin_star: false,
+        };
+        let bytes = bincode::serialize(&LevelFileV7 { version: 7, level: old }).unwrap();
+        let lvl = decode_level(&miniz_oxide::deflate::compress_to_vec(&bytes, 6)).unwrap();
+        assert_eq!(lvl.entities.len(), 1);
+        assert_eq!(lvl.entities[0].kind, EntityKind::Sign);
+        assert_eq!(lvl.entities[0].sign_text, "");
+    }
+
+    #[test]
+    fn sign_text_round_trips_and_validates() {
+        let mut level = sample_level();
+        level.entities.push(EntityData {
+            id: 55,
+            kind: EntityKind::Sign,
+            cell: [2, 1, 2],
+            yaw_deg: 90.0,
+            param: 0.0,
+            cell_b: None,
+            track: None,
+            link: 0,
+            contents: ContainedItem::None,
+            sign_text: "Welcome!\nJump over the pit.".into(),
+        });
+        let bytes = encode_level(&level).unwrap();
+        let back = decode_level(&bytes).unwrap();
+        let sign = back.entities.last().unwrap();
+        assert_eq!(sign.kind, EntityKind::Sign);
+        assert_eq!(sign.sign_text, "Welcome!\nJump over the pit.");
+        assert!(validate_level(&back).is_ok());
+
+        let mut too_long = level;
+        too_long.entities.last_mut().unwrap().sign_text = "x".repeat(MAX_SIGN_TEXT + 1);
+        assert!(validate_level(&too_long).is_err());
     }
 }
