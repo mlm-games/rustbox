@@ -596,11 +596,11 @@ fn shape_faces(shape: BlockShape) -> Vec<FaceSpec> {
 }
 
 /// Whether a solid `neighbor` fully hides one of our faces in `dir`.
-fn face_occluded(shape: BlockShape, neighbor: Option<&BlockData>) -> bool {
+fn face_occluded(level: &LevelDocument, shape: BlockShape, neighbor: Option<&BlockData>) -> bool {
     let Some(nb) = neighbor else {
         return false;
     };
-    if !nb.kind.is_solid() {
+    if !level.kind_is_solid(nb.kind) {
         return false;
     }
     // A box-shaped neighbor with a full footprint covers an axis-aligned box
@@ -618,8 +618,8 @@ fn face_occluded(shape: BlockShape, neighbor: Option<&BlockData>) -> bool {
 }
 
 /// Is a solid/water neighbor fully covering one of our faces?
-fn face_covered_by_neighbor(nb: &BlockData) -> bool {
-    nb.kind == BlockKind::Water || nb.kind.is_solid()
+fn face_covered_by_neighbor(level: &LevelDocument, nb: &BlockData) -> bool {
+    nb.kind == BlockKind::Water || level.kind_is_solid(nb.kind)
 }
 
 struct MeshOut {
@@ -672,6 +672,10 @@ fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &B
     if block.kind == BlockKind::Water {
         return;
     }
+    // Timed Pulse blocks disappear while the pulse is off.
+    if block.kind.is_pulse() && !level.pulse_on {
+        return;
+    }
     let color = block.kind.color().to_linear().to_f32_array();
     let color = if level.cell_water(cell) {
         [color[0] * 0.55, color[1] * 0.62, color[2] * 0.78, color[3]]
@@ -682,7 +686,7 @@ fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &B
     for f in shape_faces(block.shape) {
         if f.dir != IVec3::ZERO {
             let neighbor = level.get_block(cell + f.dir);
-            if face_occluded(block.shape, neighbor) {
+            if face_occluded(level, block.shape, neighbor) {
                 continue;
             }
         }
@@ -751,7 +755,7 @@ fn build_water_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
                 for f in shape_faces(BlockShape::Full) {
                     if f.dir != IVec3::ZERO {
                         let neighbor = level.get_block(cell + f.dir);
-                        if neighbor.is_some_and(face_covered_by_neighbor) {
+                        if neighbor.is_some_and(|nb| face_covered_by_neighbor(level, nb)) {
                             continue;
                         }
                     }

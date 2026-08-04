@@ -1110,7 +1110,11 @@ mod tests {
             secret_stars: 0,
             coin_star: false,
         };
-        let bytes = bincode::serialize(&LevelFileV7 { version: 7, level: old }).unwrap();
+        let bytes = bincode::serialize(&LevelFileV7 {
+            version: 7,
+            level: old,
+        })
+        .unwrap();
         let lvl = decode_level(&miniz_oxide::deflate::compress_to_vec(&bytes, 6)).unwrap();
         assert_eq!(lvl.entities.len(), 1);
         assert_eq!(lvl.entities[0].kind, EntityKind::Sign);

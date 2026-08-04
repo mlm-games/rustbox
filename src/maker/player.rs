@@ -222,7 +222,7 @@ fn ground_block(level: &LevelDocument, wx: f32, wz: f32) -> Option<BlockKind> {
     for y in ((-512 + 8)..=from).rev() {
         let cell = IVec3::new(cx, y, cz);
         if let Some(b) = level.get_block(cell) {
-            if b.kind.is_solid() {
+            if level.kind_is_solid(b.kind) {
                 return Some(b.kind);
             }
         } else if level.boundary_solid(cell) {
@@ -239,7 +239,7 @@ fn ground_block_rot(level: &LevelDocument, wx: f32, wz: f32) -> Option<u8> {
     for y in ((-512 + 8)..=from).rev() {
         let cell = IVec3::new(cx, y, cz);
         if let Some(b) = level.get_block(cell) {
-            if b.kind.is_solid() {
+            if level.kind_is_solid(b.kind) {
                 return Some(b.rot);
             }
         } else if level.boundary_solid(cell) {

@@ -222,8 +222,13 @@ fn resolve_axis(
                 // actually stop the player.
                 let boundary =
                     block.map(|b| !b.kind.is_solid()).unwrap_or(true) && level.boundary_solid(cell);
-                let solid = block.is_some_and(|b| b.kind.is_solid()) || boundary;
+                let solid = block.is_some_and(|b| level.kind_is_solid(b.kind)) || boundary;
                 if !solid {
+                    continue;
+                }
+                // One-way platforms are solid only when approached from above:
+                // land on top, but pass through from below and from the sides.
+                if block.is_some_and(|b| b.kind.is_one_way()) && (axis != 1 || delta > 0.0) {
                     continue;
                 }
 
@@ -246,7 +251,9 @@ fn resolve_axis(
                     // shaped top surface instead of a flat cell top.
                     if delta < 0.0 {
                         let top = match block {
-                            Some(b) if b.kind.is_solid() => surface_top_height(b, v.x, v.z),
+                            Some(b) if level.kind_is_solid(b.kind) => {
+                                surface_top_height(b, v.x, v.z)
+                            }
                             _ => cell.y as f32 + 1.0,
                         };
                         // Only snap when the column under the player is solid
@@ -254,7 +261,7 @@ fn resolve_axis(
                         // player's bottom crosses the surface from above this
                         // frame (`prev_feet` = feet before the move).
                         let column_solid = match block {
-                            Some(b) if b.kind.is_solid() => {
+                            Some(b) if level.kind_is_solid(b.kind) => {
                                 let (lx, lz) = local_from_world(
                                     (v.x - cell.x as f32).clamp(0.0, 1.0),
                                     (v.z - cell.z as f32).clamp(0.0, 1.0),
@@ -280,7 +287,9 @@ fn resolve_axis(
                         // material's bottom surface so overhangs (TopHalf, thin
                         // slabs) leave crawl space.
                         let bottom = match block {
-                            Some(b) if b.kind.is_solid() => surface_bottom_height(b, v.x, v.z),
+                            Some(b) if level.kind_is_solid(b.kind) => {
+                                surface_bottom_height(b, v.x, v.z)
+                            }
                             _ => Some(cell.y as f32),
                         };
                         let head = p[1] + he[1];
@@ -298,7 +307,7 @@ fn resolve_axis(
                     // overlaps the solid material on that face (slabs and
                     // slopes leave gaps a small player can slip under).
                     let (flo, fhi) = match block {
-                        Some(b) if b.kind.is_solid() => {
+                        Some(b) if level.kind_is_solid(b.kind) => {
                             face_solid_range(b.shape, b.rot, axis, if delta > 0.0 { 0 } else { 1 })
                         }
                         _ => (0.0, 1.0),
@@ -584,10 +593,11 @@ pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
     for y in ((-512 + 8)..=from).rev() {
         let cell = IVec3::new(cx, y, cz);
         let block = level.get_block(cell);
-        let solid = block.is_some_and(|b| b.kind.is_solid()) || level.boundary_solid(cell);
+        let solid =
+            block.is_some_and(|b| level.kind_is_solid(b.kind)) || level.boundary_solid(cell);
         if solid {
             return match block {
-                Some(b) if b.kind.is_solid() => surface_top_height(b, wx, wz),
+                Some(b) if level.kind_is_solid(b.kind) => surface_top_height(b, wx, wz),
                 _ => y as f32 + 1.0,
             };
         }

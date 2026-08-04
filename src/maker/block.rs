@@ -25,6 +25,8 @@ impl BlockKindColor for BlockKind {
             BlockKind::OnOffConveyorA => Color::srgb(0.45, 0.75, 0.95),
             BlockKind::OnOffConveyorB => Color::srgb(0.40, 0.65, 0.90),
             BlockKind::HangRail => Color::srgb(0.55, 0.55, 0.55),
+            BlockKind::OneWay => Color::srgb(0.20, 0.75, 0.75),
+            BlockKind::TimedPulse => Color::srgb(0.95, 0.60, 0.20),
         }
     }
 }

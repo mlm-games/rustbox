@@ -327,7 +327,12 @@ fn sign_editor_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             Row(Modifier::new().gap(10.0)).children(vec![
                 mk_pill_button(
                     RText(t(tr, "sign-editor-save", "Save")).size(16.0),
-                    move || push(&a_save, UiAction::MakerInspSetSignText(ts_save.borrow().text.clone())),
+                    move || {
+                        push(
+                            &a_save,
+                            UiAction::MakerInspSetSignText(ts_save.borrow().text.clone()),
+                        )
+                    },
                 ),
                 mk_pill_button(
                     RText(t(tr, "sign-editor-cancel", "Cancel")).size(16.0),
@@ -337,7 +342,6 @@ fn sign_editor_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         )),
     )
 }
-
 
 pub fn compose_root(
     overlay: OverlayHandle,
@@ -1015,7 +1019,7 @@ fn palette_dock(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
-    let items: [(u8, RColor); 15] = [
+    let items: [(u8, RColor); 17] = [
         (0, col(90, 170, 90)),
         (1, col(140, 140, 150)),
         (2, col(210, 70, 70)),
@@ -1031,6 +1035,8 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         (12, col(115, 190, 240)),
         (13, col(105, 170, 230)),
         (14, col(150, 150, 155)),
+        (15, col(55, 195, 195)),
+        (16, col(245, 155, 55)),
     ];
     let mut row = Row(Modifier::new().gap(6.0));
     for (idx, color) in items {

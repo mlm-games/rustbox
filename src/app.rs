@@ -1297,6 +1297,8 @@ fn process_ui_actions(
                         12 => BlockKind::OnOffConveyorA,
                         13 => BlockKind::OnOffConveyorB,
                         14 => BlockKind::HangRail,
+                        15 => BlockKind::OneWay,
+                        16 => BlockKind::TimedPulse,
                         _ => BlockKind::Grass,
                     };
                     m.commands.push(UiCommand::SelectBlock(kind));

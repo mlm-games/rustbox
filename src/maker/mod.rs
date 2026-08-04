@@ -170,6 +170,11 @@ impl Plugin for MakerPlugin {
                     interactive_blocks::touch_onoff_switches
                         .run_if(in_play)
                         .after(player::player_controller),
+                    interactive_blocks::sync_pulse
+                        .run_if(in_state(AppState::InGame))
+                        .run_if(not_paused)
+                        .run_if(not_blocked)
+                        .before(player::player_controller),
                     entities_runtime::apply_fans
                         .run_if(in_play)
                         .after(player::player_controller),

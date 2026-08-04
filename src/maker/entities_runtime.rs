@@ -14,8 +14,8 @@ use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 use super::MakerCleanup;
-use super::collision::is_solid;
 use super::camera::CameraRig;
+use super::collision::is_solid;
 use super::entity_data::{
     ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
 };

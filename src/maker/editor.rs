@@ -91,6 +91,14 @@ pub fn block_palette_hotkeys(
         brush.shape = shapes[(idx + 1) % shapes.len()];
         ui.set_status(format!("Block shape: {}", brush.shape.name()));
     }
+    if keys.just_pressed(KeyCode::KeyY) {
+        brush.kind = BlockKind::OneWay;
+        ui.set_status("One-Way: land on top, pass through from below/sides");
+    }
+    if keys.just_pressed(KeyCode::KeyP) {
+        brush.kind = BlockKind::TimedPulse;
+        ui.set_status("Timed Pulse: solid while on/off channel is ON");
+    }
     if keys.just_pressed(KeyCode::KeyU) {
         brush.waterlogged = !brush.waterlogged;
         ui.set_status(if brush.waterlogged {

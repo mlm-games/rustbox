@@ -817,7 +817,10 @@ pub fn drain_ui_commands(
                     let old = e.sign_text.clone();
                     let text: String = text.chars().take(rustbox_format::MAX_SIGN_TEXT).collect();
                     if text != old {
-                        history.apply(&mut level, EditCommand::SetEntitySignText { id, old, new: text });
+                        history.apply(
+                            &mut level,
+                            EditCommand::SetEntitySignText { id, old, new: text },
+                        );
                         ui.set_status("Sign text updated");
                     }
                 }

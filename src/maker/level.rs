@@ -23,6 +23,10 @@ pub struct LevelDocument {
     pub next_entity_id: LevelEntityId,
     pub next_track_id: TrackId,
     pub entities_dirty: bool,
+    /// Runtime mirror of the global on/off channel: Timed Pulse blocks are
+    /// solid only while this is true. Kept on in Edit mode so they build/feel
+    /// like normal blocks.
+    pub pulse_on: bool,
 }
 
 impl Default for LevelDocument {
@@ -56,6 +60,7 @@ impl Default for LevelDocument {
             next_entity_id: 1,
             next_track_id: 1,
             entities_dirty: true,
+            pulse_on: true,
         };
         doc.seed_default();
         doc
@@ -222,9 +227,25 @@ impl LevelDocument {
     /// Whether `cell` is solid: either a placed block or the boundary.
     pub fn is_solid(&self, cell: IVec3) -> bool {
         self.get_block(cell)
-            .map(|b| b.kind.is_solid())
+            .map(|b| self.kind_is_solid(b.kind))
             .unwrap_or(false)
             || self.boundary_solid(cell)
+    }
+
+    /// Kind-level solidity with dynamic block kinds resolved against runtime
+    /// state: Timed Pulse is solid only while the on/off channel is ON.
+    pub fn kind_is_solid(&self, kind: BlockKind) -> bool {
+        kind.is_solid() && !(kind.is_pulse() && !self.pulse_on)
+    }
+
+    /// Mark dirty every chunk that holds a Timed Pulse block, so its mesh is
+    /// rebuilt when the pulse toggles (block appears/disappears).
+    pub fn mark_pulse_dirty(&mut self) {
+        for (pos, b) in &self.map {
+            if b.kind.is_pulse() {
+                self.dirty_chunks.extend(affected_chunks(*pos));
+            }
+        }
     }
 
     pub fn water_level(&self) -> Option<i32> {

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use super::entities_runtime::OnOffSwitch;
+use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::Player;
 
@@ -45,5 +46,13 @@ pub fn touch_onoff_switches(
         } else {
             "On/Off: OFF"
         });
+    }
+}
+
+pub fn sync_pulse(mode: Res<MakerMode>, state: Res<OnOffState>, mut level: ResMut<LevelDocument>) {
+    let on = *mode != MakerMode::Play || state.on;
+    if level.pulse_on != on {
+        level.pulse_on = on;
+        level.mark_pulse_dirty();
     }
 }

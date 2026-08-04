@@ -23,11 +23,25 @@ pub enum BlockKind {
     OnOffConveyorB,
     /// Thin top slab you can hang under and traverse (no conveyor force).
     HangRail,
+    /// One-way platform: solid only when approached from above (falling /
+    /// standing), pass-through from below and from the sides.
+    OneWay,
+    /// Timed pulse block: solid while the global pulse is ON, empty while OFF.
+    TimedPulse,
 }
 
 impl BlockKind {
     pub fn is_solid(self) -> bool {
         !matches!(self, BlockKind::Spawn | BlockKind::Water)
+    }
+
+    pub fn is_one_way(self) -> bool {
+        matches!(self, BlockKind::OneWay)
+    }
+
+    /// Whether this block's solidity depends on the global on/off channel.
+    pub fn is_pulse(self) -> bool {
+        matches!(self, BlockKind::TimedPulse)
     }
 
     pub fn is_conveyor(self) -> bool {
@@ -42,7 +56,10 @@ impl BlockKind {
 
     /// Renders and collides as a thin top slab.
     pub fn is_thin(self) -> bool {
-        matches!(self, BlockKind::ThinConveyor | BlockKind::HangRail)
+        matches!(
+            self,
+            BlockKind::ThinConveyor | BlockKind::HangRail | BlockKind::OneWay
+        )
     }
 
     /// Whether an on/off conveyor with this kind pushes while the switch is on.
@@ -82,6 +99,8 @@ impl BlockKind {
             BlockKind::OnOffConveyorA => "On/Off Conveyor A",
             BlockKind::OnOffConveyorB => "On/Off Conveyor B",
             BlockKind::HangRail => "Hang Rail",
+            BlockKind::OneWay => "One-Way",
+            BlockKind::TimedPulse => "Timed Pulse",
         }
     }
 }
@@ -102,6 +121,8 @@ pub const ALL_BLOCK_KINDS: &[BlockKind] = &[
     BlockKind::OnOffConveyorA,
     BlockKind::OnOffConveyorB,
     BlockKind::HangRail,
+    BlockKind::OneWay,
+    BlockKind::TimedPulse,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
