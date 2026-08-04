@@ -203,6 +203,7 @@ fn resolve_axis(
 
     let mut collided = false;
 
+    let start_axis = pos[axis];
     let mut p = pos.to_array();
     p[axis] += delta;
     let he = he.to_array();
@@ -227,6 +228,20 @@ fn resolve_axis(
                 }
 
                 if axis == 1 {
+                    let moved = Vec3::from_array(p);
+                    let amin = moved - Vec3::from_array(he);
+                    let amax = moved + Vec3::from_array(he);
+                    let cmin = cell.as_vec3();
+                    let cmax = cmin + Vec3::ONE;
+                    if !(amin.x < cmax.x
+                        && amax.x > cmin.x
+                        && amin.y < cmax.y
+                        && amax.y > cmin.y
+                        && amin.z < cmax.z
+                        && amax.z > cmin.z)
+                    {
+                        continue;
+                    }
                     // Vertical movement is special-cased so ramps/slabs give a
                     // shaped top surface instead of a flat cell top.
                     if delta < 0.0 {
@@ -269,7 +284,9 @@ fn resolve_axis(
                             _ => Some(cell.y as f32),
                         };
                         let head = p[1] + he[1];
+                        let prev_head = head - delta;
                         if let Some(bottom) = bottom
+                            && bottom >= prev_head - 0.001
                             && head >= bottom - 0.001
                         {
                             p[1] = bottom - he[1];
@@ -291,10 +308,45 @@ fn resolve_axis(
                     if !vertical_overlap(vlo, vhi, cell.y as f32 + flo, cell.y as f32 + fhi) {
                         continue;
                     }
-                    if delta > 0.0 {
-                        p[axis] = cell[axis] as f32 - he[axis];
+                    let moved = Vec3::from_array(p);
+                    let amin = moved - Vec3::from_array(he);
+                    let amax = moved + Vec3::from_array(he);
+                    let cmin = cell.as_vec3();
+                    let cmax = cmin + Vec3::ONE;
+                    if !(amin.x < cmax.x
+                        && amax.x > cmin.x
+                        && amin.y < cmax.y
+                        && amax.y > cmin.y
+                        && amin.z < cmax.z
+                        && amax.z > cmin.z)
+                    {
+                        continue;
+                    }
+                    let (leading, near_face) = if delta > 0.0 {
+                        (start_axis + he[axis], cmin[axis])
                     } else {
-                        p[axis] = cell[axis] as f32 + 1.0 + he[axis];
+                        (start_axis - he[axis], cmax[axis])
+                    };
+                    let ahead = if delta > 0.0 {
+                        cmin[axis] >= leading
+                    } else {
+                        cmax[axis] <= leading
+                    };
+                    if !ahead {
+                        continue;
+                    }
+                    let stop = if delta > 0.0 {
+                        near_face - he[axis]
+                    } else {
+                        near_face + he[axis]
+                    };
+                    let closer = if delta > 0.0 {
+                        stop < p[axis]
+                    } else {
+                        stop > p[axis]
+                    };
+                    if closer {
+                        p[axis] = stop;
                     }
                     collided = true;
                 }
@@ -408,6 +460,25 @@ fn sphere_aabb_hit(center: Vec3, radius: f32, bmin: Vec3, bmax: Vec3) -> bool {
     center.distance_squared(q) <= radius * radius
 }
 
+fn camera_solid_aabb(level: &LevelDocument, cell: IVec3) -> (Vec3, Vec3) {
+    let bmin = cell.as_vec3();
+    let bmax = bmin + Vec3::ONE;
+    let Some(b) = level.get_block(cell) else {
+        return (bmin, bmax);
+    };
+    let (lo, hi) = match b.shape {
+        BlockShape::Full => (0.0, 1.0),
+        BlockShape::Half => (0.0, 0.5),
+        BlockShape::TopHalf => (0.5, 1.0),
+        BlockShape::Thin => (1.0 - rustbox_format::block::THIN_HEIGHT, 1.0),
+        _ => (0.0, 1.0),
+    };
+    (
+        Vec3::new(bmin.x, bmin.y + lo, bmin.z),
+        Vec3::new(bmax.x, bmin.y + hi, bmax.z),
+    )
+}
+
 /// True if a sphere overlaps any solid cell or extra box.
 pub fn sphere_hits_world(
     level: &LevelDocument,
@@ -424,9 +495,7 @@ pub fn sphere_hits_world(
                 if !level.is_solid(cell) {
                     continue;
                 }
-                // Conservative full-cell AABB (good enough for camera pull-in).
-                let bmin = Vec3::new(x as f32, y as f32, z as f32);
-                let bmax = bmin + Vec3::ONE;
+                let (bmin, bmax) = camera_solid_aabb(level, cell);
                 if sphere_aabb_hit(center, radius, bmin, bmax) {
                     return true;
                 }
@@ -495,7 +564,12 @@ pub fn collide_camera_eye(
         return desired_eye;
     }
     let dir = offset / dist;
-    let origin = focus + Vec3::Y * 0.35;
+    // Start the sweep from just behind the focus along the view line. The old
+    // `focus + Vec3::Y * 0.35` origin sat above the player's head, so a low
+    // overhang / ceiling right above the head blocked the whole cast and the
+    // eye snapped to the `min` clamp; it also left the origin sphere inside
+    // side walls the player is flush against.
+    let origin = focus - dir * (radius + skin);
     let free = sphere_cast_distance(level, origin, dir, dist, radius, extras);
     let use_dist = (free - skin).clamp(0.6, dist);
     focus + dir * use_dist
@@ -519,6 +593,52 @@ pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
         }
     }
     f32::NEG_INFINITY
+}
+
+pub fn stand_headroom(
+    level: &LevelDocument,
+    pos: Vec3,
+    he: Vec3,
+    crouch_factor: f32,
+    extras: &[(Vec3, Vec3)],
+) -> bool {
+    let lo_y = pos.y + he.y * crouch_factor;
+    let hi_y = pos.y + he.y;
+    let min = Vec3::new(pos.x - he.x, lo_y, pos.z - he.z);
+    let max = Vec3::new(pos.x + he.x, hi_y, pos.z + he.z);
+    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
+        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
+            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
+                let cell = IVec3::new(x, y, z);
+                if !level.is_solid(cell) {
+                    continue;
+                }
+                let cmin = cell.as_vec3();
+                let cmax = cmin + Vec3::ONE;
+                if min.x < cmax.x
+                    && max.x > cmin.x
+                    && min.y < cmax.y
+                    && max.y > cmin.y
+                    && min.z < cmax.z
+                    && max.z > cmin.z
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    for (ec, ehe) in extras {
+        if min.x < ec.x + ehe.x
+            && max.x > ec.x - ehe.x
+            && min.y < ec.y + ehe.y
+            && max.y > ec.y - ehe.y
+            && min.z < ec.z + ehe.z
+            && max.z > ec.z - ehe.z
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// The lowest horizontal midpoint-provision surface already fitted under
@@ -811,4 +931,282 @@ pub fn raycast_present(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HE: Vec3 = Vec3::new(0.3, 0.9, 0.3);
+
+    fn wall_level() -> LevelDocument {
+        LevelDocument::default()
+    }
+
+    fn standing(x: f32, z: f32) -> Vec3 {
+        Vec3::new(x, 1.9, z)
+    }
+
+    #[test]
+    fn run_along_wall_advances_without_snapping() {
+        let level = wall_level();
+        // Flush against the +Z boundary wall (z=15) at z=14.7, running +X.
+        let r = move_and_collide(
+            standing(10.0, 14.7),
+            HE,
+            Vec3::new(0.13, 0.0, 0.0),
+            &level,
+            &[],
+        );
+        // Must advance by the delta, not jump to a cell face or backward.
+        assert!((r.pos.x - 10.13).abs() < 0.01, "x snapped to {}", r.pos.x);
+        assert!((r.pos.z - 14.7).abs() < 0.01, "z drifted to {}", r.pos.z);
+        assert!(!r.hit_x, "unexpected hit_x");
+    }
+
+    #[test]
+    fn run_into_wall_stops_at_face() {
+        let level = wall_level();
+        // Running +X into the +X wall (face at x=15).
+        let r = move_and_collide(
+            standing(11.0, 0.0),
+            HE,
+            Vec3::new(4.0, 0.0, 0.0),
+            &level,
+            &[],
+        );
+        // +X face must stop flush against the wall.
+        assert!(
+            (r.pos.x + HE.x - 15.0).abs() < 0.01,
+            "ended at x={}",
+            r.pos.x
+        );
+        assert!(r.hit_x);
+    }
+
+    #[test]
+    fn run_along_wall_then_into_corner_stops_at_face() {
+        let level = wall_level();
+        // Flush against +Z wall, deep +X move toward the +X/+Z corner.
+        let r = move_and_collide(
+            standing(10.0, 14.7),
+            HE,
+            Vec3::new(6.0, 0.0, 0.0),
+            &level,
+            &[],
+        );
+        // Must stop at the +X wall face, staying flush with the +Z wall.
+        assert!(
+            (r.pos.x + HE.x - 15.0).abs() < 0.01,
+            "snapped to x={}",
+            r.pos.x
+        );
+        assert!((r.pos.z - 14.7).abs() < 0.01, "z snapped to {}", r.pos.z);
+        assert!(r.hit_x);
+    }
+
+    #[test]
+    fn diagonal_into_corner_stays_inside() {
+        let level = wall_level();
+        let r = move_and_collide(
+            standing(10.0, 10.0),
+            HE,
+            Vec3::new(6.0, 0.0, 6.0),
+            &level,
+            &[],
+        );
+        // Must stop at both walls, not overshoot into or around the corner.
+        assert!(
+            (r.pos.x + HE.x - 15.0).abs() < 0.01,
+            "x overshot to {}",
+            r.pos.x
+        );
+        assert!(
+            (r.pos.z + HE.z - 15.0).abs() < 0.01,
+            "z overshot to {}",
+            r.pos.z
+        );
+        assert!(r.hit_x && r.hit_z);
+    }
+
+    #[test]
+    fn free_flat_ground_advance() {
+        let level = wall_level();
+        // Far from the starter blocks and walls: steps should accumulate smoothly.
+        let mut pos = standing(0.0, 10.0);
+        let dt = Vec3::new(0.117, 0.0, 0.0);
+        for _ in 0..60 {
+            let r = move_and_collide(pos, HE, dt, &level, &[]);
+            pos = r.pos;
+            assert!(!r.hit_x, "blocked at x={}", pos.x);
+        }
+        // 60 * 0.117 = 7.02, give room for float error.
+        assert!((pos.x - 7.02).abs() < 0.05, "advanced to {}", pos.x);
+    }
+
+    #[test]
+    fn jump_flush_against_wall_rises_not_snaps_down() {
+        let level = wall_level();
+        // Flush against the +X boundary wall (face at x=15), jump straight up.
+        let r = move_and_collide(
+            standing(14.7, 0.0),
+            HE,
+            Vec3::new(0.0, 0.5, 0.0),
+            &level,
+            &[],
+        );
+        // The wall's side cells must not teleport the player down to its bottom.
+        assert!((r.pos.y - 2.4).abs() < 0.01, "y snapped to {}", r.pos.y);
+        assert!(!r.hit_y, "false vertical hit near wall");
+    }
+
+    #[test]
+    fn jump_flush_against_placed_wall_rises() {
+        let mut level = wall_level();
+        // A 3-tall stone wall at x=5 (cells y=1..=3, bottom at y=1).
+        for y in 1..=3 {
+            level.set_block(
+                IVec3::new(5, y, 0),
+                Some(BlockData::new([5, y, 0], BlockKind::Stone)),
+            );
+        }
+        // Flush against the wall at x=4.7, jump straight up.
+        let r = move_and_collide(
+            standing(4.7, 0.0),
+            HE,
+            Vec3::new(0.0, 0.5, 0.0),
+            &level,
+            &[],
+        );
+        assert!((r.pos.y - 2.4).abs() < 0.01, "y snapped to {}", r.pos.y);
+        assert!(!r.hit_y, "false vertical hit near wall");
+    }
+
+    #[test]
+    fn jump_into_ceiling_stops_under_it() {
+        // Ceiling block at y=3 (bottom at 3.0) directly overhead.
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(0, 3, 0),
+            Some(BlockData::new([0, 3, 0], BlockKind::Stone)),
+        );
+        // Standing at x=0 (block spans cells -1..1), jump hard: must stop at
+        // the block's underside, feet just below y=3.
+        let r = move_and_collide(
+            standing(0.0, 0.0),
+            HE,
+            Vec3::new(0.0, 2.0, 0.0),
+            &level,
+            &[],
+        );
+        assert!(
+            (r.pos.y + HE.y - 3.0).abs() < 0.01,
+            "ended at y={}",
+            r.pos.y
+        );
+        assert!(r.hit_y);
+    }
+
+    #[test]
+    fn crouched_walk_along_wall_advances() {
+        let level = wall_level();
+        // Crouched half-extents, flush against the +Z wall at z=14.7, run +X.
+        let he_c = Vec3::new(0.3, HE.y * 0.55, 0.3);
+        let r = move_and_collide(
+            Vec3::new(10.0, 1.0 + he_c.y, 14.7),
+            he_c,
+            Vec3::new(0.13, 0.0, 0.0),
+            &level,
+            &[],
+        );
+        assert!((r.pos.x - 10.13).abs() < 0.01, "x snapped to {}", r.pos.x);
+        assert!((r.pos.z - 14.7).abs() < 0.01, "z snapped to {}", r.pos.z);
+    }
+
+    #[test]
+    fn crouched_jump_flush_against_wall_rises() {
+        let level = wall_level();
+        // Crouched and jumping up while flush against the +X boundary wall.
+        let he_c = Vec3::new(0.3, HE.y * 0.55, 0.3);
+        let r = move_and_collide(
+            Vec3::new(14.7, 1.0 + he_c.y, 0.0),
+            he_c,
+            Vec3::new(0.0, 0.5, 0.0),
+            &level,
+            &[],
+        );
+        let expected = 1.0 + he_c.y + 0.5;
+        assert!(
+            (r.pos.y - expected).abs() < 0.01,
+            "y snapped to {}",
+            r.pos.y
+        );
+        assert!(!r.hit_y, "false vertical hit near wall");
+    }
+
+    #[test]
+    fn crouched_diagonal_into_corner_stays_inside() {
+        let level = wall_level();
+        let he_c = Vec3::new(0.3, HE.y * 0.55, 0.3);
+        let r = move_and_collide(
+            Vec3::new(10.0, 1.0 + he_c.y, 10.0),
+            he_c,
+            Vec3::new(6.0, 0.0, 6.0),
+            &level,
+            &[],
+        );
+        assert!(
+            (r.pos.x + he_c.x - 15.0).abs() < 0.01,
+            "x overshot to {}",
+            r.pos.x
+        );
+        assert!(
+            (r.pos.z + he_c.z - 15.0).abs() < 0.01,
+            "z overshot to {}",
+            r.pos.z
+        );
+        assert!(r.hit_x && r.hit_z);
+    }
+
+    #[test]
+    fn stand_headroom_blocks_low_ceiling() {
+        // Ceiling block at y=2 (bottom at 2.0). Crouched under it at y=1.495
+        // (head 1.99) there's room; standing (head 2.395) would clip.
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(0, 2, 0),
+            Some(BlockData::new([0, 2, 0], BlockKind::Stone)),
+        );
+        let crouched_y = 1.0 + HE.y * 0.55;
+        let under = Vec3::new(0.0, crouched_y, 0.0);
+        assert!(
+            !stand_headroom(&level, under, HE, 0.55, &[]),
+            "cannot stand under ceiling"
+        );
+        // Sliding slightly past the overhang edge (x beyond cell 0) frees up.
+        let past = Vec3::new(1.6, crouched_y, 0.0);
+        assert!(stand_headroom(&level, past, HE, 0.55, &[]), "past overhang");
+    }
+
+    #[test]
+    fn stand_headroom_open_floor_and_beside_wall() {
+        let level = wall_level();
+        let crouched_y = 1.0 + HE.y * 0.55;
+        // Open floor: always headroom.
+        assert!(stand_headroom(
+            &level,
+            Vec3::new(0.0, crouched_y, 10.0),
+            HE,
+            0.55,
+            &[]
+        ));
+        // Flush against the +X boundary wall: the wall is beside, not above.
+        assert!(stand_headroom(
+            &level,
+            Vec3::new(14.7, crouched_y, 0.0),
+            HE,
+            0.55,
+            &[]
+        ));
+    }
 }

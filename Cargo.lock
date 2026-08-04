@@ -114,9 +114,9 @@ dependencies = [
 
 [[package]]
 name = "aho-corasick"
-version = "1.1.4"
+version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+checksum = "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
 dependencies = [
  "memchr",
 ]
@@ -1087,7 +1087,7 @@ dependencies = [
  "arrayvec",
  "bevy_reflect",
  "derive_more",
- "glam 0.33.2",
+ "glam 0.33.3",
  "itertools",
  "libm",
  "rand",
@@ -1116,7 +1116,7 @@ dependencies = [
  "bytemuck",
  "derive_more",
  "encase",
- "glam 0.33.2",
+ "glam 0.33.3",
  "half",
  "hexasphere",
  "serde",
@@ -1271,7 +1271,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "erased-serde",
  "foldhash 0.2.0",
- "glam 0.33.2",
+ "glam 0.33.3",
  "indexmap",
  "inventory",
  "petgraph",
@@ -1331,7 +1331,7 @@ dependencies = [
  "derive_more",
  "downcast-rs 2.0.2",
  "encase",
- "glam 0.33.2",
+ "glam 0.33.3",
  "image",
  "indexmap",
  "itertools",
@@ -2246,9 +2246,9 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
 name = "data-encoding"
-version = "2.11.0"
+version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
 name = "derive_more"
@@ -2742,7 +2742,7 @@ source = "git+https://github.com/mlm-games/game-utils#bd5c4d065ab1df8adcd3e7b7fb
 dependencies = [
  "directories",
  "fluent-bundle",
- "glam 0.33.2",
+ "glam 0.33.3",
  "ron",
  "serde",
  "unic-langid",
@@ -2841,9 +2841,9 @@ checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 
 [[package]]
 name = "glam"
-version = "0.33.2"
+version = "0.33.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f22fb22f065b308be0d8724e3706c7fa3fc2a6c7d6899df4cad7860e7a75436"
+checksum = "7360bd2cd76e0cd9032d42cf2922155cecea2685b0cfa4630c3246df030bcfd6"
 dependencies = [
  "approx",
  "bytemuck",
@@ -2860,7 +2860,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9847f980afb0628849bcd6a406cdffd29eb9d53fca83e1646005901a9acd4c5c"
 dependencies = [
  "approx",
- "glam 0.33.2",
+ "glam 0.33.3",
  "nalgebra",
  "num-traits",
  "simba",
@@ -3058,7 +3058,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "163385eff5a0cf606ebe2c10b3a44ab02f4306e83fbd068a64f5e1d72a3049ac"
 dependencies = [
  "constgebra",
- "glam 0.33.2",
+ "glam 0.33.3",
  "tinyvec",
 ]
 
@@ -3755,7 +3755,7 @@ dependencies = [
  "glam 0.30.10",
  "glam 0.31.1",
  "glam 0.32.1",
- "glam 0.33.2",
+ "glam 0.33.3",
  "matrixmultiply",
  "nalgebra-macros",
  "num-complex",
@@ -4852,9 +4852,9 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "repose-app"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf39c72a64f39ffcf854adf5abe7f95a68971854cc23306a31532f682b3ecd23"
+checksum = "cde328c09796580d1d1ef26ea1b81e7e62ba734710e23292f7da7d9251f7e073"
 dependencies = [
  "log",
  "repose-core",
@@ -4885,9 +4885,9 @@ dependencies = [
 
 [[package]]
 name = "repose-core"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05428d7cddf0cb5ceb76a87a5cb1c6de7d22e18e17fe1e34b5274573c222be04"
+checksum = "fb0c6067c9d43b38c3f771e5a7061ae327ccecc6b5ea47f16bd2fa8c662a2aad"
 dependencies = [
  "bitflags 2.13.1",
  "log",
@@ -4903,9 +4903,9 @@ dependencies = [
 
 [[package]]
 name = "repose-macros"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "182c2dbd6dd70aafdaab390657655f9be96191f85e19b490e048bced12db8312"
+checksum = "dcde7a6e79ed6d0c652b955c2026c9e04f238f8e135273bc44a86fc4c359e6d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4914,9 +4914,9 @@ dependencies = [
 
 [[package]]
 name = "repose-material"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73548de6341853bd27b93307671f7480535a41cfca8072d3de2216ca3ab4c964"
+checksum = "846ee9bebb0dc322d86cd0ec558c9d64de0d617f3cc2c8dbbc16e182728a0c09"
 dependencies = [
  "repose-core",
  "repose-text",
@@ -4926,9 +4926,9 @@ dependencies = [
 
 [[package]]
 name = "repose-render-wgpu"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d8e38f6e343ba1935c577db87cbc3a466c2b5f3f6504d58844d264a273e5768"
+checksum = "9f4d9dd4f4ae1286281d06023ec4a28ad89bb57a1eab5d35830a02e5d65455ee"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4945,9 +4945,9 @@ dependencies = [
 
 [[package]]
 name = "repose-text"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6099cd6f50a575f2ec546a5ae286ffd0b3dd878f9f568c3067dc3b1866823d5"
+checksum = "e92fc051408548c141f8741919e88c62c962750c9b041ac3e92851a516b37924"
 dependencies = [
  "font-awl",
  "log",
@@ -4961,9 +4961,9 @@ dependencies = [
 
 [[package]]
 name = "repose-tree"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55e82e920e7c1e7f4dc8d3d6b0e373fdaf6b32e0e7bfee3397c5e81f369526a3"
+checksum = "7ed53905c5b2f47cd41ddbabd79f4b57317953e1f1fd21c6b9982312ddd72f47"
 dependencies = [
  "log",
  "rapidhash",
@@ -4975,9 +4975,9 @@ dependencies = [
 
 [[package]]
 name = "repose-ui"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c8652b9b3767b703a7131f8655c326daba869c6c85dfc5f9ecb91215151ae25"
+checksum = "a8d6f0315de33ce762b90c826144c4957d02ed6185385afe75002d8da6a52895"
 dependencies = [
  "log",
  "repose-core",
@@ -6189,9 +6189,9 @@ dependencies = [
 
 [[package]]
 name = "webbrowser"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef62a3d5f7b2411119a11b6f62570dbff91d7105e011a20fb83fbf8f5761c40f"
+checksum = "3d6eb50cc7b133f0c7720a64661fbd8e520b882f8ab9015deea5e00d5cd809c4"
 dependencies = [
  "jni 0.22.4",
  "log",

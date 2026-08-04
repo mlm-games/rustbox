@@ -8,6 +8,7 @@ use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
     floor_normal_at, ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide,
+    stand_headroom,
 };
 use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::entity_data::LevelEntityId;
@@ -21,6 +22,8 @@ use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 /// Default jump impulse (shared with stomp bounce etc.).
 pub const JUMP_SPEED: f32 = 9.0;
+
+const GROUND_STEP_MAX: f32 = 0.55;
 
 /// Central movement tunables (Bevy resource). Tune here instead of scattering
 /// magic numbers.
@@ -676,10 +679,19 @@ pub fn player_controller(
             player.velocity.y = 4.5;
         }
 
+        const CROUCH_FACTOR: f32 = 0.55;
         let move_he = if crouching {
-            Vec3::new(he.x, he.y * 0.55, he.z)
-        } else {
+            Vec3::new(he.x, he.y * CROUCH_FACTOR, he.z)
+        } else if stand_headroom(
+            &level,
+            transform.translation,
+            he,
+            CROUCH_FACTOR,
+            &solids.boxes,
+        ) {
             he
+        } else {
+            Vec3::new(he.x, he.y * CROUCH_FACTOR, he.z)
         };
 
         // Stay glued to the ground.
@@ -689,7 +701,8 @@ pub fn player_controller(
             && player.velocity.y <= 0.0;
         if grounding_ok {
             let top = ground_height(&level, transform.translation.x, transform.translation.z);
-            if top.is_finite() {
+            let feet = transform.translation.y - move_he.y;
+            if top.is_finite() && top <= feet + GROUND_STEP_MAX {
                 transform.translation.y = top + move_he.y;
             }
         }
@@ -748,8 +761,9 @@ pub fn player_controller(
         if grounded_now && !on_plate && player.velocity.y <= 0.0 {
             let top = ground_height(&level, pos.x, pos.z);
             if top.is_finite() {
-                let eff_he = if crouching { he.y * 0.55 } else { he.y };
-                if pos.y - eff_he < top + 0.001 {
+                let eff_he = move_he.y;
+                let feet = pos.y - eff_he;
+                if feet < top + 0.001 && top <= feet + GROUND_STEP_MAX {
                     pos.y = top + eff_he;
                 }
             }

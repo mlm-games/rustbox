@@ -2369,11 +2369,15 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             adv_toggle.set(next);
         },
     ));
-    let advanced_section = if *advanced_open.get() {
-        Column(Modifier::new().fill_max_width().gap(8.0)).child((import_row, token_row))
-    } else {
-        Box(Modifier::new())
-    };
+    let advanced_section = AnimatedVisibility(
+        *advanced_open.get(),
+        Column(Modifier::new().fill_max_width().gap(8.0)).child((import_row, token_row)),
+        AnimatedVisibilityConfig {
+            key: "online_advanced".into(),
+            spec: AnimationSpec::tween(Duration::from_millis(200), Easing::EaseOut),
+            ..Default::default()
+        },
+    );
 
     let verified_hint = RText(if st.level_verified {
         "Ready to publish".to_string()
