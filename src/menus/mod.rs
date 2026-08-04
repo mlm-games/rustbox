@@ -8,7 +8,7 @@ use std::rc::Rc;
 use repose_core::View;
 use repose_core::prelude::{
     AlignItems, AlignSelf, AnimationSpec, Color as RColor, Easing, JustifyContent, Modifier,
-    remember,
+    remember, remember_mutable,
 };
 use repose_core::{
     ImeAction, KeyboardOptions, KeyboardType, StateColors, StateElevation, TextFieldLineLimits,
@@ -25,7 +25,7 @@ use repose_ui::anim_ext::{
 use repose_ui::overlay::OverlayHandle;
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{
-    BasicTextField, Column, Row, Text as RText, TextFieldConfig, TextFieldState, TextStyle,
+    BasicTextField, Box, Column, Row, Text as RText, TextFieldConfig, TextFieldState, TextStyle,
     ViewExt, ZStack,
 };
 
@@ -46,6 +46,8 @@ material_symbols! {
     COPY: '\u{E14C}',
     DELETE: '\u{E872}',
     EDIT: '\u{F097}',
+    EXPAND_LESS: '\u{E5CE}',
+    EXPAND_MORE: '\u{E5CF}',
     FLAG: '\u{E153}',
     FOLDER_OPEN: '\u{E2C8}',
     INFO: '\u{E88E}',
@@ -2307,7 +2309,7 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let token_field = BasicTextField(
         token_state.clone(),
         Modifier::new().flex_grow(1.0).height(34.0),
-        "Admin token (dev only)",
+        "Admin token (developer only)",
         TextFieldConfig {
             line_limits: TextFieldLineLimits::SingleLine,
             keyboard_options: KeyboardOptions {
@@ -2341,6 +2343,37 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             push(&a_set_token, UiAction::OnlineSetToken(t));
         }),
     ));
+
+    let advanced_open = remember_mutable(|| false);
+    let adv_toggle = advanced_open.clone();
+    let adv_import_focus = import_focus.clone();
+    let adv_token_focus = token_focus.clone();
+    let advanced_toggle = Row(Modifier::new()
+        .fill_max_width()
+        .align_items(AlignItems::CENTER))
+    .child(mk_pill_button(
+        icon_label(
+            if *advanced_open.get() {
+                Symbols::EXPAND_LESS
+            } else {
+                Symbols::EXPAND_MORE
+            },
+            "Account & developer".into(),
+        ),
+        move || {
+            let next = !*adv_toggle.get();
+            if !next {
+                adv_import_focus.set(false);
+                adv_token_focus.set(false);
+            }
+            adv_toggle.set(next);
+        },
+    ));
+    let advanced_section = if *advanced_open.get() {
+        Column(Modifier::new().fill_max_width().gap(8.0)).child((import_row, token_row))
+    } else {
+        Box(Modifier::new())
+    };
 
     let verified_hint = RText(if st.level_verified {
         "Ready to publish".to_string()
@@ -2526,9 +2559,8 @@ fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     .child(spacer(8.0))
     .child(identity_box)
     .child(spacer(8.0))
-    .child(import_row)
-    .child(spacer(8.0))
-    .child(token_row)
+    .child(advanced_toggle)
+    .child(advanced_section)
     .child(spacer(12.0))
     .child(
         Row(Modifier::new().gap(12.0).align_items(AlignItems::CENTER)).child((
