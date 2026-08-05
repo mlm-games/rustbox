@@ -675,7 +675,7 @@ pub fn tick_model_anims(
             };
             if moving {
                 let d = dir.normalize();
-                tf.rotation = Quat::from_rotation_y((-d.x).atan2(-d.y));
+                tf.rotation = Quat::from_rotation_y(d.x.atan2(d.y));
             }
             let target = if matches!(action, ActionState::Swim) {
                 if horizontal > 0.6 {
