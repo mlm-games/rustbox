@@ -703,7 +703,8 @@ pub fn player_controller(
         if grounding_ok {
             let top = ground_height(&level, transform.translation.x, transform.translation.z);
             let feet = transform.translation.y - move_he.y;
-            if top.is_finite() && top <= feet + GROUND_STEP_MAX {
+            // Only stick to the ground while it's actually near the feet.
+            if top.is_finite() && (top - feet).abs() <= GROUND_STEP_MAX {
                 transform.translation.y = top + move_he.y;
             }
         }
