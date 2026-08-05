@@ -6,3 +6,4 @@ target/
 assets_export/
 dist/
 .wrangler/
+tools/

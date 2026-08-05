@@ -240,6 +240,8 @@ pub struct SharedUi {
     pub brush_entities: bool,
     pub selected_entity: u8,
     pub brush_tab: u8,
+    pub block_icon_handles: Vec<u64>,
+    pub entity_icon_handles: Vec<u64>,
     pub active_track_label: String,
     pub glimmers_collected: u32,
     pub glimmers_total: u32,
@@ -367,6 +369,8 @@ impl Default for SharedUi {
             brush_entities: false,
             selected_entity: 0,
             brush_tab: 0,
+            block_icon_handles: Vec::new(),
+            entity_icon_handles: Vec::new(),
             active_track_label: String::new(),
             glimmers_collected: 0,
             glimmers_total: 0,
@@ -448,8 +452,17 @@ impl Plugin for AppPlugin {
                     msaa_samples: if cfg!(debug_assertions) { 1 } else { 4 },
                     overlay: true,
                 },
-                move |_s, _c| {
-                    let st = shared_ui.lock().unwrap().clone();
+                move |_s, rc| {
+                    let st = {
+                        let mut shared = shared_ui.lock().unwrap();
+                        if shared.block_icon_handles.is_empty() {
+                            shared.block_icon_handles =
+                                crate::menus::icons::register_block_icons(rc);
+                            shared.entity_icon_handles =
+                                crate::menus::icons::register_entity_icons(rc);
+                        }
+                        shared.clone()
+                    };
                     let acts = actions_ui.clone();
                     let overlay_rc = remember(OverlayHandle::new);
                     let overlay = (*overlay_rc).clone();

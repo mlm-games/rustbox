@@ -13,6 +13,7 @@ use repose_core::prelude::{
 use repose_core::{
     ImeAction, KeyboardOptions, KeyboardType, StateColors, StateElevation, TextFieldLineLimits,
 };
+use repose_core::ImageFit;
 use repose_material::material3::{
     ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, DropdownMenu, DropdownMenuConfig,
     DropdownMenuEntry, DropdownMenuItem, FilledTonalButton, FilledTonalIconButton,
@@ -25,9 +26,11 @@ use repose_ui::anim_ext::{
 use repose_ui::overlay::OverlayHandle;
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{
-    BasicTextField, Box, Column, Row, Text as RText, TextFieldConfig, TextFieldState, TextStyle,
-    ViewExt, ZStack,
+    BasicTextField, Box, Column, Image, ImageExt, Row, Text as RText, TextFieldConfig,
+    TextFieldState, TextStyle, ViewExt, ZStack,
 };
+
+pub mod icons;
 
 use crate::app::{AppState, OverlayMenu, SharedUi};
 use crate::maker::catalog::{LevelSourceKind, LevelSummary, difficulty_label};
@@ -1044,6 +1047,7 @@ fn block_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         row = row.child(mk_swatch(
             format!("{}", idx + 1),
             color,
+            st.block_icon_handles.get(idx as usize).copied(),
             st.selected_block == idx,
             move || push_ui(&a, UiAction::MakerSelectBlock(idx)),
         ));
@@ -1110,6 +1114,7 @@ fn entity_swatches(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         row = row.child(mk_swatch(
             format!("{}", idx + 1),
             color,
+            st.entity_icon_handles.get(idx as usize).copied(),
             st.selected_entity == idx,
             move || push_ui(&a, UiAction::MakerSelectEntity(idx)),
         ));
@@ -1534,7 +1539,13 @@ fn toast_anchor(st: &SharedUi) -> View {
     )
 }
 
-fn mk_swatch(hotkey: String, color: RColor, selected: bool, on_click: impl Fn() + 'static) -> View {
+fn mk_swatch(
+    hotkey: String,
+    color: RColor,
+    icon: Option<u64>,
+    selected: bool,
+    on_click: impl Fn() + 'static,
+) -> View {
     let bg = if selected { RColor::WHITE } else { color };
     FilledTonalButton(
         Modifier::new()
@@ -1545,11 +1556,27 @@ fn mk_swatch(hotkey: String, color: RColor, selected: bool, on_click: impl Fn() 
         on_click,
         ButtonConfig::default(),
         move || {
-            RText(hotkey.clone()).size(13.0).color(if selected {
-                RColor::from_rgba(0, 0, 0, 255)
-            } else {
-                RColor::WHITE
-            })
+            let mut stack = ZStack(Modifier::new().fill_max_size());
+            if let Some(handle) = icon {
+                stack = stack.child(
+                    Image(
+                        Modifier::new()
+                            .fill_max_size()
+                            .padding(5.0),
+                        handle,
+                    )
+                    .image_fit(ImageFit::Contain),
+                );
+            }
+            stack.child(
+                RText(hotkey.clone())
+                    .size(13.0)
+                    .color(if selected {
+                        RColor::from_rgba(0, 0, 0, 255)
+                    } else {
+                        RColor::WHITE
+                    }),
+            )
         },
     )
 }
