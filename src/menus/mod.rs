@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use repose_core::ImageFit;
 use repose_core::View;
 use repose_core::prelude::{
     AlignItems, AlignSelf, AnimationSpec, Color as RColor, Easing, JustifyContent, Modifier,
@@ -14,7 +15,6 @@ use repose_core::{
     ImeAction, KeyboardOptions, KeyboardType, PaddingValues, StateColors, StateElevation,
     TextFieldLineLimits,
 };
-use repose_core::ImageFit;
 use repose_material::material3::{
     ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, DropdownMenu, DropdownMenuConfig,
     DropdownMenuEntry, DropdownMenuItem, FilledTonalButton, FilledTonalIconButton,
@@ -1568,24 +1568,15 @@ fn mk_swatch(
             let mut stack = ZStack(Modifier::new().fill_max_size());
             if let Some(handle) = icon {
                 stack = stack.child(
-                    Image(
-                        Modifier::new()
-                            .fill_max_size()
-                            .padding(2.0),
-                        handle,
-                    )
-                    .image_fit(ImageFit::Contain),
+                    Image(Modifier::new().fill_max_size().padding(2.0), handle)
+                        .image_fit(ImageFit::Contain),
                 );
             }
-            stack.child(
-                RText(hotkey.clone())
-                    .size(13.0)
-                    .color(if selected {
-                        RColor::from_rgba(0, 0, 0, 255)
-                    } else {
-                        RColor::WHITE
-                    }),
-            )
+            stack.child(RText(hotkey.clone()).size(13.0).color(if selected {
+                RColor::from_rgba(0, 0, 0, 255)
+            } else {
+                RColor::WHITE
+            }))
         },
     )
 }

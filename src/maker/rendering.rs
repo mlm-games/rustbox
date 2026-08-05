@@ -936,7 +936,10 @@ pub fn reconcile_block_overlays(
 
     // Despawn overlays whose cell no longer holds a matching kind.
     overlays.0.retain(|cell, e| {
-        let keep = level.map.get(cell).is_some_and(|b| overlay_gltf(b.kind).is_some());
+        let keep = level
+            .map
+            .get(cell)
+            .is_some_and(|b| overlay_gltf(b.kind).is_some());
         if !keep {
             commands.entity(*e).despawn();
         }
