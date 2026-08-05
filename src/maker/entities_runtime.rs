@@ -306,7 +306,6 @@ pub struct RuntimeSolids {
 #[derive(Resource)]
 pub struct EntityAssets {
     pub scenes: HashMap<EntityKind, Handle<WorldAsset>>,
-    pub albedo_mats: HashMap<EntityKind, Handle<StandardMaterial>>,
     pub pad_mesh: Handle<Mesh>,
     pub marker_mesh: Handle<Mesh>,
     pub sign_board_mesh: Handle<Mesh>,
@@ -346,6 +345,9 @@ pub fn setup_entity_assets(
     let mut mats = HashMap::new();
     for kind in [
         EntityKind::Glimmer,
+        EntityKind::Seal,
+        EntityKind::DriftPlate,
+        EntityKind::Prowler,
         EntityKind::LaunchPad,
         EntityKind::Checkpoint,
         EntityKind::Teleporter,
@@ -383,58 +385,35 @@ pub fn setup_entity_assets(
     let mut scenes = HashMap::new();
     scenes.insert(
         EntityKind::Glimmer,
-        asset_server.load("models/cubeworld/Crystal_Big.gltf#Scene0"),
+        asset_server.load("models/pack/Glimmer.gltf#Scene0"),
     );
     scenes.insert(
         EntityKind::Seal,
-        asset_server.load("models/cubeworld/Door_Closed.gltf#Scene0"),
+        asset_server.load("models/pack/Seal.gltf#Scene0"),
     );
     scenes.insert(
         EntityKind::DriftPlate,
-        asset_server.load("models/cubeworld/Cart.gltf#Scene0"),
+        asset_server.load("models/pack/DriftPlate.gltf#Scene0"),
     );
     scenes.insert(
         EntityKind::Prowler,
-        asset_server.load("models/cubeworld/Goblin.gltf#Scene0"),
+        asset_server.load("models/pack/Prowler.gltf#Scene0"),
     );
     scenes.insert(
         EntityKind::TriggerOrb,
-        asset_server.load("models/cubeworld/Button.gltf#Scene0"),
+        asset_server.load("models/pack/TriggerOrb.gltf#Scene0"),
     );
     scenes.insert(
         EntityKind::RelayGate,
-        asset_server.load("models/cubeworld/Door_Closed.gltf#Scene0"),
+        asset_server.load("models/pack/RelayGate.gltf#Scene0"),
     );
 
     let pad_mesh = meshes.add(Cylinder::new(0.45, 0.15));
     let marker_mesh = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
     let sign_board_mesh = meshes.add(Cuboid::new(0.9, 0.45, 0.08));
 
-    let mut albedo_mats = HashMap::new();
-    let mut albedo = |path: &'static str| {
-        let texture: Handle<Image> = asset_server.load(path);
-        materials.add(StandardMaterial {
-            base_color_texture: Some(texture),
-            perceptual_roughness: 0.9,
-            ..default()
-        })
-    };
-    albedo_mats.insert(
-        EntityKind::Seal,
-        albedo("models/cubeworld/Door_Closed.gltf#Texture0"),
-    );
-    albedo_mats.insert(
-        EntityKind::DriftPlate,
-        albedo("models/cubeworld/Cart.gltf#Texture0"),
-    );
-    albedo_mats.insert(
-        EntityKind::Prowler,
-        albedo("models/cubeworld/Goblin.gltf#Texture0"),
-    );
-
     commands.insert_resource(EntityAssets {
         scenes,
-        albedo_mats,
         pad_mesh,
         marker_mesh,
         sign_board_mesh,
@@ -522,7 +501,9 @@ fn visual_for(
     let material = match kind {
         EntityKind::Glimmer => assets.mats[&kind].clone(),
         EntityKind::TriggerOrb | EntityKind::RelayGate => assets.link_mats[&link.min(9)].clone(),
-        _ => assets.albedo_mats[&kind].clone(),
+        // Pack models ship their own multi-material colors (auto-attached by
+        // the fork's glTF handler); this is only an inert fallback.
+        _ => assets.mats[&kind].clone(),
     };
     Some((scene, material, scale, y_off))
 }
@@ -588,11 +569,11 @@ pub fn init_clip_library(asset_server: Res<AssetServer>, mut lib: ResMut<ClipLib
     lib.pending = vec![
         (
             "player",
-            asset_server.load::<Gltf>("models/cubeworld/Character_Male_2.gltf"),
+            asset_server.load::<Gltf>("models/pack/Player.gltf"),
         ),
         (
             "prowler",
-            asset_server.load::<Gltf>("models/cubeworld/Goblin.gltf"),
+            asset_server.load::<Gltf>("models/pack/Prowler.gltf"),
         ),
     ];
 }
@@ -811,6 +792,7 @@ pub fn reconcile_entities(
                 let mut vis = p.spawn((
                     WorldAssetRoot(scene),
                     MakerCleanup,
+                    Visibility::default(),
                     ModelMaterial(material),
                     Transform::from_translation(Vec3::Y * y_off).with_scale(Vec3::splat(scale)),
                 ));

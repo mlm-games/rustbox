@@ -48,10 +48,10 @@ fn register(rc: &RenderContext, list: &[&[u8]]) -> Vec<ImageHandle> {
     list.iter()
         .map(|bytes| {
             let handle = rc.alloc_image_handle();
-            rc.set_image_encoded(handle, bytes.to_vec(), true);
             // Icons are long-lived and not drawn while off the maker palette;
-            // pin them so the renderer's time-based eviction doesn't free them.
-            rc.set_image_persistent(handle, true);
+            // the renderer retains RGBA sources so eviction only frees GPU
+            // memory and re-uploads them lazily when next drawn.
+            rc.set_image_encoded(handle, bytes.to_vec(), true);
             handle
         })
         .collect()

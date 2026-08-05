@@ -98,6 +98,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<CameraRig>()
             .init_resource::<ChunkEntities>()
             .init_resource::<rendering::WaterChunkEntities>()
+            .init_resource::<rendering::BlockOverlayEntities>()
             .init_resource::<EntityEntities>()
             .init_resource::<RuntimeSolids>()
             .init_resource::<entities_runtime::DropIdCounter>()
@@ -160,6 +161,13 @@ impl Plugin for MakerPlugin {
                     .run_if(not_paused)
                     .run_if(not_blocked)
                     .after(ui_bridge::update_input_capture),
+            )
+            .add_systems(
+                Update,
+                rendering::reconcile_block_overlays
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
             )
             .add_systems(
                 Update,

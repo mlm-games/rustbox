@@ -11,7 +11,8 @@ use repose_core::prelude::{
     remember, remember_mutable,
 };
 use repose_core::{
-    ImeAction, KeyboardOptions, KeyboardType, StateColors, StateElevation, TextFieldLineLimits,
+    ImeAction, KeyboardOptions, KeyboardType, PaddingValues, StateColors, StateElevation,
+    TextFieldLineLimits,
 };
 use repose_core::ImageFit;
 use repose_material::material3::{
@@ -1554,7 +1555,15 @@ fn mk_swatch(
             .background(bg)
             .clip_rounded(8.0),
         on_click,
-        ButtonConfig::default(),
+        ButtonConfig {
+            content_padding: Some(PaddingValues {
+                left: 3.0,
+                right: 3.0,
+                top: 3.0,
+                bottom: 3.0,
+            }),
+            ..Default::default()
+        },
         move || {
             let mut stack = ZStack(Modifier::new().fill_max_size());
             if let Some(handle) = icon {
@@ -1562,7 +1571,7 @@ fn mk_swatch(
                     Image(
                         Modifier::new()
                             .fill_max_size()
-                            .padding(5.0),
+                            .padding(2.0),
                         handle,
                     )
                     .image_fit(ImageFit::Contain),

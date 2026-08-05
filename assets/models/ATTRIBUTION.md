@@ -1,18 +1,23 @@
 # 3D Models
 
-All in-game models come from the **Quaternius Cubeworld Kit** by Quaternius
-(<https://quaternius.com>), licensed under **CC0 1.0 Universal**
-(<https://creativecommons.org/publicdomain/zero/1.0/>)
+All in-game models come from the **Ultimate Platformer Pack - Dec 2021**
+(<https://opengameart.org/content/16x16-platformer-pack>), governed by the
+**CC0 1.0 Universal** license (<https://creativecommons.org/publicdomain/zero/1.0/>).
 
 ## Models used
 
 | File                        | Used for       |
 | --------------------------- | -------------- |
-| `cubeworld/Character_Male_2.gltf` | Player        |
-| `cubeworld/Goblin.gltf`     | Prowler        |
-| `cubeworld/Crystal_Big.gltf` | Glimmer       |
-| `cubeworld/Door_Closed.gltf` | Seal, Relay Gate |
-| `cubeworld/Button.gltf`     | Trigger Orb    |
-| `cubeworld/Cart.gltf`       | Drift Plate    |
+| `pack/Player.gltf`          | Player         |
+| `pack/Prowler.gltf`         | Prowler        |
+| `pack/Glimmer.gltf`         | Glimmer        |
+| `pack/Seal.gltf`            | Seal           |
+| `pack/TriggerOrb.gltf`      | Trigger Orb    |
+| `pack/DriftPlate.gltf`      | Drift Plate    |
+| `pack/RelayGate.gltf`       | Relay Gate     |
+| `pack/Goal_Flag.gltf`       | Goal block     |
+| `pack/Bouncer.gltf`         | Bounce block   |
+| `pack/Hazard_SpikeTrap.gltf`| Hazard block   |
+| `pack/Spikes.gltf`          | Spikes block   |
 
-Models are self-contained glTF 2.0 (embedded buffers and textures).
+Models are self-contained glTF 2.0 (embedded buffers).

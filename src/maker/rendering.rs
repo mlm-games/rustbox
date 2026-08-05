@@ -24,7 +24,40 @@ pub struct MakerAssets {
     pub ghost_mats: HashMap<BlockKind, Handle<StandardMaterial>>,
     /// Rot-0 mesh for each block shape (previews/ghosts rotate their Transform).
     pub shape_meshes: HashMap<BlockShape, Handle<Mesh>>,
+    /// Real pack models that replace the procedural cube for a few landmark
+    /// block kinds (Goal, Bounce, Hazard, Spikes). Sparse by design.
+    pub block_overlays: HashMap<BlockKind, Handle<WorldAsset>>,
 }
+
+/// Block kinds rendered with a real pack model instead of the procedural cube.
+/// Leaves the colored chunk mesh mostly intact ("old models") and overlays a
+/// glTF scene only for the sparse landmark kinds whose names match a pack model.
+fn overlay_gltf(kind: BlockKind) -> Option<&'static str> {
+    match kind {
+        BlockKind::Goal => Some("models/pack/Goal_Flag.gltf#Scene0"),
+        BlockKind::Bounce => Some("models/pack/Bouncer.gltf#Scene0"),
+        BlockKind::Hazard => Some("models/pack/Hazard_SpikeTrap.gltf#Scene0"),
+        BlockKind::Spikes => Some("models/pack/Spikes.gltf#Scene0"),
+        _ => None,
+    }
+}
+
+/// Per-kind overlay placement: (scale, y-offset from the cell floor). The
+/// overlay root sits at the cell center, so -0.5 seats the model base on the
+/// cell floor.
+fn overlay_placement(kind: BlockKind) -> Option<(f32, f32)> {
+    match kind {
+        BlockKind::Goal => Some((0.6, -0.5)),
+        BlockKind::Bounce => Some((0.55, -0.5)),
+        BlockKind::Hazard => Some((0.5, -0.5)),
+        BlockKind::Spikes => Some((0.5, -0.5)),
+        _ => None,
+    }
+}
+
+/// Spawned overlay scene entity per overlaid block cell. Keyed like chunks.
+#[derive(Resource, Default)]
+pub struct BlockOverlayEntities(pub HashMap<IVec3, Entity>);
 
 #[derive(Resource, Default)]
 pub struct ChunkEntities(pub HashMap<IVec3, Entity>);
@@ -672,6 +705,11 @@ fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &B
     if block.kind == BlockKind::Water {
         return;
     }
+    // Landmark kinds with a real pack model keep the cell empty in the chunk
+    // mesh; the model scene (spawned by reconcile_block_overlays) replaces it.
+    if overlay_gltf(block.kind).is_some() {
+        return;
+    }
     // Timed Pulse blocks disappear while the pulse is off.
     if block.kind.is_pulse() && !level.pulse_on {
         return;
@@ -877,6 +915,64 @@ pub fn rebuild_dirty_chunks(
         }
         has_water(&level, *cpos)
     });
+}
+
+/// Spawns/despawns the real pack-model scenes that visually replace the
+/// procedural cube for the sparse landmark block kinds (Goal, Bounce, Hazard,
+/// Spikes). Runs on the same dirty trigger as the chunk meshes; the overlay
+/// is a child of a per-cell root so the cell transform matches chunk rendering.
+pub fn reconcile_block_overlays(
+    mut commands: Commands,
+    level: Res<LevelDocument>,
+    assets: Option<Res<MakerAssets>>,
+    mut overlays: ResMut<BlockOverlayEntities>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+    if level.dirty_chunks.is_empty() && !level.is_changed() {
+        return;
+    }
+
+    // Despawn overlays whose cell no longer holds a matching kind.
+    overlays.0.retain(|cell, e| {
+        let keep = level.map.get(cell).is_some_and(|b| overlay_gltf(b.kind).is_some());
+        if !keep {
+            commands.entity(*e).despawn();
+        }
+        keep
+    });
+
+    // Spawn overlays for cells missing one.
+    for (cell, block) in &level.map {
+        let kind = block.kind;
+        let Some((scale, y_off)) = overlay_placement(kind) else {
+            continue;
+        };
+        if overlays.0.contains_key(cell) {
+            continue;
+        }
+        let scene = assets.block_overlays[&kind].clone();
+        let yaw = block.rot as f32 * std::f32::consts::FRAC_PI_2;
+        let root = commands
+            .spawn((
+                Transform::from_translation(cell.as_vec3() + Vec3::splat(0.5))
+                    .with_rotation(Quat::from_rotation_y(yaw)),
+                Visibility::default(),
+                MakerCleanup,
+            ))
+            .id();
+        commands.entity(root).with_children(|p| {
+            p.spawn((
+                WorldAssetRoot(scene),
+                MakerCleanup,
+                Visibility::default(),
+                Transform::from_translation(Vec3::new(0.0, y_off, 0.0))
+                    .with_scale(Vec3::splat(scale)),
+            ));
+        });
+        overlays.0.insert(*cell, root);
+    }
 }
 
 pub fn spawn_place_ghost(
@@ -1087,12 +1183,10 @@ pub fn setup_world(
     chunk_mat.perceptual_roughness = 0.9;
     let chunk_material = materials.add(chunk_mat);
 
-    let player_scene = asset_server.load("models/cubeworld/Character_Male_2.gltf#Scene0");
+    let player_scene = asset_server.load("models/pack/Player.gltf#Scene0");
 
-    let player_texture: Handle<Image> =
-        asset_server.load("models/cubeworld/Character_Male_2.gltf#Texture0");
+    // Pack model ships its own materials; this is only an inert fallback.
     let player_material = materials.add(StandardMaterial {
-        base_color_texture: Some(player_texture),
         perceptual_roughness: 0.9,
         ..default()
     });
@@ -1119,6 +1213,13 @@ pub fn setup_world(
         shape_meshes.insert(*shape, meshes.add(build_shape_mesh(*shape)));
     }
 
+    let mut block_overlays = HashMap::new();
+    for kind in ALL_BLOCK_KINDS {
+        if let Some(path) = overlay_gltf(*kind) {
+            block_overlays.insert(*kind, asset_server.load(path));
+        }
+    }
+
     let assets = MakerAssets {
         chunk_material,
         water_material,
@@ -1127,6 +1228,7 @@ pub fn setup_world(
         preview_mat: preview_mat.clone(),
         ghost_mats,
         shape_meshes,
+        block_overlays,
     };
 
     commands.spawn((

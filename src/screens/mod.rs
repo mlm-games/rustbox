@@ -16,12 +16,17 @@ impl Plugin for ScreensPlugin {
             (|mut c: Commands, asset_server: Res<AssetServer>| {
                 c.insert_resource(LoadingTimer(Timer::from_seconds(0.5, TimerMode::Once)));
                 let scenes = [
-                    "models/cubeworld/Character_Male_2.gltf#Scene0",
-                    "models/cubeworld/Crystal_Big.gltf#Scene0",
-                    "models/cubeworld/Door_Closed.gltf#Scene0",
-                    "models/cubeworld/Cart.gltf#Scene0",
-                    "models/cubeworld/Goblin.gltf#Scene0",
-                    "models/cubeworld/Button.gltf#Scene0",
+                    "models/pack/Player.gltf#Scene0",
+                    "models/pack/Glimmer.gltf#Scene0",
+                    "models/pack/Seal.gltf#Scene0",
+                    "models/pack/DriftPlate.gltf#Scene0",
+                    "models/pack/Prowler.gltf#Scene0",
+                    "models/pack/TriggerOrb.gltf#Scene0",
+                    "models/pack/RelayGate.gltf#Scene0",
+                    "models/pack/Goal_Flag.gltf#Scene0",
+                    "models/pack/Bouncer.gltf#Scene0",
+                    "models/pack/Hazard_SpikeTrap.gltf#Scene0",
+                    "models/pack/Spikes.gltf#Scene0",
                 ];
                 let mut handles = Vec::new();
                 for path in scenes {
