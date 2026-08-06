@@ -1,4 +1,4 @@
-app-title = My Ecosystem Bevy
+app-title = Rustbox
 start-game = Lancer le Jeu
 settings = Paramètres
 credits = Crédits

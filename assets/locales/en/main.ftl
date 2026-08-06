@@ -1,4 +1,4 @@
-app-title = My Ecosystem Bevy
+app-title = Rustbox
 start-game = Start Game
 settings = Settings
 credits = Credits
@@ -101,9 +101,9 @@ maker-channel-triggered = Channel triggered!
 inspector-channel = Channel
 inspector-cooldown = Cooldown
 inspector-duration = Duration
-play-levels = Play Levels
+play-levels = Tutorial Levels
 create = Create
-level-select-title = Play Levels
+level-select-title = Tutorial Levels
 maker-remix = Remix This Level
 maker-beat-author = Beat the author!
 completed = Completed

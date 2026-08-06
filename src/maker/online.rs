@@ -30,7 +30,7 @@ pub enum OnlineRequest {
         limit: u64,
         offset: u64,
     },
-    /// Fetch a single level's metadata by server id (MM2-style "Search with ID").
+    /// Fetch a single level's metadata by server id (maker2-style "Search with ID").
     FetchById(u64),
     Upload {
         meta: UploadMetadata,

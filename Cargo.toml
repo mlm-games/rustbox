@@ -1,21 +1,21 @@
 [package]
-name = "my-ecosystem-bevy"
+name = "rustbox"
 version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0"
-description = "3D Mario Maker prototype built on Bevy + Repose UI (extension of my-ecosystem-template-bevy)"
-repository = "https://github.com/mlm-games/my-ecosystem-template-bevy"
+description = "3D Mario Maker–style builder on Bevy + Repose UI"
+repository = "https://github.com/mlm-games/rustbox"
 readme = "README.md"
-keywords = ["bevy", "gamedev", "template", "3d", "mario-maker", "repose"]
+keywords = ["bevy", "gamedev", "3d", "mario-maker", "repose", "level-editor"]
 categories = ["game-development"]
 rust-version = "1.96"
-default-run = "my-ecosystem-bevy-desktop"
+default-run = "rustbox-desktop"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "my-ecosystem-bevy-desktop"
+name = "rustbox-desktop"
 path = "src/main.rs"
 
 [workspace]

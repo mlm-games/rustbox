@@ -1212,7 +1212,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-time",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2302,7 +2302,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2466,7 +2466,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3656,39 +3656,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
 
 [[package]]
-name = "my-ecosystem-bevy"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "bevy",
- "bevy_rapier3d",
- "crossbeam-channel",
- "directories",
- "ehttp",
- "game-utils",
- "game-utils-bevy",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "getrandom 0.4.3",
- "hex",
- "rand",
- "repose-bevy",
- "repose-core",
- "repose-material",
- "repose-render-wgpu",
- "repose-ui",
- "ron",
- "rustbox-format",
- "serde",
- "serde_json",
- "sha2",
- "wasm-bindgen",
- "web-sys",
- "wgpu",
-]
-
-[[package]]
 name = "naga"
 version = "30.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3830,7 +3797,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4885,9 +4852,9 @@ dependencies = [
 
 [[package]]
 name = "repose-core"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f55b16722bd5f19ad7e31d6a8a25cc799edd528df63f0f750b834090c4604bc5"
+checksum = "323fef3e4649be3771584524e88bd759938ffcb57c3509e30e23540267f3c0c6"
 dependencies = [
  "bitflags 2.13.1",
  "log",
@@ -4903,9 +4870,9 @@ dependencies = [
 
 [[package]]
 name = "repose-macros"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7b5a09aadc2931efc98f22155ff16357ca55ceda712cfd5a0375b736ed14d50"
+checksum = "80bde8bcf24ac813f9bcb32c9f84c6b738875f076809971b8058af21314bf1f1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4914,9 +4881,9 @@ dependencies = [
 
 [[package]]
 name = "repose-material"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22de1c00213a5ba63a4a04f567386396498176ab1d22942f8fe50b571d1f0b75"
+checksum = "0e34a322baa4382df5cdaaf9d5521bbcc69e07c1b7739d43f60af8f17a9a39bd"
 dependencies = [
  "repose-core",
  "repose-text",
@@ -4945,9 +4912,9 @@ dependencies = [
 
 [[package]]
 name = "repose-text"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d961697aaf2334281503d7ea528379e545705f9fe30458aaebb73dd539e0e8a"
+checksum = "73c244bf6c37e8dfd1208a2e78e62b87c414d88f3e06f9a8cafeec3689f955bf"
 dependencies = [
  "font-awl",
  "log",
@@ -4961,9 +4928,9 @@ dependencies = [
 
 [[package]]
 name = "repose-tree"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22bdce2ee02bd4b01a22afdec39593d1e290c9d4a017934b37ee695881ab161a"
+checksum = "4525759fcd938187f5f95419262b58c866afe9b29f8230732ff68a7c676f515a"
 dependencies = [
  "log",
  "rapidhash",
@@ -4975,9 +4942,9 @@ dependencies = [
 
 [[package]]
 name = "repose-ui"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f862f9d07baeea66cd2cea169279b7a23c761b1a690fbddd2969ac10592d712c"
+checksum = "d9399e8278ca3a2620d4f9a4f4948b566f0b574b0472b7ae6803181c1e203027"
 dependencies = [
  "log",
  "repose-core",
@@ -5060,6 +5027,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustbox"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "bevy",
+ "bevy_rapier3d",
+ "crossbeam-channel",
+ "directories",
+ "ehttp",
+ "game-utils",
+ "game-utils-bevy",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "getrandom 0.4.3",
+ "hex",
+ "rand",
+ "repose-bevy",
+ "repose-core",
+ "repose-material",
+ "repose-render-wgpu",
+ "repose-ui",
+ "ron",
+ "rustbox-format",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wasm-bindgen",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
 name = "rustbox-format"
 version = "0.1.0"
 dependencies = [
@@ -5114,7 +5114,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6412,7 +6412,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

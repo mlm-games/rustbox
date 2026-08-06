@@ -1,6 +1,6 @@
-# My Ecosystem Bevy
+# Rustbox
 
-A WIP Bevy 2D game template with ecosystem plugins ported from [my-ecosystem-template](https://github.com/mlm-games/my-ecosystem-template) (Godot).
+A WIP Bevy 3D Mario Maker–style level builder built on [Repose UI](https://github.com/mlm-games/repose-bevy): place blocks, wire logic, and ship levels.
 
 ## Features
 

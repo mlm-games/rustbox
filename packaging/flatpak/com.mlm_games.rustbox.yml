@@ -1,14 +1,14 @@
-id: com.mlm-games.my-ecosystem-bevy
+id: com.mlm-games.rustbox
 runtime: org.freedesktop.Platform
 runtime-version: '24.08'
 sdk: org.freedesktop.Sdk
-command: my-ecosystem-bevy
+command: rustbox-desktop
 modules:
-  - name: my-ecosystem-bevy
+  - name: rustbox
     buildsystem: simple
     build-commands:
       - cargo build --release
-      - install -Dm755 target/release/my-ecosystem-bevy /app/bin/my-ecosystem-bevy
+      - install -Dm755 target/release/rustbox-desktop /app/bin/rustbox-desktop
     sources:
       - type: dir
         path: .

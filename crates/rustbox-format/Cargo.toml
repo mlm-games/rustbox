@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0"
 description = "Shared serializable level format for the rustbox game and its online backend (no Bevy dependency)"
-repository = "https://github.com/mlm-games/my-ecosystem-template-bevy"
+repository = "https://github.com/mlm-games/rustbox"
 keywords = ["gamedev", "bevy", "mario-maker", "level", "serialization"]
 rust-version = "1.96"
 

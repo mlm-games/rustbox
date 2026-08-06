@@ -1,14 +1,14 @@
 # Maintainer: mlm-games
-pkgname=my-ecosystem-bevy
-pkgver=0.1.0
+pkgname=rustbox
+pkgver=0.2.0
 pkgrel=1
-pkgdesc="Clone of my Godot template for bevy"
+pkgdesc="3D level builder"
 arch=('x86_64')
-url="https://github.com/mlm-games/my-ecosystem-bevy"
+url="https://github.com/mlm-games/rustbox"
 license=('GPL3')
 depends=('alsa-lib' 'libx11' 'libxcb' 'wayland')
 makedepends=('cargo')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/mlm-games/my-ecosystem-bevy/archive/v$pkgver.tar.gz")
+source=("$pkgname-$pkgver.tar.gz::https://github.com/mlm-games/rustbox/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
 build() {
@@ -16,5 +16,5 @@ build() {
 }
 
 package() {
-    install -Dm755 target/release/$pkgname "$pkgdir/usr/bin/$pkgname"
+    install -Dm755 target/release/rustbox-desktop "$pkgdir/usr/bin/$pkgname-desktop"
 }

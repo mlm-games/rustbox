@@ -172,6 +172,8 @@ pub enum OverlayMenu {
     Browse,
     Online,
     LevelInfo,
+    /// fullscreen part picker (Terrain / Items / Enemies / Gizmos) like the other one.
+    PartPicker,
 }
 
 #[derive(Resource, Default)]
@@ -476,7 +478,7 @@ impl Plugin for AppPlugin {
                 SavePlugin::<SaveData>::new(SaveManager::new(
                     "com",
                     "mlm-games",
-                    "my-ecosystem-bevy",
+                    "rustbox",
                     "save.ron",
                     1,
                 )),
@@ -1327,6 +1329,19 @@ fn process_ui_actions(
                     };
                     m.commands.push(UiCommand::SetBrushTab(tab));
                 }
+            }
+            UiAction::MakerSetBrushTab(tab) => {
+                if let Some(ref mut m) = maker_ui {
+                    let tab = match tab {
+                        1 => BrushTab::Entities,
+                        2 => BrushTab::Tracks,
+                        _ => BrushTab::Blocks,
+                    };
+                    m.commands.push(UiCommand::SetBrushTab(tab));
+                }
+            }
+            UiAction::OpenPartPicker => {
+                *overlay = OverlayMenu::PartPicker;
             }
             UiAction::MakerSelectEntity(i) => {
                 if let Some(ref mut m) = maker_ui {
