@@ -336,9 +336,11 @@ fn local_detail_panel(
     let a_play = actions.clone();
     let a_edit = actions.clone();
     let a_del = actions.clone();
+    let a_pub = actions.clone();
     let k_play = s.key.clone();
     let k_edit = s.key.clone();
     let k_del = s.key.clone();
+    let k_pub = s.key.clone();
 
     let mut name_children: Vec<View> = vec![RText(s.name.clone()).size(20.0).color(RColor::WHITE)];
     if s.verified {

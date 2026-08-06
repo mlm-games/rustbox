@@ -62,6 +62,7 @@ pub enum UiCommand {
     RemixCurrent,
     PlayCatalogEntry(String),
     EditCatalogEntry(String),
+    UploadCatalogEntry(String),
     AddToCollection,
     OpenLevelInfo,
     SaveMetadata,
@@ -580,6 +581,42 @@ pub fn drain_ui_commands(
                     Ok(false) => ui.set_status("Level not found."),
                     Err(e) => ui.set_status(format!("Load failed: {e}")),
                 }
+            }
+            UiCommand::UploadCatalogEntry(key) => {
+                let data = match storage.0.load(&key) {
+                    Ok(Some(text)) => match storage::deserialize_level(&text) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            ui.set_status(format!("Load failed: {e}"));
+                            continue;
+                        }
+                    },
+                    Ok(None) => {
+                        ui.set_status("Level not found.");
+                        continue;
+                    }
+                    Err(e) => {
+                        ui.set_status(format!("Load failed: {e}"));
+                        continue;
+                    }
+                };
+                if !data.is_verified {
+                    ui.set_status("Beat the level before publishing.");
+                    continue;
+                }
+                let meta = UploadMetadata {
+                    name: data.name.clone(),
+                    description: data.description.clone(),
+                    tags: data.tags.iter().map(|t| t.label().to_string()).collect(),
+                    format_version: FORMAT_VERSION,
+                    game_version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                ui.online_pending.push(OnlineRequest::Upload {
+                    meta,
+                    data,
+                });
+                ui.set_status("Uploading...");
+                ui.catalog = catalog::build_catalog(&storage);
             }
             UiCommand::EditCatalogEntry(key) => {
                 match storage::load_level(&storage, &mut level, &mut history, &key) {

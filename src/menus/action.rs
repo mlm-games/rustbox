@@ -67,6 +67,7 @@ pub enum UiAction {
     BrowseOpen,
     BrowsePlay(String),
     BrowseEdit(String),
+    BrowsePublish(String),
     BrowseDelete(String),
     BrowseConfirmDelete(String),
     BrowseCancelDelete,

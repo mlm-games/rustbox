@@ -784,6 +784,12 @@ fn process_ui_actions(
                 *overlay = OverlayMenu::None;
                 transition.begin_to_state(AppState::Loading);
             }
+            UiAction::BrowsePublish(key) => {
+                if let Some(ref mut m) = maker_ui {
+                    m.browse_confirm_delete = None;
+                    m.commands.push(UiCommand::UploadCatalogEntry(key));
+                }
+            }
             UiAction::BrowseDelete(key) => {
                 if let Some(ref mut m) = maker_ui {
                     if m.browse_confirm_delete.as_deref() == Some(key.as_str()) {

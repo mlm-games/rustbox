@@ -2,10 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use repose_core::View;
 use repose_core::prelude::{AlignItems, AlignSelf, JustifyContent, Modifier};
-use repose_core::Alignment;
 use repose_material::Icon;
 use repose_material::material3::{
-    ButtonConfig, CardConfig, ClickableOutlinedCard, ElevatedCard, FilledTonalButton, IconButton,
+    ButtonConfig, CardConfig, ClickableOutlinedCard, FilledTonalButton, IconButton,
     IconButtonColors, IconButtonConfig, Scaffold, ScaffoldConfig, TopAppBar, TopAppBarColors,
     TopAppBarConfig,
 };
@@ -13,7 +12,7 @@ use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt};
 
 use crate::app::SharedUi;
 use crate::menus::action::UiAction;
-use crate::menus::components::{Symbols, mk_primary_button, push, spacer};
+use crate::menus::components::{Symbols, push, spacer};
 use crate::menus::style::{radius, sp, t, tok};
 
 pub fn splash_ui() -> View {
@@ -83,57 +82,6 @@ pub fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             let a_online = actions.clone();
             let a_quit = actions.clone();
 
-            // Continue: most recent local slot if any, shown as a hero card.
-            let continue_card = if let Some(slot) = st.level_slots.first().cloned() {
-                let a = actions.clone();
-                let label = format!("Continue · {slot}");
-                let preview = st
-                    .browse_levels
-                    .iter()
-                    .find(|s| s.key == slot)
-                    .map(|s| s.preview.clone());
-                let thumb = preview
-                    .as_ref()
-                    .map(|p| crate::menus::browser::preview_thumb(p, 6.0))
-                    .unwrap_or_else(|| {
-                        RText("…").size(14.0).color(tok::text_mute())
-                    });
-                Some(ElevatedCard(
-                    CardConfig {
-                        modifier: Modifier::new().width(560.0).padding(sp::XL),
-                        container_color: tok::bg_panel_solid(),
-                        content_color: tok::text(),
-                        shape_radius: radius::LG,
-                        ..Default::default()
-                    },
-                    move || {
-                        Column(Modifier::new()
-                            .fill_max_width()
-                            .gap(sp::MD)
-                            .content_alignment(Alignment::Center))
-                            .child((
-                                RText("Continue building").size(13.0).color(tok::text_dim()),
-                                RText(label.clone()).size(28.0).color(tok::text()),
-                                Column(Modifier::new()
-                                    .height(120.0)
-                                    .align_items(AlignItems::CENTER)
-                                    .justify_content(JustifyContent::CENTER))
-                                    .child(thumb.clone()),
-                                mk_primary_button(
-                                    RText("Resume editor").size(15.0).color(tok::text()),
-                                    tok::play(),
-                                    move || {
-                                        push(&a, UiAction::StartGame);
-                                        push(&a, UiAction::MakerLoadSlot(slot.clone()));
-                                    },
-                                ),
-                            ))
-                    },
-                ))
-            } else {
-                None
-            };
-
             let mut hero: Vec<View> = Vec::new();
             hero.push(
                 RText(t(tr, "app-title", "Rustbox"))
@@ -147,10 +95,6 @@ pub fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                     .color(tok::text_dim()),
             );
             hero.push(spacer(28.0));
-            if let Some(card) = continue_card {
-                hero.push(card);
-                hero.push(spacer(sp::XL));
-            }
             hero.push(
                 Row(Modifier::new().gap(sp::MD).fill_max_width()).children(vec![
                     half_card("New World", Symbols::ADD, move || {
