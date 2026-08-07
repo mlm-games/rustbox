@@ -41,7 +41,6 @@ pub enum UiCommand {
     SaveAs(String),
     LoadSlot(String),
     RetryPlay,
-    RefreshSlotList,
     Publish,
     ExportCode,
     ImportCode(String),
@@ -511,9 +510,6 @@ pub fn drain_ui_commands(
                         &level,
                     );
                 }
-            }
-            UiCommand::RefreshSlotList => {
-                ui.level_slots = storage::list_slots(&storage);
             }
             UiCommand::Publish => {
                 if level.data.is_verified {

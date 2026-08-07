@@ -716,10 +716,12 @@ pub fn player_controller(
             &level,
             &solids.boxes,
         );
-        if result.hit_x {
+        // Hitting a wall zeroes the whole horizontal velocity, not just the
+        // colliding axis. Otherwise a diagonal run into a wall leaves the
+        // tangential component, which slides the player along the wall like an
+        // auto-move. Is annoying and often slightly wrong, so stop dead instead.
+        if result.hit_x || result.hit_z {
             player.velocity.x = 0.0;
-        }
-        if result.hit_z {
             player.velocity.z = 0.0;
         }
         if result.hit_y {

@@ -619,7 +619,11 @@ pub fn sphere_cast_distance(
 }
 
 /// Pull a desired camera eye in along the focus->eye segment so the sphere
-/// stays free.
+/// stays free. If a wall sits immediately behind the player, the eye would
+/// otherwise be forced down to ~0.6 away and zoom right into the player's
+/// back - very annoying - so the camera keeps a comfortable distance instead.
+const MIN_EYE_KEEP: f32 = 1.6;
+
 pub fn collide_camera_eye(
     level: &LevelDocument,
     focus: Vec3,
@@ -641,7 +645,15 @@ pub fn collide_camera_eye(
     // side walls the player is flush against.
     let origin = focus - dir * (radius + skin);
     let free = sphere_cast_distance(level, origin, dir, dist, radius, extras);
-    let use_dist = (free - skin).clamp(0.6, dist);
+    // When a wall is this close behind the player, pulling the eye in to find
+    // a free spot only zooms the camera into the player. Disable that: hold the
+    // normal zoom distance and let the wall clip instead of the camera.
+    if free <= radius + skin + MIN_EYE_KEEP {
+        return focus + dir * dist;
+    }
+    // Otherwise keep the eye out in front of the closest wall, but never
+    // closer than MIN_EYE_KEEP so the camera doesn't swoop into the rig.
+    let use_dist = (free - skin).min(dist).max(MIN_EYE_KEEP);
     focus + dir * use_dist
 }
 
