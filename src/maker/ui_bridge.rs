@@ -611,10 +611,7 @@ pub fn drain_ui_commands(
                     format_version: FORMAT_VERSION,
                     game_version: env!("CARGO_PKG_VERSION").to_string(),
                 };
-                ui.online_pending.push(OnlineRequest::Upload {
-                    meta,
-                    data,
-                });
+                ui.online_pending.push(OnlineRequest::Upload { meta, data });
                 ui.set_status("Uploading...");
                 ui.catalog = catalog::build_catalog(&storage);
             }
@@ -1123,6 +1120,7 @@ pub fn update_input_capture(
     transition: Res<game_utils_bevy::transitions::Transition<crate::app::AppState>>,
     overlay: Res<crate::app::OverlayMenu>,
     bridge: Res<crate::menus::UiBridge>,
+    repose: NonSend<repose_bevy::ReposeState>,
     mut capture: ResMut<InputCapture>,
 ) {
     let modal_open = paused.0
@@ -1137,6 +1135,9 @@ pub fn update_input_capture(
                 .any(|a| matches!(a, crate::menus::UiAction::SetPointerOverUi(true)))
         })
         .unwrap_or(false);
-    capture.ui_wants_pointer = ui.pointer_over_ui || pending_ui_touch || modal_open;
+    let repose_wants_pointer =
+        repose.runtime.hover_id.is_some() || repose.runtime.capture_id.is_some();
+    capture.ui_wants_pointer =
+        ui.pointer_over_ui || pending_ui_touch || modal_open || repose_wants_pointer;
     capture.ui_wants_keyboard = ui.keyboard_captured || modal_open;
 }

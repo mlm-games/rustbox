@@ -454,6 +454,27 @@ fn local_detail_panel(
         .size(12.0)
         .color(col(150, 150, 170)),
         Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child(tag_pills),
+        FilledTonalButton(
+            Modifier::new()
+                .height(36.0)
+                .fill_max_width()
+                .background(if s.verified {
+                    col(120, 90, 200)
+                } else {
+                    col(70, 60, 90)
+                })
+                .clip_rounded(8.0),
+            move || push(&a_pub, UiAction::BrowsePublish(k_pub.clone())),
+            ButtonConfig::default(),
+            move || {
+                Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
+                    Icon(Symbols::CLOUD_UPLOAD).size(16.0).color(RColor::WHITE),
+                    RText(if s.verified { "Publish".to_string() } else { "Beat to publish".to_string() })
+                        .size(14.0)
+                        .color(RColor::WHITE),
+                ))
+            },
+        ),
         action_row,
     ))
 }

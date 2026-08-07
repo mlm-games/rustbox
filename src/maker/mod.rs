@@ -276,7 +276,9 @@ impl Plugin for MakerPlugin {
                     )
                         .chain()
                         .before(editor::update_preview_and_edit),
-                    editor::update_editor_cursor.before(editor::update_preview_and_edit),
+                    editor::update_editor_cursor
+                        .after(ui_bridge::update_input_capture)
+                        .before(editor::update_preview_and_edit),
                     editor::spawn_place_ghosts.run_if(in_edit),
                     ui_bridge::push_ui_state,
                     ui_bridge::share_text_input.before(ui_bridge::drain_ui_commands),

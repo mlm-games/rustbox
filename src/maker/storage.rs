@@ -248,9 +248,9 @@ pub fn deserialize_level(text: &str) -> anyhow::Result<LevelData> {
     let header: LevelHeader =
         ron::from_str(text).map_err(|_| anyhow::anyhow!("could not read level file"))?;
     match header.version {
-        // RON is text with serde defaults, so v4..=v6 saves all parse into the
-        // live `LevelFile` (missing `contents` defaults to `None`).
-        4 | 5 | 6 => {
+        // RON is text with serde defaults, so v4..=v8 saves all parse into the
+        // live `LevelFile` (missing `contents` / `sign_text` default to None/empty).
+        4 | 5 | 6 | 7 | 8 => {
             let file: LevelFile =
                 ron::from_str(text).map_err(|_| anyhow::anyhow!("corrupted level file"))?;
             Ok(file.level)
