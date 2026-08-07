@@ -89,11 +89,13 @@ pub fn edit_camera_control(
         scroll += e.y;
     }
 
-    if !capture.ui_wants_pointer && buttons.pressed(MouseButton::Right) {
-        rig.yaw -= delta.x * 0.005;
-        rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.05, 1.5);
+    if !capture.ui_wants_pointer {
+        if buttons.pressed(MouseButton::Right) {
+            rig.yaw -= delta.x * 0.005;
+            rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.05, 1.5);
+        }
+        rig.distance = (rig.distance - scroll * 1.5).clamp(4.0, 60.0);
     }
-    rig.distance = (rig.distance - scroll * 1.5).clamp(4.0, 60.0);
 
     if !capture.ui_wants_keyboard {
         let (sin, cos) = rig.yaw.sin_cos();
@@ -166,11 +168,13 @@ pub fn play_camera_follow(
         scroll += e.y;
     }
 
-    if !capture.ui_wants_pointer && buttons.pressed(MouseButton::Right) {
-        rig.yaw -= delta.x * 0.005;
-        rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.1, 1.3);
+    if !capture.ui_wants_pointer {
+        if buttons.pressed(MouseButton::Right) {
+            rig.yaw -= delta.x * 0.005;
+            rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.1, 1.3);
+        }
+        rig.distance = (rig.distance - scroll).clamp(4.0, 30.0);
     }
-    rig.distance = (rig.distance - scroll).clamp(4.0, 30.0);
 
     if let Ok(player) = player_q.single() {
         let target = player.translation + Vec3::Y;

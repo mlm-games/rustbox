@@ -363,22 +363,83 @@ fn resolve_axis(
         }
     }
 
+    // Extras (gates, seals, crates, plates) are axis-aligned boxes at
+    // (`ec`, half-extent `ehe`). Resolve them as full AABBs so the player
+    // stops flush against the face it moves into instead of sinking into the
+    // box's center and getting slammed back out.
     for (ec, ehe) in extras {
-        let ehe = ehe.to_array();
         let ec = ec.to_array();
-        let amin = p.map(|v| v - 0.001);
-        let amax = p.map(|v| v + 0.001);
-        if amin[0] < ec[0] + ehe[0]
-            && amax[0] > ec[0] - ehe[0]
-            && amin[1] < ec[1] + ehe[1]
-            && amax[1] > ec[1] - ehe[1]
-            && amin[2] < ec[2] + ehe[2]
-            && amax[2] > ec[2] - ehe[2]
+        let ehe = ehe.to_array();
+        let bmin = [ec[0] - ehe[0], ec[1] - ehe[1], ec[2] - ehe[2]];
+        let bmax = [ec[0] + ehe[0], ec[1] + ehe[1], ec[2] + ehe[2]];
+        // Player AABB at the candidate position (half-extents, not a point).
+        let amin = [p[0] - he[0], p[1] - he[1], p[2] - he[2]];
+        let amax = [p[0] + he[0], p[1] + he[1], p[2] + he[2]];
+        // Transverse axes must overlap the box; the moved axis is handled below.
+        let (ta, tb) = match axis {
+            0 => (1, 2),
+            1 => (0, 2),
+            _ => (0, 1),
+        };
+        if amin[ta] >= bmax[ta]
+            || amax[ta] <= bmin[ta]
+            || amin[tb] >= bmax[tb]
+            || amax[tb] <= bmin[tb]
         {
-            if delta > 0.0 {
-                p[axis] = ec[axis] - ehe[axis] - he[axis];
+            continue;
+        }
+
+        if axis == 1 {
+            // Vertical: shape like the block solver - snap to the top surface
+            // when feet cross it while landing, or the underside when the head
+            // crosses it while jumping. This makes extras standable without
+            // the point-overlap bounce.
+            if delta < 0.0 {
+                let feet = p[1] - he[1];
+                let prev_feet = feet - delta;
+                let top = bmax[1];
+                if feet <= top + 0.001 && prev_feet >= top - 0.001 {
+                    p[1] = top + he[1];
+                    collided = true;
+                }
             } else {
-                p[axis] = ec[axis] + ehe[axis] + he[axis];
+                let head = p[1] + he[1];
+                let prev_head = head - delta;
+                let bottom = bmin[1];
+                if bottom >= prev_head - 0.001 && head >= bottom - 0.001 {
+                    p[1] = bottom - he[1];
+                    collided = true;
+                }
+            }
+        } else {
+            // Horizontal: only push out along this axis when the leading edge
+            // crossed into the box's face this step, so a player flush against
+            // a box isn't teleported through it while sliding along.
+            let (leading, near_face) = if delta > 0.0 {
+                (start_axis + he[axis], bmin[axis])
+            } else {
+                (start_axis - he[axis], bmax[axis])
+            };
+            let ahead = if delta > 0.0 {
+                bmin[axis] >= leading
+            } else {
+                bmax[axis] <= leading
+            };
+            if !ahead {
+                continue;
+            }
+            let stop = if delta > 0.0 {
+                near_face - he[axis]
+            } else {
+                near_face + he[axis]
+            };
+            let closer = if delta > 0.0 {
+                stop < p[axis]
+            } else {
+                stop > p[axis]
+            };
+            if closer {
+                p[axis] = stop;
             }
             collided = true;
         }
@@ -1218,5 +1279,70 @@ mod tests {
             0.55,
             &[]
         ));
+    }
+
+    /// A closed relay gate is a box centered at (4, 2.0, 0) with half-extents
+    /// (0.5, 1.0, 0.2): x in [3.5, 4.5], y in [1.0, 3.0], z in [-0.2, 0.2].
+    fn gate_extra() -> (Vec3, Vec3) {
+        (Vec3::new(4.0, 2.0, 0.0), Vec3::new(0.5, 1.0, 0.2))
+    }
+
+    #[test]
+    fn walk_into_gate_stops_at_face_no_bounce() {
+        let level = wall_level();
+        // Player approaching from the left; right edge at 3.4, just short of
+        // the gate face at x=3.5. Body spans y [1.0, 2.8], overlapping the
+        // gate's vertical extent [1.0, 3.0]. z=0 overlaps the gate's thin z.
+        let r = move_and_collide(
+            Vec3::new(3.1, 1.9, 0.0),
+            HE,
+            Vec3::new(0.3, 0.0, 0.0),
+            &level,
+            &[gate_extra()],
+        );
+        // Must stop flush against the gate face (right edge at 3.5), not sink
+        // into or teleport past it.
+        assert!(
+            (r.pos.x + HE.x - 3.5).abs() < 0.05,
+            "player moved to x={} (right edge {})",
+            r.pos.x,
+            r.pos.x + HE.x
+        );
+        assert!(r.hit_x, "expected an X collision");
+    }
+
+    #[test]
+    fn land_on_top_of_gate_is_stable() {
+        let level = wall_level();
+        // Feet start just above the gate top (y=3.0) and move down 0.5.
+        let start = Vec3::new(4.0, 3.2 + HE.y, 0.0);
+        let r = move_and_collide(
+            start,
+            HE,
+            Vec3::new(0.0, -0.5, 0.0),
+            &level,
+            &[gate_extra()],
+        );
+        // Feet must come to rest exactly on the gate top (y=3.0), ground flag set.
+        assert!(
+            (r.pos.y - HE.y - 3.0).abs() < 0.05,
+            "feet at {}",
+            r.pos.y - HE.y
+        );
+        assert!(r.hit_y && r.on_ground, "should land and be grounded");
+
+        // A second downward step must not fall through - stays grounded.
+        let r2 = move_and_collide(
+            Vec3::new(r.pos.x, r.pos.y, r.pos.z),
+            HE,
+            Vec3::new(0.0, -0.2, 0.0),
+            &level,
+            &[gate_extra()],
+        );
+        assert!(
+            (r2.pos.y - HE.y - 3.0).abs() < 0.05,
+            "no bounce-through: feet at {}",
+            r2.pos.y - HE.y
+        );
     }
 }

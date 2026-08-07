@@ -4,13 +4,11 @@ mod pick;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use repose_core::View;
-use repose_core::prelude::{
-    AlignItems, AlignSelf, Color, ImageFit, JustifyContent, Modifier,
-};
-use repose_material::{Icon, Symbol};
+use repose_core::prelude::{AlignItems, AlignSelf, Color, ImageFit, JustifyContent, Modifier};
 use repose_material::material3::{
     ButtonConfig, FilledTonalButton, FilledTonalIconButton, IconButtonColors, IconButtonConfig,
 };
+use repose_material::{Icon, Symbol};
 use repose_ui::{Column, Image, ImageExt, Row, Text as RText, TextStyle, ViewExt, ZStack};
 
 use crate::app::SharedUi;
@@ -73,11 +71,13 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     if !st.maker_mode_edit {
         // like maker2.
         return ZStack(Modifier::new().fill_max_size()).child(
-            Column(Modifier::new()
-                .fill_max_size()
-                .justify_content(JustifyContent::FLEX_END)
-                .align_items(AlignItems::FLEX_START)
-                .padding(14.0))
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .justify_content(JustifyContent::FLEX_END)
+                    .align_items(AlignItems::FLEX_START)
+                    .padding(14.0),
+            )
             .child(clapperboard(st, actions)),
         );
     }
@@ -85,11 +85,13 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     ZStack(Modifier::new().fill_max_size())
         .child(
             // Top center: recs strip + held-part options row
-            Column(Modifier::new()
-                .fill_max_width()
-                .align_items(AlignItems::CENTER)
-                .padding(10.0)
-                .gap(6.0))
+            Column(
+                Modifier::new()
+                    .fill_max_width()
+                    .align_items(AlignItems::CENTER)
+                    .padding(10.0)
+                    .gap(6.0),
+            )
             .child((
                 parts_strip(st, actions.clone()),
                 held_options(st, actions.clone()),
@@ -97,38 +99,46 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         )
         .child(
             // Left edge, vertically centered: undo / redo
-            Column(Modifier::new()
-                .fill_max_height()
-                .justify_content(JustifyContent::CENTER)
-                .align_items(AlignItems::FLEX_START)
-                .padding(10.0))
+            Column(
+                Modifier::new()
+                    .fill_max_height()
+                    .justify_content(JustifyContent::CENTER)
+                    .align_items(AlignItems::FLEX_START)
+                    .padding(10.0),
+            )
             .child(left_rail(st, actions.clone())),
         )
         .child(
             // Right edge, vertically centered: Coursebot / settings / globe
-            Column(Modifier::new()
-                .fill_max_size()
-                .justify_content(JustifyContent::CENTER)
-                .align_items(AlignItems::FLEX_END)
-                .padding(10.0))
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .justify_content(JustifyContent::CENTER)
+                    .align_items(AlignItems::FLEX_END)
+                    .padding(10.0),
+            )
             .child(right_rail(actions.clone())),
         )
         .child(
             // Bottom-left: clapperboard
-            Column(Modifier::new()
-                .fill_max_size()
-                .justify_content(JustifyContent::FLEX_END)
-                .align_items(AlignItems::FLEX_START)
-                .padding(14.0))
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .justify_content(JustifyContent::FLEX_END)
+                    .align_items(AlignItems::FLEX_START)
+                    .padding(14.0),
+            )
             .child(clapperboard(st, actions.clone())),
         )
         .child(
             // Bottom-right: limits gauge
-            Column(Modifier::new()
-                .fill_max_size()
-                .justify_content(JustifyContent::FLEX_END)
-                .align_items(AlignItems::FLEX_END)
-                .padding(14.0))
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .justify_content(JustifyContent::FLEX_END)
+                    .align_items(AlignItems::FLEX_END)
+                    .padding(14.0),
+            )
             .child(limits_gauge(st)),
         )
         .child(selection_bubble(st, actions.clone()))
@@ -143,11 +153,14 @@ fn parts_strip(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let a = actions.clone();
         tiles.push(part_tile(format!("{}", i + 1), icon, selected, move || {
             push_ui(&a, UiAction::MakerSetBrushTab(kind));
-            push_ui(&a, if kind == 1 {
-                UiAction::MakerSelectEntity(id)
-            } else {
-                UiAction::MakerSelectBlock(id)
-            });
+            push_ui(
+                &a,
+                if kind == 1 {
+                    UiAction::MakerSelectEntity(id)
+                } else {
+                    UiAction::MakerSelectBlock(id)
+                },
+            );
         }));
     }
 
@@ -197,11 +210,13 @@ fn part_tile(
         ButtonConfig::default(),
         move || inner_stack.clone(),
     );
-    ZStack(Modifier::new()
-        .width(52.0)
-        .height(52.0)
-        .background(ring)
-        .clip_rounded(tok::R_MD))
+    ZStack(
+        Modifier::new()
+            .width(52.0)
+            .height(52.0)
+            .background(ring)
+            .clip_rounded(tok::R_MD),
+    )
     .child(inner)
 }
 
@@ -210,15 +225,7 @@ fn held_options(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let mut chips: Vec<View> = Vec::new();
     if st.brush_tab == 0 {
         let shape_label = [
-            "Full",
-            "Half",
-            "Top",
-            "Slope",
-            "DSlope",
-            "Corner",
-            "O.Corner",
-            "V.Slope",
-            "V.Slab",
+            "Full", "Half", "Top", "Slope", "DSlope", "Corner", "O.Corner", "V.Slope", "V.Slab",
             "Thin",
         ]
         .get(st.brush_shape as usize)
@@ -254,7 +261,9 @@ fn held_options(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     if chips.is_empty() {
         return Row(Modifier::new().width(1.0).height(0.0));
     }
-    Row(Modifier::new().gap(6.0).padding(4.0)
+    Row(Modifier::new()
+        .gap(6.0)
+        .padding(4.0)
         .background(tok::bg_elevated())
         .clip_rounded(tok::R_PILL))
     .children(chips)
@@ -313,9 +322,13 @@ fn right_rail(actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn rail_pill(children: Vec<View>) -> View {
-    Column(Modifier::new().padding(6.0).gap(8.0)
-        .background(tok::bg_elevated())
-        .clip_rounded(tok::R_PILL))
+    Column(
+        Modifier::new()
+            .padding(6.0)
+            .gap(8.0)
+            .background(tok::bg_elevated())
+            .clip_rounded(tok::R_PILL),
+    )
     .children(children)
 }
 
@@ -350,17 +363,23 @@ fn limits_gauge(st: &SharedUi) -> View {
         .background(tok::bg_elevated())
         .clip_rounded(tok::R_PILL))
     .child((
-        RText(format!("{}", st.limit_blocks)).size(13.0).color(tok::text()),
-        Column(Modifier::new()
-            .width(90.0)
-            .height(8.0)
-            .background(tok::bg_panel_solid())
-            .clip_rounded(4.0))
-        .child(Column(Modifier::new()
-            .width((90.0 * frac).max(2.0))
-            .height(8.0)
-            .background(color)
-            .clip_rounded(4.0))),
+        RText(format!("{}", st.limit_blocks))
+            .size(13.0)
+            .color(tok::text()),
+        Column(
+            Modifier::new()
+                .width(90.0)
+                .height(8.0)
+                .background(tok::bg_panel_solid())
+                .clip_rounded(4.0),
+        )
+        .child(Column(
+            Modifier::new()
+                .width((90.0 * frac).max(2.0))
+                .height(8.0)
+                .background(color)
+                .clip_rounded(4.0),
+        )),
     ))
 }
 
@@ -371,11 +390,13 @@ fn selection_bubble(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     if !has_selection {
         return Row(Modifier::new().width(1.0).height(0.0));
     }
-    Column(Modifier::new()
-        .fill_max_size()
-        .justify_content(JustifyContent::CENTER)
-        .align_items(AlignItems::FLEX_END)
-        .padding(10.0))
+    Column(
+        Modifier::new()
+            .fill_max_size()
+            .justify_content(JustifyContent::CENTER)
+            .align_items(AlignItems::FLEX_END)
+            .padding(10.0),
+    )
     .child(Row(Modifier::new().width(196.0)).child((
         inspector::inspector_panel(st, actions),
         Column(Modifier::new().width(56.0).height(1.0)),
@@ -383,12 +404,14 @@ fn selection_bubble(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn divider_dot() -> View {
-    Column(Modifier::new()
-        .width(2.0)
-        .height(28.0)
-        .background(tok::bg_panel_solid())
-        .clip_rounded(1.0)
-        .align_self(AlignSelf::CENTER))
+    Column(
+        Modifier::new()
+            .width(2.0)
+            .height(28.0)
+            .background(tok::bg_panel_solid())
+            .clip_rounded(1.0)
+            .align_self(AlignSelf::CENTER),
+    )
 }
 
 fn icon_button(symbol: Symbol, enabled: bool, on_click: impl Fn() + 'static) -> View {

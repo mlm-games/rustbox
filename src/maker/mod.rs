@@ -150,7 +150,8 @@ impl Plugin for MakerPlugin {
                     entities_runtime::tick_launch_pads_cooldown,
                     entities_runtime::tick_track_followers.before(player::player_controller),
                     entities_runtime::tick_drift_plates.before(player::player_controller),
-                    entities_runtime::rebuild_runtime_solids,
+                    entities_runtime::rebuild_runtime_solids
+                        .after(entities_runtime::update_relay_gates),
                     player::sync_mode,
                     player::player_controller.run_if(in_play),
                     player::play_hazard_goal.run_if(in_play),
@@ -317,6 +318,14 @@ impl Plugin for MakerPlugin {
                 OnEnter(AppState::InGame),
                 |mut ui: ResMut<ui_bridge::MakerUi>, storage: Res<storage::LevelStorage>| {
                     ui.level_slots = storage::list_slots(&storage);
+                    ui.catalog = catalog::build_catalog(&storage);
+                },
+            )
+            .add_systems(
+                OnEnter(AppState::Title),
+                |mut ui: ResMut<ui_bridge::MakerUi>, storage: Res<storage::LevelStorage>| {
+                    ui.level_slots = storage::list_slots(&storage);
+                    ui.catalog = catalog::build_catalog(&storage);
                 },
             );
     }

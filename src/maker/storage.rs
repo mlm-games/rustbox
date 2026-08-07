@@ -99,7 +99,7 @@ mod native {
 
     impl FsBackend {
         pub fn new() -> Self {
-            let dir = directories::ProjectDirs::from("com", "mlm-games", "ecosystem-template")
+            let dir = directories::ProjectDirs::from("com", "mlm-games", "rustbox")
                 .map(|d| d.data_dir().join("levels"))
                 .unwrap_or_else(|| PathBuf::from("levels"));
             let _ = fs::create_dir_all(&dir);

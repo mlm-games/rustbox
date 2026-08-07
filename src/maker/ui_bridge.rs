@@ -440,10 +440,23 @@ pub fn drain_ui_commands(
             UiCommand::Rotate => place_yaw.0 = (place_yaw.0 + 45.0) % 360.0,
             UiCommand::Undo => history.undo(&mut level),
             UiCommand::Redo => history.redo(&mut level),
-            UiCommand::Save => match storage::save_level(&storage, &mut level, AUTOSAVE_KEY) {
-                Ok(()) => ui.set_status("Saved"),
-                Err(e) => ui.set_status(format!("Save failed: {e}")),
-            },
+            UiCommand::Save => {
+                let key = ui
+                    .current_key
+                    .clone()
+                    .unwrap_or_else(|| AUTOSAVE_KEY.to_string());
+                match storage::save_level(&storage, &mut level, &key) {
+                    Ok(()) => {
+                        if ui.current_key.is_none() {
+                            ui.current_key = Some(key);
+                        }
+                        ui.catalog = catalog::build_catalog(&storage);
+                        ui.level_slots = storage::list_slots(&storage);
+                        ui.set_status("Saved")
+                    }
+                    Err(e) => ui.set_status(format!("Save failed: {e}")),
+                }
+            }
             UiCommand::Load => {
                 match storage::load_level(&storage, &mut level, &mut history, AUTOSAVE_KEY) {
                     Ok(true) => {
@@ -721,13 +734,21 @@ pub fn drain_ui_commands(
                         .map(|d| d.as_secs())
                         .unwrap_or(0);
                 }
-                let key = ui
-                    .current_key
-                    .clone()
-                    .unwrap_or_else(|| AUTOSAVE_KEY.to_string());
-                match storage::save_level(&storage, &mut level, &key) {
+                // A never-saved (fresh/imported) level gets promoted into the
+                // browsable collection so it shows up under My Worlds; an
+                // already-saved level keeps writing back to its own key so
+                // metadata edits persist where the player found them.
+                let result = if let Some(k) = ui.current_key.clone() {
+                    storage::save_level(&storage, &mut level, &k)
+                } else {
+                    storage::save_to_collection(&storage, &mut level).map(|k| {
+                        ui.current_key = Some(k);
+                    })
+                };
+                match result {
                     Ok(()) => {
                         ui.catalog = catalog::build_catalog(&storage);
+                        ui.level_slots = storage::list_slots(&storage);
                         ui.set_status("Level info saved.");
                         *overlay = OverlayMenu::None;
                     }

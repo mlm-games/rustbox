@@ -469,9 +469,13 @@ fn local_detail_panel(
             move || {
                 Row(Modifier::new().gap(6.0).align_items(AlignItems::CENTER)).child((
                     Icon(Symbols::CLOUD_UPLOAD).size(16.0).color(RColor::WHITE),
-                    RText(if s.verified { "Publish".to_string() } else { "Beat to publish".to_string() })
-                        .size(14.0)
-                        .color(RColor::WHITE),
+                    RText(if s.verified {
+                        "Publish".to_string()
+                    } else {
+                        "Beat to publish".to_string()
+                    })
+                    .size(14.0)
+                    .color(RColor::WHITE),
                 ))
             },
         ),

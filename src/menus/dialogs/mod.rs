@@ -12,6 +12,7 @@ use repose_material::material3::{
     FilledTonalButton, MenuState,
 };
 use repose_ui::overlay::OverlayHandle;
+use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{
     BasicTextField, Column, Row, Text as RText, TextFieldConfig, TextFieldState, TextStyle, ViewExt,
 };
@@ -915,22 +916,14 @@ pub(crate) fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -
         st.info_blocks, st.info_entities
     );
 
-    let inner = Column(
+    // Everything between the title and the footer buttons lives in a scroll
+    // area so the dialog fits short displays instead of clipping off-screen.
+    let scroll_state = remember_scroll_state("level_info");
+    let body = Column(
         Modifier::new()
-            .width(480.0)
-            .padding(24.0)
-            .background(col(20, 20, 28))
-            .clip_rounded(12.0)
+            .fill_max_width()
             .align_items(AlignItems::CENTER),
     )
-    .child(RText("Level Info").size(32.0).color(RColor::WHITE))
-    .child(spacer(6.0))
-    .child(
-        RText("Click a field to edit · tags show up in Browse")
-            .size(12.0)
-            .color(col(150, 150, 170)),
-    )
-    .child(spacer(16.0))
     .child(field("Name", st.info_name.clone(), 0))
     .child(spacer(8.0))
     .child(field("Author", st.info_author.clone(), 1))
@@ -985,7 +978,32 @@ pub(crate) fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -
         RText("Saving metadata does not reset verification.")
             .size(11.0)
             .color(col(130, 130, 150)),
+    );
+
+    let scroll = ScrollArea(
+        Modifier::new().fill_max_width().max_height(460.0),
+        scroll_state,
+        body,
+    );
+
+    let inner = Column(
+        Modifier::new()
+            .width(480.0)
+            .max_height(720.0)
+            .padding(24.0)
+            .background(col(20, 20, 28))
+            .clip_rounded(12.0)
+            .align_items(AlignItems::CENTER),
     )
+    .child(RText("Level Info").size(32.0).color(RColor::WHITE))
+    .child(spacer(6.0))
+    .child(
+        RText("Click a field to edit · tags show up in Browse")
+            .size(12.0)
+            .color(col(150, 150, 170)),
+    )
+    .child(spacer(16.0))
+    .child(scroll)
     .child(spacer(16.0))
     .child(mk_primary_button(
         icon_label(Symbols::SAVE, "Save".into()),

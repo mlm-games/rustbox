@@ -11,7 +11,7 @@ use crate::menus::action::UiAction;
 use crate::menus::components::{
     Symbols, inspector_section, mk_icon_button, mk_pill_button, push_ui, spacer,
 };
-use crate::menus::style::{tok, t};
+use crate::menus::style::{t, tok};
 
 fn stepper_row(
     label: String,

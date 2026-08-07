@@ -1520,7 +1520,8 @@ pub fn update_seals(
     }
 }
 
-/// Player touches an orb -> pulse its channel.
+/// Player touches an orb -> pulse its channel. Holding/interacting near an orb
+/// (I) also fires it, mirroring sign reading.
 pub fn trigger_orbs(
     time: Res<Time>,
     mode: Res<MakerMode>,
@@ -1528,6 +1529,8 @@ pub fn trigger_orbs(
     mut ui: ResMut<MakerUi>,
     mut trauma: ResMut<Trauma>,
     mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<InputCapture>,
     player_q: Query<&Transform, With<Player>>,
     mut orbs: Query<(Entity, &Transform, &mut TriggerOrb)>,
 ) {
@@ -1538,20 +1541,28 @@ pub fn trigger_orbs(
     let Ok(pt) = player_q.single() else {
         return;
     };
+    let interact = keys.just_pressed(KeyCode::KeyI) && !capture.ui_wants_keyboard;
 
     for (e, ot, mut orb) in &mut orbs {
         orb.timer = (orb.timer - time.delta_secs()).max(0.0);
-        if orb.channel == 0 || orb.timer > 0.0 {
+        if orb.timer > 0.0 {
             continue;
         }
-        if pt.translation.distance(ot.translation) < 1.0 {
-            orb.timer = orb.cooldown;
-            let t = link.clock;
-            link.pulses.insert(orb.channel, t);
-            Juice::pop_in(&mut commands, e, 0.15);
-            ScreenEffects::add_trauma(&mut trauma, 0.1);
-            ui.set_status(format!("Channel {} triggered!", orb.channel));
+        let dist = pt.translation.distance(ot.translation);
+        let touch = dist < 1.0 || (interact && dist < 1.5);
+        if !touch {
+            continue;
         }
+        orb.timer = orb.cooldown;
+        let t = link.clock;
+        if orb.channel == 0 {
+            ui.set_status("Orb has no channel set.");
+            continue;
+        }
+        link.pulses.insert(orb.channel, t);
+        Juice::pop_in(&mut commands, e, 0.15);
+        ScreenEffects::add_trauma(&mut trauma, 0.1);
+        ui.set_status(format!("Channel {} triggered!", orb.channel));
     }
 }
 
