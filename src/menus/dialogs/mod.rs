@@ -14,7 +14,8 @@ use repose_material::material3::{
 use repose_ui::overlay::OverlayHandle;
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{
-    BasicTextField, Column, Row, Text as RText, TextFieldConfig, TextFieldState, TextStyle, ViewExt,
+    BasicTextField, Column, FlowRow, Row, Text as RText, TextFieldConfig, TextFieldState,
+    TextStyle, ViewExt,
 };
 
 use crate::app::SharedUi;
@@ -794,7 +795,7 @@ pub(crate) fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -
             push(&a, UiAction::LevelInfoToggleTag(tag))
         }));
     }
-    let tag_row = Row(Modifier::new().gap(6.0)).child(tag_views);
+    let tag_row = FlowRow(Modifier::new().fill_max_width().gap(6.0)).child(tag_views);
 
     // Level Settings: boundary preset, water plane.
     let mut preset_views: Vec<View> = Vec::new();
@@ -806,7 +807,7 @@ pub(crate) fn level_info_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -
             push(&a, UiAction::LevelInfoPreset(p))
         }));
     }
-    let preset_row = Row(Modifier::new().gap(6.0)).child(preset_views);
+    let preset_row = FlowRow(Modifier::new().fill_max_width().gap(6.0)).child(preset_views);
 
     // Water plane.
     let a_wup = actions.clone();

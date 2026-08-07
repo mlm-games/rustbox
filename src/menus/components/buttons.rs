@@ -174,7 +174,8 @@ pub fn mk_chip(label: View, selected: bool, accent: RColor, on_click: impl Fn() 
             .min_height(32.0)
             .padding(8.0)
             .background(bg)
-            .clip_rounded(tok::R_PILL),
+            .clip_rounded(tok::R_PILL)
+            .flex_shrink(0.0),
         on_click,
         ButtonConfig::default(),
         move || label.clone(),
