@@ -55,8 +55,6 @@ pub struct MoveTuning {
     pub walkable_normal_y: f32,
     pub half_extents: Vec3,
     pub launch_lock: f32,
-    pub cam_collision_radius: f32,
-    pub cam_skin: f32,
 }
 
 impl Default for MoveTuning {
@@ -86,8 +84,6 @@ impl Default for MoveTuning {
             walkable_normal_y: 0.65,
             half_extents: Vec3::new(0.3, 0.9, 0.3),
             launch_lock: 0.9,
-            cam_collision_radius: 0.35,
-            cam_skin: 0.12,
         }
     }
 }

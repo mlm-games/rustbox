@@ -3,11 +3,10 @@ use bevy::prelude::*;
 
 use super::MakerCleanup;
 use super::collision::collide_camera_eye;
-use super::entities_runtime::RuntimeSolids;
 use super::entity_data::EntityDataExt;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, SelectionSet};
-use super::player::{MoveTuning, Player};
+use super::player::Player;
 
 use game_utils_bevy::screen_effects::CameraBase3d;
 
@@ -153,9 +152,6 @@ pub fn play_camera_follow(
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut rig: ResMut<CameraRig>,
-    level: Res<LevelDocument>,
-    solids: Res<RuntimeSolids>,
-    tuning: Res<MoveTuning>,
     player_q: Query<&Transform, (With<Player>, Without<WorldCamera>)>,
     mut cam: Query<(&mut Transform, &mut CameraBase3d), With<WorldCamera>>,
 ) {
@@ -184,14 +180,7 @@ pub fn play_camera_follow(
 
     if let Ok((mut t, mut base)) = cam.single_mut() {
         let desired = rig_transform(&rig);
-        let eye = collide_camera_eye(
-            &level,
-            rig.focus,
-            desired.translation,
-            tuning.cam_collision_radius,
-            tuning.cam_skin,
-            &solids.boxes,
-        );
+        let eye = collide_camera_eye(desired.translation);
         let collided = Transform::from_translation(eye).looking_at(rig.focus, Vec3::Y);
         *t = collided;
         base.translation = collided.translation;
