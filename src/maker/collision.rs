@@ -767,8 +767,10 @@ pub fn stand_headroom(
     crouch_factor: f32,
     extras: &[(Vec3, Vec3)],
 ) -> bool {
-    let lo_y = pos.y + he.y * crouch_factor;
-    let hi_y = pos.y + he.y;
+    let feet = pos.y - he.y * crouch_factor;
+    let stand_center_y = feet + he.y;
+    let lo_y = pos.y + he.y * crouch_factor; // current head
+    let hi_y = stand_center_y + he.y; // standing head
     let min = Vec3::new(pos.x - he.x, lo_y, pos.z - he.z);
     let max = Vec3::new(pos.x + he.x, hi_y, pos.z + he.z);
     for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
@@ -1362,20 +1364,20 @@ mod tests {
     #[test]
     fn stand_headroom_blocks_low_ceiling() {
         // Ceiling block at y=2 (bottom at 2.0). Crouched under it at y=1.495
-        // (head 1.99) there's room; standing (head 2.395) would clip.
+        // (head ~1.99); a standing head ~2.8 would clip hard.
         let mut level = wall_level();
         level.set_block(
             IVec3::new(0, 2, 0),
             Some(BlockData::new([0, 2, 0], BlockKind::Stone)),
         );
         let crouched_y = 1.0 + HE.y * 0.55;
-        let under = Vec3::new(0.0, crouched_y, 0.0);
+        let under = Vec3::new(0.5, crouched_y, 0.5);
         assert!(
             !stand_headroom(&level, under, HE, 0.55, &[]),
             "cannot stand under ceiling"
         );
         // Sliding slightly past the overhang edge (x beyond cell 0) frees up.
-        let past = Vec3::new(1.6, crouched_y, 0.0);
+        let past = Vec3::new(1.6, crouched_y, 0.5);
         assert!(stand_headroom(&level, past, HE, 0.55, &[]), "past overhang");
     }
 

@@ -350,7 +350,7 @@ pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &Level
 }
 
 /// Platformer-style move on XZ: approach wish velocity while steering; friction
-/// only when no wish. Reverse does not get eaten by friction-before-accel.
+/// only when no wish. Reverse brakes hard then accelerates (no moonwalk lag, though still slows).
 fn apply_accel_friction(
     vel: &mut Vec3,
     wish_dir: Vec3,
@@ -367,8 +367,15 @@ fn apply_accel_friction(
         let wdir = wish_dir / wish_len;
         let target = wdir * max_speed;
         let along = h.dot(wdir);
-        // Turning around: allow accel+friction budget so reverse is snappy.
+        if along < 0.0 {
+            let brake = ((accel + friction * 2.0) * max_speed * dt).max(0.0);
+            let anti = -along; // > 0
+            let kill = anti.min(brake);
+            h += wdir * kill; // remove opposite component
+        }
+        let along = h.dot(wdir);
         let rate = if along < 0.0 {
+            // still reversing
             (accel + friction) * max_speed
         } else {
             accel * max_speed
@@ -451,6 +458,21 @@ pub fn player_controller(
         let crouch_pressed = keys.just_pressed(KeyCode::ShiftLeft);
         let he = player.half_extents;
         let underwater = level.is_underwater_point(transform.translation);
+
+        const CROUCH_FACTOR: f32 = 0.55;
+        let can_stand = stand_headroom(
+            &level,
+            transform.translation,
+            he,
+            CROUCH_FACTOR,
+            &solids.boxes,
+        );
+        let is_crouched = crouching || !can_stand;
+        let move_he = if is_crouched {
+            Vec3::new(he.x, he.y * CROUCH_FACTOR, he.z)
+        } else {
+            he
+        };
 
         // Hanging: hold E under a hangable underside (thin conveyor / hang
         // rail). Overrides gravity while active.
@@ -560,7 +582,7 @@ pub fn player_controller(
                 (
                     tuning.ground_accel,
                     tuning.ground_friction,
-                    if crouching {
+                    if is_crouched {
                         tuning.crouch_speed
                     } else {
                         tuning.move_speed
@@ -596,6 +618,15 @@ pub fn player_controller(
                 tuning.stop_speed,
                 dt,
             );
+        }
+        if is_crouched && !underwater {
+            let max_c = tuning.crouch_speed * if player.speed_boost > 0.0 { 1.55 } else { 1.0 };
+            let hs = Vec2::new(player.velocity.x, player.velocity.z).length();
+            if hs > max_c && hs > 1e-6 {
+                let s = max_c / hs;
+                player.velocity.x *= s;
+                player.velocity.z *= s;
+            }
         }
 
         move_state.sliding = sliding;
@@ -686,21 +717,6 @@ pub fn player_controller(
             player.velocity.y = 4.5;
         }
 
-        const CROUCH_FACTOR: f32 = 0.55;
-        let move_he = if crouching {
-            Vec3::new(he.x, he.y * CROUCH_FACTOR, he.z)
-        } else if stand_headroom(
-            &level,
-            transform.translation,
-            he,
-            CROUCH_FACTOR,
-            &solids.boxes,
-        ) {
-            he
-        } else {
-            Vec3::new(he.x, he.y * CROUCH_FACTOR, he.z)
-        };
-
         // Stay glued to the ground.
         let grounding_ok = (player.was_on_ground || player.on_ground)
             && !underwater
@@ -761,7 +777,7 @@ pub fn player_controller(
         // One-way plate riding: probe the plate top under our feet after the
         // move and carry the player with the plate's motion.
         let mut pos = result.pos;
-        let feet_y = pos.y - he.y;
+        let feet_y = pos.y - move_he.y;
         let prev_feet = feet_y - player.velocity.y * dt;
         let mut on_plate = false;
         for (dtf, drift) in &plates {

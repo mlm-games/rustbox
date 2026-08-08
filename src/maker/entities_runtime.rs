@@ -650,8 +650,9 @@ pub fn apply_model_anims(
 }
 
 /// Switches looped clips at runtime: the player picks Idle/Run/Air from its
-/// velocity + ground state and faces its movement direction; the prowler
-/// walks while the game is in Play (its facing is driven by `move_prowlers`).
+/// velocity + ground state and faces its **wish** direction (input) so reverse
+/// turns don't moonwalk; the prowler walks while the game is in Play (its
+/// facing is driven by `move_prowlers`).
 pub fn tick_model_anims(
     mode: Res<MakerMode>,
     players: Query<(&Player, Option<&MoveState>, &Children)>,
@@ -667,15 +668,28 @@ pub fn tick_model_anims(
             action,
             ActionState::Air | ActionState::Slam | ActionState::Launch
         ) || !player.on_ground;
-        let dir = player.velocity.xz();
-        let moving = dir.length_squared() > 0.01;
+        // Prefer wish_dir (camera-relative input) so facing snaps on reverse.
+        // Fall back to velocity only when coasting with no stick.
+        let wish = move_state.map(|m| m.wish_dir.xz()).unwrap_or(Vec2::ZERO);
+        let vel = player.velocity.xz();
+        let face = if wish.length_squared() > 1e-4 {
+            wish
+        } else {
+            vel
+        };
+        let facing = face.length_squared() > 0.01;
         for child in children.iter() {
             let Ok((mut anim, mut tf)) = model_anims.get_mut(child) else {
                 continue;
             };
-            if moving {
-                let d = dir.normalize();
-                tf.rotation = Quat::from_rotation_y(d.x.atan2(d.y));
+            if facing {
+                let d = face.normalize();
+                // Pack Player.gltf faces +Z at identity (same as prior fix).
+                // yaw = atan2(x, z) so +Z → 0, +X → +π/2.
+                let target = Quat::from_rotation_y(d.x.atan2(d.y));
+                // Snappy but not instant — kills the "wrong face for a few
+                // frames" feel without hard-snapping every physics tick.
+                tf.rotation = tf.rotation.slerp(target, 0.45);
             }
             let target = if matches!(action, ActionState::Swim) {
                 if horizontal > 0.6 {
