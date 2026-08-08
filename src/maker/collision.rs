@@ -189,6 +189,10 @@ fn vertical_overlap(lo: f32, hi: f32, flo: f32, fhi: f32) -> bool {
     hi - 0.001 > flo && lo + 0.001 < fhi
 }
 
+const LANDING_RIDE: f32 = 0.35;
+
+const STEP_HEIGHT: f32 = 0.55;
+
 fn resolve_axis(
     pos: &mut Vec3,
     he: Vec3,
@@ -196,19 +200,27 @@ fn resolve_axis(
     axis: usize,
     level: &LevelDocument,
     extras: &[(Vec3, Vec3)],
+    probe: Option<[f32; 2]>,
 ) -> bool {
     if delta == 0.0 {
         return false;
     }
 
     let mut collided = false;
-
     let start_axis = pos[axis];
     let mut p = pos.to_array();
     p[axis] += delta;
     let he = he.to_array();
 
-    let v = Vec3::from_array(p);
+    let vcenter: [f32; 3] = if axis == 1
+        && let Some(h) = probe
+    {
+        [h[0], p[1], h[1]]
+    } else {
+        p
+    };
+
+    let v = Vec3::from_array(vcenter);
     let min = v - Vec3::from_array(he);
     let max = v + Vec3::from_array(he);
 
@@ -233,7 +245,7 @@ fn resolve_axis(
                 }
 
                 if axis == 1 {
-                    let moved = Vec3::from_array(p);
+                    let moved = Vec3::from_array(vcenter);
                     let amin = moved - Vec3::from_array(he);
                     let amax = moved + Vec3::from_array(he);
                     let cmin = cell.as_vec3();
@@ -273,7 +285,7 @@ fn resolve_axis(
                         };
                         let feet = p[1] - he[1];
                         let prev_feet = feet - delta;
-                        const RIDE: f32 = 0.35;
+                        const RIDE: f32 = LANDING_RIDE;
                         if column_solid
                             && feet <= top + 0.001
                             && (prev_feet >= top - 0.001 || prev_feet >= top - RIDE)
@@ -314,7 +326,12 @@ fn resolve_axis(
                     };
                     let vlo = p[1] - he[1];
                     let vhi = p[1] + he[1];
-                    if !vertical_overlap(vlo, vhi, cell.y as f32 + flo, cell.y as f32 + fhi) {
+                    let face_lo = cell.y as f32 + flo;
+                    let face_hi = cell.y as f32 + fhi;
+                    if !vertical_overlap(vlo, vhi, face_lo, face_hi) {
+                        continue;
+                    }
+                    if vhi > face_hi && vlo >= face_hi - LANDING_RIDE {
                         continue;
                     }
                     let moved = Vec3::from_array(p);
@@ -412,6 +429,9 @@ fn resolve_axis(
                 }
             }
         } else {
+            if p[1] - he[1] >= bmax[1] - LANDING_RIDE {
+                continue;
+            }
             // Horizontal: only push out along this axis when the leading edge
             // crossed into the box's face this step, so a player flush against
             // a box isn't teleported through it while sliding along.
@@ -449,6 +469,96 @@ fn resolve_axis(
     collided
 }
 
+fn aabb_hits_material(level: &LevelDocument, center: Vec3, he: Vec3) -> bool {
+    let min = center - he + Vec3::splat(0.02);
+    let max = center + he - Vec3::splat(0.02);
+    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
+        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
+            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
+                let cell = IVec3::new(x, y, z);
+                let Some(b) = level.get_block(cell) else {
+                    if level.boundary_solid(cell) {
+                        return true;
+                    }
+                    continue;
+                };
+                if !level.kind_is_solid(b.kind) || b.kind.is_one_way() {
+                    continue;
+                }
+                // Footprint overlap with this cell, sampled at its midpoint.
+                let cx = ((min.x.max(cell.x as f32) + max.x.min(cell.x as f32 + 1.0)) * 0.5
+                    - cell.x as f32)
+                    .clamp(0.0, 1.0);
+                let cz = ((min.z.max(cell.z as f32) + max.z.min(cell.z as f32 + 1.0)) * 0.5
+                    - cell.z as f32)
+                    .clamp(0.0, 1.0);
+                let (lx, lz) = local_from_world(cx, cz, b.rot);
+                let (lx, lz) = (lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0));
+                if !local_column_solid(b.shape, lx, lz) {
+                    continue;
+                }
+                let lo = cell.y as f32 + local_bottom_height(b.shape, lx, lz);
+                let hi = cell.y as f32 + local_surface_height(b.shape, lx, lz);
+                if min.y < hi - 0.001 && max.y > lo + 0.001 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn try_step_axis(
+    pos: Vec3,
+    he: Vec3,
+    delta: f32,
+    axis: usize,
+    level: &LevelDocument,
+    extras: &[(Vec3, Vec3)],
+) -> Option<Vec3> {
+    if delta == 0.0 {
+        return None;
+    }
+    let feet = pos.y - he.y;
+    let sign = delta.signum();
+    let mut samples = [pos; 2];
+    samples[0][axis] += sign * (he[axis] + 0.05);
+    samples[1][axis] += delta + sign * he[axis];
+
+    let mut best_top = f32::NEG_INFINITY;
+    for s in samples {
+        let h = ground_height(level, s.x, s.z);
+        if h.is_finite() {
+            best_top = best_top.max(h);
+        }
+    }
+    if !best_top.is_finite() {
+        return None;
+    }
+    let rise = best_top - feet;
+    if rise <= 0.02 || rise > STEP_HEIGHT + 0.02 {
+        return None;
+    }
+
+    let mut elevated = pos;
+    elevated.y = best_top + he.y + 0.001;
+    // Head must clear at the elevated pose before and after the step.
+    if aabb_hits_material(level, elevated, he) {
+        return None;
+    }
+    let mut p = elevated;
+    let hit = resolve_axis(&mut p, he, delta, axis, level, extras, None);
+    // Accept if we either cleared fully or at least advanced along the axis.
+    let advanced = (p[axis] - pos[axis]).abs() > 0.001;
+    if hit && !advanced {
+        return None;
+    }
+    if aabb_hits_material(level, p, he) {
+        return None;
+    }
+    Some(p)
+}
+
 pub struct MoveResult {
     pub pos: Vec3,
     pub hit_x: bool,
@@ -459,6 +569,8 @@ pub struct MoveResult {
     pub floor_normal: Vec3,
     /// Unit normal of the last horizontal wall hit (zero if none).
     pub wall_normal: Vec3,
+    /// True if this move used a step-up (caller may zero vertical vel).
+    pub stepped_up: bool,
 }
 
 pub fn move_and_collide(
@@ -469,21 +581,66 @@ pub fn move_and_collide(
     extras: &[(Vec3, Vec3)],
 ) -> MoveResult {
     let mut wall_normal = Vec3::ZERO;
-    let hit_x = resolve_axis(&mut pos, he, delta.x, 0, level, extras);
-    if hit_x {
-        wall_normal = if delta.x > 0.0 { Vec3::NEG_X } else { Vec3::X };
+    let mut stepped_up = false;
+
+    let probe = [pos.x + delta.x, pos.z + delta.z];
+    let mut hit_y = false;
+    if delta.y < 0.0 {
+        hit_y = resolve_axis(&mut pos, he, delta.y, 1, level, extras, Some(probe));
+    } else if delta.y > 0.0 {
+        hit_y = resolve_axis(&mut pos, he, delta.y, 1, level, extras, None);
     }
-    let hit_z = resolve_axis(&mut pos, he, delta.z, 2, level, extras);
-    if hit_z {
-        wall_normal = if delta.z > 0.0 { Vec3::NEG_Z } else { Vec3::Z };
+
+    let can_step = delta.y <= 0.0;
+    let mut hit_x = false;
+    {
+        let before = pos;
+        let blocked = resolve_axis(&mut pos, he, delta.x, 0, level, extras, None);
+        if blocked {
+            if can_step {
+                if let Some(p) = try_step_axis(before, he, delta.x, 0, level, extras) {
+                    pos = p;
+                    stepped_up = true;
+                    hit_y = true;
+                } else {
+                    hit_x = true;
+                    wall_normal = if delta.x > 0.0 { Vec3::NEG_X } else { Vec3::X };
+                }
+            } else {
+                hit_x = true;
+                wall_normal = if delta.x > 0.0 { Vec3::NEG_X } else { Vec3::X };
+            }
+        }
     }
-    let hit_y = resolve_axis(&mut pos, he, delta.y, 1, level, extras);
-    let on_ground = hit_y && delta.y < 0.0;
+
+    let mut hit_z = false;
+    {
+        let before = pos;
+        let blocked = resolve_axis(&mut pos, he, delta.z, 2, level, extras, None);
+        if blocked {
+            if can_step {
+                if let Some(p) = try_step_axis(before, he, delta.z, 2, level, extras) {
+                    pos = p;
+                    stepped_up = true;
+                    hit_y = true;
+                } else {
+                    hit_z = true;
+                    wall_normal = if delta.z > 0.0 { Vec3::NEG_Z } else { Vec3::Z };
+                }
+            } else {
+                hit_z = true;
+                wall_normal = if delta.z > 0.0 { Vec3::NEG_Z } else { Vec3::Z };
+            }
+        }
+    }
+
+    let on_ground = (hit_y && delta.y <= 0.0) || stepped_up;
     let floor_normal = if on_ground {
         floor_normal_at(level, pos.x, pos.z)
     } else {
         Vec3::Y
     };
+
     MoveResult {
         pos,
         hit_x,
@@ -492,169 +649,55 @@ pub fn move_and_collide(
         on_ground,
         floor_normal,
         wall_normal,
+        stepped_up,
     }
 }
 
-/// Formal floor normal from a small finite-difference of surface height.
+fn shape_floor_normal(shape: BlockShape, rot: u8) -> Option<Vec3> {
+    let local = match shape {
+        BlockShape::Slope => Vec3::new(-1.0, 1.0, 0.0),
+        BlockShape::DSlope => Vec3::new(1.0, 1.0, 0.0),
+        BlockShape::Corner => Vec3::new(-0.707, 1.0, -0.707),
+        BlockShape::OuterCorner => Vec3::new(0.707, 1.0, 0.707),
+        // Everything else has a flat top.
+        _ => return None,
+    };
+    let n = local.normalize_or_zero();
+    if n == Vec3::ZERO {
+        return None;
+    }
+    // Rotate around Y by rot * 90° (matches `local_from_world`'s convention).
+    let angle = rot as f32 * std::f32::consts::FRAC_PI_2;
+    let (s, c) = angle.sin_cos();
+    Some(Vec3::new(c * n.x + s * n.z, n.y, -s * n.x + c * n.z).normalize_or_zero())
+}
+
+/// Floor normal from the surface directly underfoot. Unlike a finite-difference
 pub fn floor_normal_at(level: &LevelDocument, wx: f32, wz: f32) -> Vec3 {
-    const EPS: f32 = 0.25;
     let h = ground_height(level, wx, wz);
     if !h.is_finite() {
         return Vec3::Y;
     }
-    let hx_p = ground_height(level, wx + EPS, wz);
-    let hx_m = ground_height(level, wx - EPS, wz);
-    let hz_p = ground_height(level, wx, wz + EPS);
-    let hz_m = ground_height(level, wx, wz - EPS);
-
-    let dx = match (hx_p.is_finite(), hx_m.is_finite()) {
-        (true, true) => (hx_p - hx_m) / (2.0 * EPS),
-        (true, false) => (hx_p - h) / EPS,
-        (false, true) => (h - hx_m) / EPS,
-        _ => 0.0,
-    };
-    let dz = match (hz_p.is_finite(), hz_m.is_finite()) {
-        (true, true) => (hz_p - hz_m) / (2.0 * EPS),
-        (true, false) => (hz_p - h) / EPS,
-        (false, true) => (h - hz_m) / EPS,
-        _ => 0.0,
-    };
-
-    let n = Vec3::new(-dx, 1.0, -dz);
-    let len = n.length();
-    if len > 1e-5 { n / len } else { Vec3::Y }
+    let cell = IVec3::new(
+        wx.floor() as i32,
+        (h - 0.001).floor() as i32,
+        wz.floor() as i32,
+    );
+    if let Some(b) = level.get_block(cell)
+        && level.kind_is_solid(b.kind)
+        && let Some(n) = shape_floor_normal(b.shape, b.rot)
+        && n.length_squared() > 1e-6
+    {
+        return n;
+    }
+    // Boundary / unknown / flat-topped block: flat.
+    Vec3::Y
 }
 
-fn sphere_aabb_hit(center: Vec3, radius: f32, bmin: Vec3, bmax: Vec3) -> bool {
-    let q = center.clamp(bmin, bmax);
-    center.distance_squared(q) <= radius * radius
-}
-
-fn camera_solid_aabb(level: &LevelDocument, cell: IVec3) -> (Vec3, Vec3) {
-    let bmin = cell.as_vec3();
-    let bmax = bmin + Vec3::ONE;
-    let Some(b) = level.get_block(cell) else {
-        return (bmin, bmax);
-    };
-    let (lo, hi) = match b.shape {
-        BlockShape::Full => (0.0, 1.0),
-        BlockShape::Half => (0.0, 0.5),
-        BlockShape::TopHalf => (0.5, 1.0),
-        BlockShape::Thin => (1.0 - rustbox_format::block::THIN_HEIGHT, 1.0),
-        _ => (0.0, 1.0),
-    };
-    (
-        Vec3::new(bmin.x, bmin.y + lo, bmin.z),
-        Vec3::new(bmax.x, bmin.y + hi, bmax.z),
-    )
-}
-
-/// True if a sphere overlaps any solid cell or extra box.
-pub fn sphere_hits_world(
-    level: &LevelDocument,
-    center: Vec3,
-    radius: f32,
-    extras: &[(Vec3, Vec3)],
-) -> bool {
-    let min = center - Vec3::splat(radius);
-    let max = center + Vec3::splat(radius);
-    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
-        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
-            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
-                let cell = IVec3::new(x, y, z);
-                if !level.is_solid(cell) {
-                    continue;
-                }
-                let (bmin, bmax) = camera_solid_aabb(level, cell);
-                if sphere_aabb_hit(center, radius, bmin, bmax) {
-                    return true;
-                }
-            }
-        }
-    }
-    for (ec, ehe) in extras {
-        if sphere_aabb_hit(center, radius, *ec - *ehe, *ec + *ehe) {
-            return true;
-        }
-    }
-    false
-}
-
-/// March a sphere from `origin` along `dir` up to `max_dist`. Returns free
-/// distance.
-pub fn sphere_cast_distance(
-    level: &LevelDocument,
-    origin: Vec3,
-    dir: Vec3,
-    max_dist: f32,
-    radius: f32,
-    extras: &[(Vec3, Vec3)],
-) -> f32 {
-    let dir = dir.normalize_or_zero();
-    if dir == Vec3::ZERO || max_dist <= 0.0 {
-        return 0.0;
-    }
-    let mut t = 0.0;
-    let step = (radius * 0.4).clamp(0.08, 0.25);
-    let mut last_free = 0.0;
-    while t <= max_dist {
-        let p = origin + dir * t;
-        if sphere_hits_world(level, p, radius, extras) {
-            let mut lo = last_free;
-            let mut hi = t;
-            for _ in 0..6 {
-                let mid = (lo + hi) * 0.5;
-                if sphere_hits_world(level, origin + dir * mid, radius, extras) {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            }
-            return lo;
-        }
-        last_free = t;
-        t += step;
-    }
-    max_dist
-}
-
-/// Pull a desired camera eye in along the focus->eye segment so the sphere
-/// stays free. If a wall sits immediately behind the player, the eye would
-/// otherwise be forced down to ~0.6 away and zoom right into the player's
-/// back - very annoying - so the camera keeps a comfortable distance instead.
-const MIN_EYE_KEEP: f32 = 1.6;
-
-pub fn collide_camera_eye(
-    level: &LevelDocument,
-    focus: Vec3,
-    desired_eye: Vec3,
-    radius: f32,
-    skin: f32,
-    extras: &[(Vec3, Vec3)],
-) -> Vec3 {
-    let offset = desired_eye - focus;
-    let dist = offset.length();
-    if dist < 1e-4 {
-        return desired_eye;
-    }
-    let dir = offset / dist;
-    // Start the sweep from just behind the focus along the view line. The old
-    // `focus + Vec3::Y * 0.35` origin sat above the player's head, so a low
-    // overhang / ceiling right above the head blocked the whole cast and the
-    // eye snapped to the `min` clamp; it also left the origin sphere inside
-    // side walls the player is flush against.
-    let origin = focus - dir * (radius + skin);
-    let free = sphere_cast_distance(level, origin, dir, dist, radius, extras);
-    // When a wall is this close behind the player, pulling the eye in to find
-    // a free spot only zooms the camera into the player. Disable that: hold the
-    // normal zoom distance and let the wall clip instead of the camera.
-    if free <= radius + skin + MIN_EYE_KEEP {
-        return focus + dir * dist;
-    }
-    // Otherwise keep the eye out in front of the closest wall, but never
-    // closer than MIN_EYE_KEEP so the camera doesn't swoop into the rig.
-    let use_dist = (free - skin).min(dist).max(MIN_EYE_KEEP);
-    focus + dir * use_dist
+/// Camera eye collision intentionally disabled: pulling the eye in when a wall
+/// is behind the player zooms into their back and pops in/out. Hold full zoom.
+pub fn collide_camera_eye(desired_eye: Vec3) -> Vec3 {
+    desired_eye
 }
 
 /// World-space height of the topmost solid surface at horizontal point
@@ -724,11 +767,34 @@ pub fn stand_headroom(
     true
 }
 
-/// The lowest horizontal midpoint-provision surface already fitted under
-/// the center of the block.
+/// Only real gradual slopes - not cliff edges or walls beside the player -
+/// should trigger a slide. Prefers the shape underfoot (exact ramp blocks);
+/// falls back to a height probe with a hard cap so abrupt drops don't count.
 pub fn slope_slide(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<Vec2> {
+    let h = ground_height(level, center.x, center.z);
+    if h.is_finite() {
+        let cell = IVec3::new(
+            center.x.floor() as i32,
+            (h - 0.001).floor() as i32,
+            center.z.floor() as i32,
+        );
+        if let Some(b) = level.get_block(cell)
+            && level.kind_is_solid(b.kind)
+        {
+            if let Some(n) = shape_floor_normal(b.shape, b.rot) {
+                let d = Vec2::new(n.x, n.z);
+                if d.length_squared() > 1e-6 {
+                    return Some(d.normalize());
+                }
+            }
+            // Flat top underfoot -> never height-probe slide.
+            return None;
+        }
+    }
+
     const SLIDE_MIN: f32 = 0.22;
-    let hc = ground_height(level, center.x, center.z);
+    const SLIDE_MAX: f32 = 0.55;
+    let hc = h;
     if !hc.is_finite() {
         return None;
     }
@@ -743,7 +809,10 @@ pub fn slope_slide(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<Vec2
     for (d, dist) in dirs.iter().zip(dists.iter()) {
         let h = ground_height(level, center.x + d.x * dist, center.z + d.y * dist);
         let drop = hc - h;
-        if drop.is_finite() && drop >= SLIDE_MIN && best.is_none_or(|(_, bd)| drop > bd) {
+        if drop.is_finite()
+            && (SLIDE_MIN..=SLIDE_MAX).contains(&drop)
+            && best.is_none_or(|(_, bd)| drop > bd)
+        {
             best = Some((*d, drop));
         }
     }
@@ -1356,5 +1425,150 @@ mod tests {
             "no bounce-through: feet at {}",
             r2.pos.y - HE.y
         );
+    }
+
+    #[test]
+    fn jump_onto_block_edge_lands_on_top_not_bounce() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(7, 1, 0),
+            Some(BlockData::new([7, 1, 0], BlockKind::Stone)),
+        );
+        let r = move_and_collide(
+            Vec3::new(6.6, 2.6, 0.5),
+            HE,
+            Vec3::new(0.3, -0.2, 0.0),
+            &level,
+            &[],
+        );
+        // Landed on top (feet at 2.0), not bounced back.
+        assert!(
+            (r.pos.y - HE.y - 2.0).abs() < 0.05,
+            "feet at {}, expected 2.0",
+            r.pos.y - HE.y
+        );
+        assert!(
+            (r.pos.x - 6.9).abs() < 0.05,
+            "bounced back to x={}, expected to keep advancing (full pos {:?})",
+            r.pos.x,
+            r.pos
+        );
+    }
+
+    #[test]
+    fn walk_into_one_high_step_still_blocks() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(7, 1, 0),
+            Some(BlockData::new([7, 1, 0], BlockKind::Stone)),
+        );
+        let r = move_and_collide(
+            Vec3::new(6.6, 1.9, 0.5),
+            HE,
+            Vec3::new(0.3, -0.0, 0.0),
+            &level,
+            &[],
+        );
+        assert!(r.pos.x <= 6.71, "walked through the step to x={}", r.pos.x);
+    }
+
+    #[test]
+    fn walk_into_half_step_auto_steps_up() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(7, 1, 0),
+            Some(BlockData {
+                position: [7, 1, 0],
+                kind: BlockKind::Stone,
+                shape: BlockShape::Half,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        let r = move_and_collide(
+            Vec3::new(6.6, 1.9, 0.5),
+            HE,
+            Vec3::new(0.3, 0.0, 0.0),
+            &level,
+            &[],
+        );
+        assert!(
+            (r.pos.x - 6.9).abs() < 0.05,
+            "stopped at x={} instead of stepping up",
+            r.pos.x
+        );
+        assert!(
+            (r.pos.y - HE.y - 1.5).abs() < 0.1,
+            "feet at {}, expected on the step (1.5)",
+            r.pos.y - HE.y
+        );
+        assert!(r.stepped_up, "expected a step-up");
+    }
+
+    #[test]
+    fn flat_ground_does_not_drift() {
+        let level = wall_level();
+        let mut pos = Vec3::new(0.0, 1.9, 0.0);
+        let mut vy = 0.0;
+        for _ in 0..300 {
+            vy = (vy - 25.0f32 * (1.0f32 / 60.0)).max(-40.0f32);
+            let r = move_and_collide(pos, HE, Vec3::new(0.0, vy * (1.0 / 60.0), 0.0), &level, &[]);
+            pos = r.pos;
+            if r.on_ground {
+                vy = 0.0;
+            }
+        }
+        assert!(
+            pos.x.abs() < 1e-4 && pos.z.abs() < 1e-4,
+            "player drifted to x={} z={} on flat ground",
+            pos.x,
+            pos.z
+        );
+    }
+}
+
+#[cfg(test)]
+mod diag {
+    use super::*;
+
+    #[test]
+    fn flat_floor_never_triggers_slide_or_steep() {
+        let level = LevelDocument::default();
+        let he = Vec3::new(0.3, 0.9, 0.3);
+        let mut hits = Vec::new();
+        for ix in -14..=14 {
+            for iz in -14..=14 {
+                let x = ix as f32 * 0.5;
+                let z = iz as f32 * 0.5;
+                let center = Vec3::new(x, 1.9, z);
+                let s = slope_slide(&level, center, he);
+                let n = floor_normal_at(&level, x, z);
+                if s.is_some() || n.y < 0.65 {
+                    hits.push((x, z, s, n.y));
+                }
+            }
+        }
+        assert!(
+            hits.is_empty(),
+            "slide/steep triggered on flat floor: {:?}",
+            hits
+        );
+    }
+
+    #[test]
+    fn slope_block_still_slides() {
+        let mut level = LevelDocument::default();
+        level.set_block(
+            IVec3::new(0, 1, 0),
+            Some(BlockData {
+                position: [0, 1, 0],
+                kind: BlockKind::Stone,
+                shape: BlockShape::Slope,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        let s = slope_slide(&level, Vec3::new(0.4, 2.0, 0.5), Vec3::new(0.3, 0.9, 0.3));
+        assert!(s.is_some(), "real slope should still slide: {s:?}");
     }
 }

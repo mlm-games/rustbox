@@ -1858,13 +1858,13 @@ dependencies = [
 
 [[package]]
 name = "bytemuck_derive"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f65693059b6b9c588b9f62fed1cedbf0a8b805631457ea162d68f0de186f3de5"
+checksum = "fc0e56a716f1e132ff6bf4bdac1c944a3fcdc1cae65f70a4a2a1ac3b401d2d1f"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -1913,9 +1913,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"
+checksum = "9066c49992464636f92905fa096ec58baaa4d57ec19a5c096c68d3e25ef3d136"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2515,9 +2515,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
 
 [[package]]
 name = "fixedbitset"
@@ -4819,9 +4819,9 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "repose-app"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bbae8fe6e1144a6c0d32e7d41937a9da00ab549a99bf3b128f0b771cdc0d3fa"
+checksum = "7abfb6a86efa6024ef6303432004dc3073731f1bf95c45d2b495ecd21b47fcc5"
 dependencies = [
  "log",
  "repose-core",
@@ -4852,9 +4852,9 @@ dependencies = [
 
 [[package]]
 name = "repose-core"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "323fef3e4649be3771584524e88bd759938ffcb57c3509e30e23540267f3c0c6"
+checksum = "ae2d4de7e895e972f62895b9d335022c1814a740c2a415e2b0f67a38716ba256"
 dependencies = [
  "bitflags 2.13.1",
  "log",
@@ -4870,9 +4870,9 @@ dependencies = [
 
 [[package]]
 name = "repose-macros"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80bde8bcf24ac813f9bcb32c9f84c6b738875f076809971b8058af21314bf1f1"
+checksum = "9a926184a307692b32985a70440dc91daf16e0bf7248f1b06776b3ed0bc31b5b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4881,9 +4881,9 @@ dependencies = [
 
 [[package]]
 name = "repose-material"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e34a322baa4382df5cdaaf9d5521bbcc69e07c1b7739d43f60af8f17a9a39bd"
+checksum = "cc7566df4e69bd6b5623a5c728468a7e5de68d7a0907ac0cfb047857408a4794"
 dependencies = [
  "repose-core",
  "repose-text",
@@ -4893,9 +4893,9 @@ dependencies = [
 
 [[package]]
 name = "repose-render-wgpu"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d75cd00ca2fa6b573d0ddae478830541e5568cdf9c71ab301f8a46175ea7c34"
+checksum = "4094ddaefa4ed666db9fb47768089254546e3a73ff6331b0bb29aa702d847fdc"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4912,9 +4912,9 @@ dependencies = [
 
 [[package]]
 name = "repose-text"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73c244bf6c37e8dfd1208a2e78e62b87c414d88f3e06f9a8cafeec3689f955bf"
+checksum = "b0d9ddee03d658c3f7928956f70bbcb31355b403c394dfa2e3657cacb6cec793"
 dependencies = [
  "font-awl",
  "log",
@@ -4928,9 +4928,9 @@ dependencies = [
 
 [[package]]
 name = "repose-tree"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4525759fcd938187f5f95419262b58c866afe9b29f8230732ff68a7c676f515a"
+checksum = "c3ba39fa632d701d4041c7abffb37a0e88e6b57ecf0c540cbd44fb245a32d2a0"
 dependencies = [
  "log",
  "rapidhash",
@@ -4942,9 +4942,9 @@ dependencies = [
 
 [[package]]
 name = "repose-ui"
-version = "0.26.5"
+version = "0.26.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9399e8278ca3a2620d4f9a4f4948b566f0b574b0472b7ae6803181c1e203027"
+checksum = "589624bbbe9dca06a6ff5350c9a87ef089a77721479cbbbd10915e91260d4201"
 dependencies = [
  "log",
  "repose-core",
@@ -5299,9 +5299,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "simba"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "834a9952211d4a60ff10ac1d20cc01640a75bdc0a0c688d62f359ea7d17459f3"
+checksum = "f1a7200d82ff1c7b4235efd12f11e2537a402c91cf83a5cb97ce80eef787fde7"
 dependencies = [
  "approx",
  "num-complex",
@@ -6398,9 +6398,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "1.6.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be99e8317aa9f08e7d16e13033ca43faab59ab582b1d0feab7b385424c42f8b1"
+checksum = "dfdfe6a32973f2d1b268b8895845a8a96cac2f0191e72c27cc929036060dbf89"
 dependencies = [
  "bytemuck",
  "safe_arch",
@@ -6814,9 +6814,9 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xml-rs"
-version = "0.8.28"
+version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
+checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "yazi"

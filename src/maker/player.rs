@@ -74,14 +74,14 @@ impl Default for MoveTuning {
             swim_speed: 4.5,
             slam_speed: -34.0,
             // ~full speed in a few frames on ground; softer in air.
-            ground_accel: 14.0,
-            ground_friction: 10.0,
-            air_accel: 3.5,
-            air_friction: 0.35,
+            ground_accel: 32.0,
+            ground_friction: 14.0,
+            air_accel: 6.0,
+            air_friction: 0.2,
             swim_accel: 8.0,
             swim_friction: 4.0,
             stop_speed: 1.5,
-            walkable_normal_y: 0.65,
+            walkable_normal_y: 0.7,
             half_extents: Vec3::new(0.3, 0.9, 0.3),
             launch_lock: 0.9,
         }
@@ -525,10 +525,11 @@ pub fn player_controller(
 
         // Horizontal control: accel/friction (not instant wish velocity).
         // While hanging, the crawl accel already ran; skip normal control.
+        let steering = horiz.length_squared() > 1e-4;
         if !hanging && player.slamming {
             player.velocity.x = 0.0;
             player.velocity.z = 0.0;
-        } else if !hanging && sliding && !launch_locked && !underwater {
+        } else if !hanging && sliding && !steering && !launch_locked && !underwater {
             if let Some(dir) = slope {
                 player.velocity.x = dir.x * tuning.slide_speed;
                 player.velocity.z = dir.y * tuning.slide_speed;
@@ -712,16 +713,31 @@ pub fn player_controller(
             &level,
             &solids.boxes,
         );
-        // Hitting a wall zeroes the whole horizontal velocity, not just the
-        // colliding axis. Otherwise a diagonal run into a wall leaves the
-        // tangential component, which slides the player along the wall like an
-        // auto-move. Is annoying and often slightly wrong, so stop dead instead.
         if result.hit_x || result.hit_z {
-            player.velocity.x = 0.0;
-            player.velocity.z = 0.0;
+            let n = result.wall_normal;
+            if n.length_squared() > 1e-6 {
+                // wall_normal points out of the wall (toward free space).
+                let into = player.velocity.x * n.x + player.velocity.z * n.z;
+                // into < 0 means moving into the wall.
+                if into < 0.0 {
+                    player.velocity.x -= n.x * into;
+                    player.velocity.z -= n.z * into;
+                }
+            } else {
+                if result.hit_x {
+                    player.velocity.x = 0.0;
+                }
+                if result.hit_z {
+                    player.velocity.z = 0.0;
+                }
+            }
         }
-        if result.hit_y {
-            player.velocity.y = 0.0;
+        if result.hit_y || result.stepped_up {
+            if player.velocity.y < 0.0 || result.stepped_up {
+                player.velocity.y = 0.0;
+            } else if result.hit_y && player.velocity.y > 0.0 {
+                player.velocity.y = 0.0; // ceiling
+            }
         }
         if result.wall_normal != Vec3::ZERO {
             move_state.wall_normal = result.wall_normal;
