@@ -156,6 +156,8 @@ pub struct Player {
     pub grip_cooldown: f32,
     /// How long the player has been hanging.
     pub grip_time: f32,
+    /// True while the collider is at crouch height (key or forced by ceiling).
+    pub crouched: bool,
     /// Current respawn position for this run. Starts at spawn, then moves to the
     /// last touched checkpoint.
     pub respawn_point: Vec3,
@@ -194,6 +196,7 @@ impl Default for Player {
             grip_anchor: Vec3::ZERO,
             grip_cooldown: 0.0,
             grip_time: 0.0,
+            crouched: false,
             respawn_point: Vec3::ZERO,
             checkpoint_id: None,
             keys: [0; 10],
@@ -298,6 +301,7 @@ pub fn respawn_player(
     player.grip_anchor = Vec3::ZERO;
     player.grip_cooldown = 0.0;
     player.grip_time = 0.0;
+    player.crouched = false;
     player.pad_cooldown = 0.0;
     *move_state = MoveState::default();
 }
@@ -350,7 +354,7 @@ pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &Level
 }
 
 /// Platformer-style move on XZ: approach wish velocity while steering; friction
-/// only when no wish. Reverse brakes hard then accelerates (no moonwalk lag, though still slows).
+/// only when no wish. Reverse cancels opposing momentum first (no moonwalk lag).
 fn apply_accel_friction(
     vel: &mut Vec3,
     wish_dir: Vec3,
@@ -367,19 +371,14 @@ fn apply_accel_friction(
         let wdir = wish_dir / wish_len;
         let target = wdir * max_speed;
         let along = h.dot(wdir);
+        // Opposing momentum: drop it immediately (classic platformer
+        // turnaround), then accelerate into the new direction. Stops the
+        // "backward slow" feel.
         if along < 0.0 {
-            let brake = ((accel + friction * 2.0) * max_speed * dt).max(0.0);
-            let anti = -along; // > 0
-            let kill = anti.min(brake);
-            h += wdir * kill; // remove opposite component
+            h -= wdir * along; // along -> 0; keeps only the perpendicular part
         }
-        let along = h.dot(wdir);
-        let rate = if along < 0.0 {
-            // still reversing
-            (accel + friction) * max_speed
-        } else {
-            accel * max_speed
-        };
+
+        let rate = accel * max_speed;
         let max_step = rate * dt;
         let delta = target - h;
         let dlen = delta.length();
@@ -454,25 +453,35 @@ pub fn player_controller(
         }
         move_state.wish_dir = horiz;
 
-        let crouching = kb && keys.pressed(KeyCode::ShiftLeft);
+        let want_crouch = kb && keys.pressed(KeyCode::ShiftLeft);
         let crouch_pressed = keys.just_pressed(KeyCode::ShiftLeft);
         let he = player.half_extents;
         let underwater = level.is_underwater_point(transform.translation);
 
         const CROUCH_FACTOR: f32 = 0.55;
+        let crouch_he_y = he.y * CROUCH_FACTOR;
+
+        // Feet from last frame's collider height (keeps plant when height
+        // changes across crouch/stand transitions).
+        let feet_y = transform.translation.y - if player.crouched { crouch_he_y } else { he.y };
+
         let can_stand = stand_headroom(
             &level,
-            transform.translation,
+            feet_y,
+            transform.translation.x,
+            transform.translation.z,
             he,
-            CROUCH_FACTOR,
             &solids.boxes,
         );
-        let is_crouched = crouching || !can_stand;
-        let move_he = if is_crouched {
-            Vec3::new(he.x, he.y * CROUCH_FACTOR, he.z)
+        let effectively_crouching = want_crouch || !can_stand;
+        player.crouched = effectively_crouching;
+
+        let move_he = if effectively_crouching {
+            Vec3::new(he.x, crouch_he_y, he.z)
         } else {
             he
         };
+        transform.translation.y = feet_y + move_he.y;
 
         // Hanging: hold E under a hangable underside (thin conveyor / hang
         // rail). Overrides gravity while active.
@@ -582,7 +591,7 @@ pub fn player_controller(
                 (
                     tuning.ground_accel,
                     tuning.ground_friction,
-                    if is_crouched {
+                    if effectively_crouching {
                         tuning.crouch_speed
                     } else {
                         tuning.move_speed
@@ -619,7 +628,7 @@ pub fn player_controller(
                 dt,
             );
         }
-        if is_crouched && !underwater {
+        if effectively_crouching && !underwater {
             let max_c = tuning.crouch_speed * if player.speed_boost > 0.0 { 1.55 } else { 1.0 };
             let hs = Vec2::new(player.velocity.x, player.velocity.z).length();
             if hs > max_c && hs > 1e-6 {
@@ -792,7 +801,7 @@ pub fn player_controller(
             {
                 pos.x += drift.carry.x;
                 pos.z += drift.carry.z;
-                pos.y = top + he.y;
+                pos.y = top + move_he.y;
                 player.velocity.y = 0.0;
                 on_plate = true;
                 move_state.floor_normal = Vec3::Y;

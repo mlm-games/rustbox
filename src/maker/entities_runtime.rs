@@ -650,9 +650,8 @@ pub fn apply_model_anims(
 }
 
 /// Switches looped clips at runtime: the player picks Idle/Run/Air from its
-/// velocity + ground state and faces its **wish** direction (input) so reverse
-/// turns don't moonwalk; the prowler walks while the game is in Play (its
-/// facing is driven by `move_prowlers`).
+/// velocity + ground state and faces its wish/move direction; the prowler
+/// walks while the game is in Play (its facing is driven by `move_prowlers`).
 pub fn tick_model_anims(
     mode: Res<MakerMode>,
     players: Query<(&Player, Option<&MoveState>, &Children)>,
@@ -668,28 +667,26 @@ pub fn tick_model_anims(
             action,
             ActionState::Air | ActionState::Slam | ActionState::Launch
         ) || !player.on_ground;
-        // Prefer wish_dir (camera-relative input) so facing snaps on reverse.
-        // Fall back to velocity only when coasting with no stick.
+        // Prefer stick/wish so reverse and strafes face the input immediately
+        // (velocity lags during turnaround and caused moonwalk + "wrong face").
         let wish = move_state.map(|m| m.wish_dir.xz()).unwrap_or(Vec2::ZERO);
         let vel = player.velocity.xz();
         let face = if wish.length_squared() > 1e-4 {
             wish
-        } else {
+        } else if vel.length_squared() > 0.01 {
             vel
+        } else {
+            Vec2::ZERO
         };
-        let facing = face.length_squared() > 0.01;
         for child in children.iter() {
             let Ok((mut anim, mut tf)) = model_anims.get_mut(child) else {
                 continue;
             };
-            if facing {
+            if face.length_squared() > 1e-6 {
                 let d = face.normalize();
-                // Pack Player.gltf faces +Z at identity (same as prior fix).
-                // yaw = atan2(x, z) so +Z → 0, +X → +π/2.
-                let target = Quat::from_rotation_y(d.x.atan2(d.y));
-                // Snappy but not instant — kills the "wrong face for a few
-                // frames" feel without hard-snapping every physics tick.
-                tf.rotation = tf.rotation.slerp(target, 0.45);
+                // Model forward = local -Z (pack convention, matches Prowler):
+                // Quat::from_rotation_y(yaw) * NEG_Z == (d.x, 0, d.y).
+                tf.rotation = Quat::from_rotation_y((-d.x).atan2(-d.y));
             }
             let target = if matches!(action, ActionState::Swim) {
                 if horizontal > 0.6 {
@@ -700,7 +697,7 @@ pub fn tick_model_anims(
             } else if airborne && let Some(air) = anim.air {
                 air
             } else if !airborne
-                && horizontal > 1.0
+                && (horizontal > 1.0 || wish.length_squared() > 0.25)
                 && let Some(run) = anim.run
             {
                 run

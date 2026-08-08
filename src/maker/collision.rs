@@ -762,38 +762,20 @@ pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
 
 pub fn stand_headroom(
     level: &LevelDocument,
-    pos: Vec3,
+    feet_y: f32,
+    x: f32,
+    z: f32,
     he: Vec3,
-    crouch_factor: f32,
     extras: &[(Vec3, Vec3)],
 ) -> bool {
-    let feet = pos.y - he.y * crouch_factor;
-    let stand_center_y = feet + he.y;
-    let lo_y = pos.y + he.y * crouch_factor; // current head
-    let hi_y = stand_center_y + he.y; // standing head
-    let min = Vec3::new(pos.x - he.x, lo_y, pos.z - he.z);
-    let max = Vec3::new(pos.x + he.x, hi_y, pos.z + he.z);
-    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
-        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
-            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
-                let cell = IVec3::new(x, y, z);
-                if !level.is_solid(cell) {
-                    continue;
-                }
-                let cmin = cell.as_vec3();
-                let cmax = cmin + Vec3::ONE;
-                if min.x < cmax.x
-                    && max.x > cmin.x
-                    && min.y < cmax.y
-                    && max.y > cmin.y
-                    && min.z < cmax.z
-                    && max.z > cmin.z
-                {
-                    return false;
-                }
-            }
-        }
+    let center = Vec3::new(x, feet_y + he.y, z);
+    // Slight shrink so flush walls beside you don't false-block standing.
+    let probe = he - Vec3::new(0.02, 0.02, 0.02);
+    if aabb_hits_material(level, center, probe) {
+        return false;
     }
+    let min = center - probe;
+    let max = center + probe;
     for (ec, ehe) in extras {
         if min.x < ec.x + ehe.x
             && max.x > ec.x - ehe.x
@@ -1363,44 +1345,33 @@ mod tests {
 
     #[test]
     fn stand_headroom_blocks_low_ceiling() {
-        // Ceiling block at y=2 (bottom at 2.0). Crouched under it at y=1.495
-        // (head ~1.99); a standing head ~2.8 would clip hard.
+        // Ceiling block at y=2 (bottom at 2.0); standing on floor y=0 (feet 1.0)
+        // a standing head ~2.8 would clip hard.
         let mut level = wall_level();
         level.set_block(
             IVec3::new(0, 2, 0),
             Some(BlockData::new([0, 2, 0], BlockKind::Stone)),
         );
-        let crouched_y = 1.0 + HE.y * 0.55;
-        let under = Vec3::new(0.5, crouched_y, 0.5);
+        let feet = 1.0;
         assert!(
-            !stand_headroom(&level, under, HE, 0.55, &[]),
+            !stand_headroom(&level, feet, 0.5, 0.5, HE, &[]),
             "cannot stand under ceiling"
         );
         // Sliding slightly past the overhang edge (x beyond cell 0) frees up.
-        let past = Vec3::new(1.6, crouched_y, 0.5);
-        assert!(stand_headroom(&level, past, HE, 0.55, &[]), "past overhang");
+        assert!(
+            stand_headroom(&level, feet, 1.6, 0.5, HE, &[]),
+            "past overhang"
+        );
     }
 
     #[test]
     fn stand_headroom_open_floor_and_beside_wall() {
         let level = wall_level();
-        let crouched_y = 1.0 + HE.y * 0.55;
+        let feet = 1.0;
         // Open floor: always headroom.
-        assert!(stand_headroom(
-            &level,
-            Vec3::new(0.0, crouched_y, 10.0),
-            HE,
-            0.55,
-            &[]
-        ));
+        assert!(stand_headroom(&level, feet, 0.0, 10.0, HE, &[]));
         // Flush against the +X boundary wall: the wall is beside, not above.
-        assert!(stand_headroom(
-            &level,
-            Vec3::new(14.7, crouched_y, 0.0),
-            HE,
-            0.55,
-            &[]
-        ));
+        assert!(stand_headroom(&level, feet, 14.7, 0.0, HE, &[]));
     }
 
     /// A closed relay gate is a box centered at (4, 2.0, 0) with half-extents
