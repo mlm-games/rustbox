@@ -380,7 +380,6 @@ fn resolve_axis(
                     };
 
                     if penetrating {
-                        // Push back out to the face we crossed — never free-walk.
                         p[axis] = stop;
                         collided = true;
                     } else {
@@ -391,8 +390,8 @@ fn resolve_axis(
                         };
                         if closer {
                             p[axis] = stop;
+                            collided = true;
                         }
-                        collided = true;
                     }
                 }
             }
@@ -481,7 +480,6 @@ fn resolve_axis(
                 near_face + he[axis] + SKIN
             };
             if penetrating {
-                // Push back out to the face we crossed — never free-walk.
                 p[axis] = stop;
                 collided = true;
             } else {
@@ -492,8 +490,8 @@ fn resolve_axis(
                 };
                 if closer {
                     p[axis] = stop;
+                    collided = true;
                 }
-                collided = true;
             }
         }
     }
@@ -625,6 +623,18 @@ pub fn move_and_collide(
     }
 
     let can_step = delta.y <= 0.0;
+
+    // Helper: true hit only if we failed to take (most of) the intended step.
+    let was_shortened = |before: f32, after: f32, d: f32| -> bool {
+        if d.abs() <= 1e-8 {
+            return false;
+        }
+        // How much of the intended travel we actually got.
+        let got = (after - before) * d.signum();
+        let want = d.abs();
+        got < want - 1e-4
+    };
+
     let mut hit_x = false;
     {
         let before = pos;
@@ -635,10 +645,10 @@ pub fn move_and_collide(
                     pos = p;
                     stepped_up = true;
                     hit_y = true;
-                } else {
+                } else if was_shortened(before.x, pos.x, delta.x) {
                     hit_x = true;
                 }
-            } else {
+            } else if was_shortened(before.x, pos.x, delta.x) {
                 hit_x = true;
             }
         }
@@ -654,10 +664,10 @@ pub fn move_and_collide(
                     pos = p;
                     stepped_up = true;
                     hit_y = true;
-                } else {
+                } else if was_shortened(before.z, pos.z, delta.z) {
                     hit_z = true;
                 }
-            } else {
+            } else if was_shortened(before.z, pos.z, delta.z) {
                 hit_z = true;
             }
         }

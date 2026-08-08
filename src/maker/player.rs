@@ -747,18 +747,25 @@ pub fn player_controller(
             &level,
             &solids.boxes,
         );
-        if result.hit_x && result.hit_z {
-            player.velocity.x = 0.0;
-            player.velocity.z = 0.0;
-        } else if result.hit_x || result.hit_z {
+        if result.hit_x || result.hit_z {
             let n = result.wall_normal;
             if n.length_squared() > 1e-6 {
-                // wall_normal points out of the wall (toward free space).
-                let into = player.velocity.x * n.x + player.velocity.z * n.z;
-                // into < 0 means moving into the wall.
-                if into < 0.0 {
+                let hx = player.velocity.x;
+                let hz = player.velocity.z;
+                let speed_before = (hx * hx + hz * hz).sqrt();
+                let into = hx * n.x + hz * n.z; // < 0 = moving into wall
+                if into < -1e-5 {
                     player.velocity.x -= n.x * into;
                     player.velocity.z -= n.z * into;
+                    // Preserve along-wall speed so grazing doesn't feel like mud.
+                    let tx = player.velocity.x;
+                    let tz = player.velocity.z;
+                    let tlen = (tx * tx + tz * tz).sqrt();
+                    if tlen > 1e-4 && speed_before > tlen {
+                        let s = speed_before / tlen;
+                        player.velocity.x = tx * s;
+                        player.velocity.z = tz * s;
+                    }
                 }
             } else {
                 if result.hit_x {
