@@ -331,7 +331,8 @@ fn resolve_axis(
                     if !vertical_overlap(vlo, vhi, face_lo, face_hi) {
                         continue;
                     }
-                    if vhi > face_hi && vlo >= face_hi - LANDING_RIDE {
+                    let rise_to_top = face_hi - vlo;
+                    if vhi > face_hi && rise_to_top >= -0.02 && rise_to_top <= STEP_HEIGHT {
                         continue;
                     }
                     let moved = Vec3::from_array(p);
@@ -348,33 +349,51 @@ fn resolve_axis(
                     {
                         continue;
                     }
-                    let (leading, near_face) = if delta > 0.0 {
+
+                    const SKIN: f32 = 0.001;
+                    let (leading0, near_face) = if delta > 0.0 {
                         (start_axis + he[axis], cmin[axis])
                     } else {
                         (start_axis - he[axis], cmax[axis])
                     };
+                    // Face still in front of (or flush with) the leading edge at start.
                     let ahead = if delta > 0.0 {
-                        cmin[axis] >= leading
+                        near_face + SKIN >= leading0
                     } else {
-                        cmax[axis] <= leading
+                        near_face - SKIN <= leading0
                     };
-                    if !ahead {
+                    // Already overlapping this cell on the move axis (penetration).
+                    let penetrating = if delta > 0.0 {
+                        leading0 > near_face + SKIN && (start_axis - he[axis]) < cmax[axis]
+                    } else {
+                        leading0 < near_face - SKIN && (start_axis + he[axis]) > cmin[axis]
+                    };
+
+                    if !ahead && !penetrating {
                         continue;
                     }
+
                     let stop = if delta > 0.0 {
-                        near_face - he[axis]
+                        near_face - he[axis] - SKIN
                     } else {
-                        near_face + he[axis]
+                        near_face + he[axis] + SKIN
                     };
-                    let closer = if delta > 0.0 {
-                        stop < p[axis]
-                    } else {
-                        stop > p[axis]
-                    };
-                    if closer {
+
+                    if penetrating {
+                        // Push back out to the face we crossed — never free-walk.
                         p[axis] = stop;
+                        collided = true;
+                    } else {
+                        let closer = if delta > 0.0 {
+                            stop < p[axis]
+                        } else {
+                            stop > p[axis]
+                        };
+                        if closer {
+                            p[axis] = stop;
+                        }
+                        collided = true;
                     }
-                    collided = true;
                 }
             }
         }
@@ -435,33 +454,47 @@ fn resolve_axis(
             // Horizontal: only push out along this axis when the leading edge
             // crossed into the box's face this step, so a player flush against
             // a box isn't teleported through it while sliding along.
-            let (leading, near_face) = if delta > 0.0 {
+            const SKIN: f32 = 0.001;
+            let (leading0, near_face) = if delta > 0.0 {
                 (start_axis + he[axis], bmin[axis])
             } else {
                 (start_axis - he[axis], bmax[axis])
             };
+            // Face still in front of (or flush with) the leading edge at start.
             let ahead = if delta > 0.0 {
-                bmin[axis] >= leading
+                near_face + SKIN >= leading0
             } else {
-                bmax[axis] <= leading
+                near_face - SKIN <= leading0
             };
-            if !ahead {
+            // Already overlapping this box on the move axis (penetration).
+            let penetrating = if delta > 0.0 {
+                leading0 > near_face + SKIN && (start_axis - he[axis]) < bmax[axis]
+            } else {
+                leading0 < near_face - SKIN && (start_axis + he[axis]) > bmin[axis]
+            };
+            if !ahead && !penetrating {
                 continue;
             }
             let stop = if delta > 0.0 {
-                near_face - he[axis]
+                near_face - he[axis] - SKIN
             } else {
-                near_face + he[axis]
+                near_face + he[axis] + SKIN
             };
-            let closer = if delta > 0.0 {
-                stop < p[axis]
-            } else {
-                stop > p[axis]
-            };
-            if closer {
+            if penetrating {
+                // Push back out to the face we crossed — never free-walk.
                 p[axis] = stop;
+                collided = true;
+            } else {
+                let closer = if delta > 0.0 {
+                    stop < p[axis]
+                } else {
+                    stop > p[axis]
+                };
+                if closer {
+                    p[axis] = stop;
+                }
+                collided = true;
             }
-            collided = true;
         }
     }
 
@@ -604,11 +637,9 @@ pub fn move_and_collide(
                     hit_y = true;
                 } else {
                     hit_x = true;
-                    wall_normal = if delta.x > 0.0 { Vec3::NEG_X } else { Vec3::X };
                 }
             } else {
                 hit_x = true;
-                wall_normal = if delta.x > 0.0 { Vec3::NEG_X } else { Vec3::X };
             }
         }
     }
@@ -625,13 +656,21 @@ pub fn move_and_collide(
                     hit_y = true;
                 } else {
                     hit_z = true;
-                    wall_normal = if delta.z > 0.0 { Vec3::NEG_Z } else { Vec3::Z };
                 }
             } else {
                 hit_z = true;
-                wall_normal = if delta.z > 0.0 { Vec3::NEG_Z } else { Vec3::Z };
             }
         }
+    }
+
+    if hit_x {
+        wall_normal.x = if delta.x > 0.0 { -1.0 } else { 1.0 };
+    }
+    if hit_z {
+        wall_normal.z = if delta.z > 0.0 { -1.0 } else { 1.0 };
+    }
+    if wall_normal.length_squared() > 1e-6 {
+        wall_normal = wall_normal.normalize();
     }
 
     let on_ground = (hit_y && delta.y <= 0.0) || stepped_up;

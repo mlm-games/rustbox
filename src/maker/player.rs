@@ -349,8 +349,8 @@ pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &Level
     });
 }
 
-/// Quake-style accelerate + friction on XZ. `wish_dir` is horizontal unit (or
-/// zero).
+/// Platformer-style move on XZ: approach wish velocity while steering; friction
+/// only when no wish. Reverse does not get eaten by friction-before-accel.
 fn apply_accel_friction(
     vel: &mut Vec3,
     wish_dir: Vec3,
@@ -361,29 +361,38 @@ fn apply_accel_friction(
     dt: f32,
 ) {
     let mut h = Vec3::new(vel.x, 0.0, vel.z);
-    let speed = h.length();
+    let wish_len = wish_dir.length();
 
-    // Friction
-    if speed > 1e-5 {
+    if wish_len > 1e-5 && max_speed > 0.0 {
+        let wdir = wish_dir / wish_len;
+        let target = wdir * max_speed;
+        let along = h.dot(wdir);
+        // Turning around: allow accel+friction budget so reverse is snappy.
+        let rate = if along < 0.0 {
+            (accel + friction) * max_speed
+        } else {
+            accel * max_speed
+        };
+        let max_step = rate * dt;
+        let delta = target - h;
+        let dlen = delta.length();
+        if dlen <= max_step || dlen < 1e-8 {
+            h = target;
+        } else {
+            h += delta * (max_step / dlen);
+        }
+        let spd = h.length();
+        if spd > max_speed * 1.05 {
+            h *= (max_speed * 1.05) / spd;
+        }
+    } else if h.length_squared() > 1e-10 {
+        let speed = h.length();
         let control = speed.max(stop_speed);
         let drop = control * friction * dt;
         let new_speed = (speed - drop).max(0.0);
         h *= new_speed / speed;
     } else {
         h = Vec3::ZERO;
-    }
-
-    // Accelerate toward wish
-    let wish_len = wish_dir.length();
-    if wish_len > 1e-5 && max_speed > 0.0 {
-        let wdir = wish_dir / wish_len;
-        let wish_speed = max_speed;
-        let current_along = h.dot(wdir);
-        let add_speed = wish_speed - current_along;
-        if add_speed > 0.0 {
-            let accel_speed = (accel * dt * wish_speed).min(add_speed);
-            h += wdir * accel_speed;
-        }
     }
 
     vel.x = h.x;
@@ -713,7 +722,10 @@ pub fn player_controller(
             &level,
             &solids.boxes,
         );
-        if result.hit_x || result.hit_z {
+        if result.hit_x && result.hit_z {
+            player.velocity.x = 0.0;
+            player.velocity.z = 0.0;
+        } else if result.hit_x || result.hit_z {
             let n = result.wall_normal;
             if n.length_squared() > 1e-6 {
                 // wall_normal points out of the wall (toward free space).
