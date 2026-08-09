@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use super::entities_runtime::{DriftPlate, Seal, TrackFollower};
+use super::entities_runtime::Seal;
 use super::mode::MakerMode;
 use super::player::Player;
 
@@ -10,30 +10,11 @@ pub fn rapier_plugin(app: &mut App) {
         .add_systems(
             Update,
             (
-                sync_drift_plates,
                 sync_seal_open,
                 move_held_objects,
                 pickup_throwables.after(move_held_objects),
             ),
         );
-}
-
-/// Make DriftPlate a kinematic body that follows the lerp path.
-fn sync_drift_plates(
-    mode: Res<MakerMode>,
-    mut q: Query<(&mut Transform, &mut Velocity, &DriftPlate), Without<TrackFollower>>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    for (mut tf, mut vel, drift) in &mut q {
-        let phase = (drift.t % (drift.period * 2.0)) / drift.period;
-        let s = if phase <= 1.0 { phase } else { 2.0 - phase };
-        let target = drift.a.lerp(drift.b, s * s * (3.0 - 2.0 * s));
-        let delta = target - tf.translation;
-        vel.linear = delta / 0.016;
-        tf.translation = target;
-    }
 }
 
 /// Remove Seal collider when opened.
@@ -58,7 +39,7 @@ pub struct Held;
 fn move_held_objects(
     rig: Res<super::camera::CameraRig>,
     player: Query<&Transform, With<Player>>,
-    mut held: Query<(Entity, &mut Transform, &mut Velocity), With<Held>>,
+    mut held: Query<(Entity, &mut Transform, &mut Velocity), (With<Held>, Without<Player>)>,
 ) {
     let Ok(ptf) = player.single() else {
         return;

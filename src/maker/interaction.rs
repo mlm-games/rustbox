@@ -1246,7 +1246,10 @@ pub fn resolve_damage(
         ),
         With<Player>,
     >,
-    prowlers: Query<(Entity, &LevelEnt, &Transform, Option<&Contents>), With<Prowler>>,
+    prowlers: Query<
+        (Entity, &LevelEnt, &Transform, Option<&Contents>),
+        (With<Prowler>, Without<Player>),
+    >,
     crates: Query<(Entity, &LevelEnt, &Transform, &CrateProp, Option<&Contents>), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {

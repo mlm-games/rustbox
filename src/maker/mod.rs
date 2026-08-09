@@ -27,6 +27,7 @@ pub mod ui_bridge;
 pub mod win;
 
 use bevy::prelude::*;
+use bevy_rapier3d::prelude::PhysicsSet;
 
 use crate::app::{AppState, Paused};
 use game_utils_bevy::transitions::Transition;
@@ -188,7 +189,9 @@ impl Plugin for MakerPlugin {
                 Update,
                 (
                     // 1. MoveWorld: tracks, drift plates, prowler patrols.
-                    entities_runtime::tick_drift_plates.in_set(InteractionSet::MoveWorld),
+                    entities_runtime::tick_drift_plates
+                        .in_set(InteractionSet::MoveWorld)
+                        .before(PhysicsSet::Writeback),
                     entities_runtime::tick_track_followers.in_set(InteractionSet::MoveWorld),
                     entities_runtime::move_prowlers.in_set(InteractionSet::MoveWorld),
                     interactive_blocks::sync_pulse.in_set(InteractionSet::MoveWorld),

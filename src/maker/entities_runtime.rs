@@ -1534,10 +1534,13 @@ pub fn draw_link_gizmos(mode: Res<MakerMode>, level: Res<LevelDocument>, mut giz
 pub fn tick_drift_plates(
     time: Res<Time>,
     _mode: Res<MakerMode>,
-    mut plates: Query<(&mut Transform, &mut DriftPlate), Without<TrackFollower>>,
+    mut plates: Query<
+        (&mut Transform, &mut DriftPlate, Option<&mut Velocity>),
+        Without<TrackFollower>,
+    >,
 ) {
     let dt = time.delta_secs();
-    for (mut tf, mut drift) in &mut plates {
+    for (mut tf, mut drift, vel) in &mut plates {
         let prev = tf.translation;
         drift.t = (drift.t + dt) % (drift.period * 2.0);
         let phase = if drift.t <= drift.period {
@@ -1548,6 +1551,13 @@ pub fn tick_drift_plates(
         let s = phase * phase * (3.0 - 2.0 * phase);
         tf.translation = drift.a.lerp(drift.b, s);
         drift.carry = tf.translation - prev;
+        if let Some(mut vel) = vel {
+            vel.linear = if dt > 0.0 {
+                drift.carry / dt
+            } else {
+                Vec3::ZERO
+            };
+        }
     }
 }
 
