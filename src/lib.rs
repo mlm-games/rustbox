@@ -1,7 +1,7 @@
 mod app;
 mod asset_tracking;
 mod dev_tools;
-mod maker;
+pub mod maker;
 mod menus;
 mod save;
 mod screens;

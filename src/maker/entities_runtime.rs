@@ -20,7 +20,7 @@ use super::entity_data::{
 };
 use super::interaction::{
     InteractionKey, InteractionMemory, MAX_FAN_FORCE, cap_fan_force, gateway_blocked, heal_allowed,
-    player_overlaps_volume,
+    player_overlaps_volume, solid_blocks,
 };
 use super::level::LevelDocument;
 use super::mode::MakerMode;
@@ -300,7 +300,6 @@ pub struct LinkState {
 /// collision. `rotation` keeps rotated visuals physically aligned.
 #[derive(Clone, Copy, Debug)]
 pub struct RuntimeSolid {
-    #[allow(dead_code)] // reserves future per-owner lookups
     pub owner: Entity,
     pub center: Vec3,
     pub half_extents: Vec3,
@@ -1457,6 +1456,7 @@ pub fn update_seals(
 pub fn update_relay_gates(
     mode: Res<MakerMode>,
     link: Res<LinkState>,
+    solids: Res<RuntimeSolids>,
     mut commands: Commands,
     player_q: Query<(&Transform, &Player)>,
     prowlers: Query<&Transform, With<Prowler>>,
@@ -1491,12 +1491,14 @@ pub fn update_relay_gates(
             commands.entity(e).remove::<GateSolid>();
             commands.entity(e).remove::<Collider>();
         } else if !powered && gate.open {
-            // Crush-safe close: wait until nothing is in the doorway.
+            // Crush-safe close: wait until nothing (body or solid) is in the
+            // doorway. A gate never blocks its own doorway.
             if gateway_blocked(
                 bodies.iter().copied(),
                 gt.translation,
                 Vec3::new(0.5, 1.0, 0.2),
-            ) {
+            ) || solid_blocks(&solids, e, gt.translation, Vec3::new(0.5, 1.0, 0.2))
+            {
                 gate.want_close = true;
             } else {
                 gate.open = false;
@@ -1851,10 +1853,11 @@ pub fn collect_keys(
 pub fn update_lock_gates(
     time: Res<Time>,
     mode: Res<MakerMode>,
+    solids: Res<RuntimeSolids>,
     player_q: Query<(&Transform, &Player)>,
     prowlers: Query<&Transform, With<Prowler>>,
     crates: Query<&Transform, With<CrateProp>>,
-    mut gates: Query<(&mut LockGate, &mut Visibility, &Transform), Without<Player>>,
+    mut gates: Query<(Entity, &mut LockGate, &mut Visibility, &Transform), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1872,7 +1875,7 @@ pub fn update_lock_gates(
         bodies.push((t.translation, Vec3::splat(0.5)));
     }
 
-    for (mut gate, mut vis, tf) in &mut gates {
+    for (e, mut gate, mut vis, tf) in &mut gates {
         if !gate.open {
             continue;
         }
@@ -1886,6 +1889,7 @@ pub fn update_lock_gates(
                 tf.translation,
                 Vec3::new(0.55, 1.2, 0.3),
             )
+            && !solid_blocks(&solids, e, tf.translation, Vec3::new(0.55, 1.2, 0.3))
         {
             gate.open = false;
             *vis = Visibility::Visible;
@@ -2002,7 +2006,9 @@ pub fn update_crumble_plates(
 mod tests {
     use super::*;
 
-    const E: Entity = Entity::from_raw(1);
+    fn e() -> Entity {
+        Entity::from_raw_u32(1).unwrap()
+    }
 
     #[test]
     fn hidden_crumble_plate_is_no_longer_solid() {
@@ -2012,7 +2018,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
-            vec![(E, Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, false)],
+            vec![(e(), Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, false)],
         );
         assert_eq!(solids.len(), 1);
 
@@ -2021,7 +2027,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
-            vec![(E, Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, true)],
+            vec![(e(), Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, true)],
         );
         assert!(solids.is_empty());
     }
@@ -2031,7 +2037,7 @@ mod tests {
         let identity = build_solids(
             vec![],
             vec![],
-            vec![(E, Vec3::ZERO, Quat::IDENTITY, false)],
+            vec![(e(), Vec3::ZERO, Quat::IDENTITY, false)],
             vec![],
             vec![],
         );

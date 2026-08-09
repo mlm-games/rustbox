@@ -15,6 +15,7 @@ use super::mode::{InputCapture, MakerMode};
 use super::player::{ActionState, JUMP_SPEED, MoveState, Player, PlayerMoveMode, respawn_player};
 use super::ui_bridge::MakerUi;
 
+use bevy_rapier3d::prelude::Velocity;
 use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
@@ -22,10 +23,11 @@ use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 pub const PLAYER_ACTOR: u32 = u32::MAX;
 /// Sentinel target id for requests that do not name a real entity.
 pub const NO_TARGET: LevelEntityId = 0;
+/// Sentinel target id marking a manual (R) respawn request.
+pub const RESET_TARGET: LevelEntityId = u32::MAX;
 
 /// How an interaction reacts to contact with an actor.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(dead_code)] // kernel vocabulary (activation modes for future targets)
 pub enum ActivationMode {
     /// Fires once when the actor enters the volume; re-arms on exit.
     TouchEnter,
@@ -39,7 +41,6 @@ pub enum ActivationMode {
 
 /// The family of gameplay objects an interaction target belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(dead_code)] // kernel vocabulary (target classification)
 pub enum InteractionKind {
     Switch,
     Trigger,
@@ -126,7 +127,8 @@ pub const PRIORITY_BUMPER: u8 = 60;
 /// apply afterward unless a position override won.
 #[derive(Clone, Copy, Debug)]
 pub struct ForcedMotion {
-    #[allow(dead_code)] // identifies the source interaction (used by tests)
+    /// The interaction that produced this request (identifies the respawn
+    /// reason for full-respawn requests).
     pub source: InteractionKey,
     pub priority: u8,
     pub position: Option<Vec3>,
@@ -164,7 +166,6 @@ impl ForcedMotionRequests {
 pub enum AttackKind {
     Stomp,
     Slam,
-    #[allow(dead_code)] // constructed only under the `physics` feature
     ThrownImpact,
 }
 
@@ -173,9 +174,10 @@ pub enum AttackKind {
 #[derive(Clone, Copy, Debug)]
 pub struct DamageRequest {
     pub target: Entity,
-    #[allow(dead_code)] // identifies the source actor (used by tests)
+    /// The attacking actor; the player only bounces off a defeated prowler
+    /// when it was the player's own stomp that landed the kill.
     pub source: Entity,
-    #[allow(dead_code)] // reserved for non-1-hit damage
+    /// Armor consumed per hit (reserved for multi-point attacks).
     pub amount: u8,
     pub attack: Option<AttackKind>,
 }
@@ -215,6 +217,8 @@ pub const USE_PRIORITY_ORB: u8 = 10;
 #[derive(Clone, Copy, Debug)]
 pub struct UseCandidate {
     pub target: LevelEntityId,
+    /// The family of the target, so `resolve_use` can route to the right query.
+    pub kind: InteractionKind,
     pub priority: u8,
     pub distance: f32,
     pub facing: f32,
@@ -222,7 +226,7 @@ pub struct UseCandidate {
 
 /// Deterministic arbitration: highest priority, then best facing, then shortest
 /// distance, then smallest id. Independent of query / spawn order.
-pub fn select_use_target(mut candidates: Vec<UseCandidate>) -> Option<LevelEntityId> {
+pub fn select_use_target(mut candidates: Vec<UseCandidate>) -> Option<UseCandidate> {
     candidates.sort_by(|a, b| {
         b.priority
             .cmp(&a.priority)
@@ -230,7 +234,7 @@ pub fn select_use_target(mut candidates: Vec<UseCandidate>) -> Option<LevelEntit
             .then_with(|| a.distance.total_cmp(&b.distance))
             .then_with(|| a.target.cmp(&b.target))
     });
-    candidates.first().map(|c| c.target)
+    candidates.first().copied()
 }
 
 /// The winner of this frame's interact press, filled by the Detect phase.
@@ -238,6 +242,8 @@ pub fn select_use_target(mut candidates: Vec<UseCandidate>) -> Option<LevelEntit
 pub struct UseSelection {
     pub pressed: bool,
     pub selected: Option<LevelEntityId>,
+    /// The interaction kind of the selected target, mirroring `selected`.
+    pub kind: Option<InteractionKind>,
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -260,6 +266,31 @@ pub fn aabb_overlap(a_center: Vec3, a_he: Vec3, b_center: Vec3, b_he: Vec3) -> b
 /// Whether the actor (center `pos`, half-extents `he`) overlaps `volume`.
 pub fn player_overlaps_volume(pos: Vec3, he: Vec3, volume: Vec3, volume_he: Vec3) -> bool {
     aabb_overlap(pos, he, volume, volume_he)
+}
+
+/// Whether a target with the given activation mode fires this frame, given
+/// this frame's entry latch and explicit-use selection state. `TouchEnter` and
+/// `TopContact` targets fire on the single entry frame; `UsePressed` targets
+/// fire only when the player pressed interact on them; `Continuous` targets
+/// (fans) apply every frame while active.
+pub fn activation_fires(mode: ActivationMode, entered: bool, use_selected: bool) -> bool {
+    match mode {
+        ActivationMode::TouchEnter | ActivationMode::TopContact => entered,
+        ActivationMode::UsePressed => use_selected,
+        ActivationMode::Continuous => true,
+    }
+}
+
+/// Whether any runtime solid other than `exclude` overlaps the volume. Gates
+/// use this to refuse closing into another solid object (and never into their
+/// own doorway).
+pub fn solid_blocks(solids: &RuntimeSolids, exclude: Entity, center: Vec3, he: Vec3) -> bool {
+    solids.solids.iter().any(|s| {
+        s.owner != exclude && {
+            let (c, sh) = rotated_box_aabb(s.center, s.half_extents, s.rotation);
+            aabb_overlap(c, sh, center, he)
+        }
+    })
 }
 
 /// Top-contact test used by floor-like interactions (launch pads, crumble
@@ -330,13 +361,10 @@ pub fn heal_allowed(armor: u8) -> bool {
 }
 
 /// Damage resolution: armor is consumed first; `false` means the player must
-/// respawn.
-pub fn armor_hit(armor: u8) -> (u8, bool) {
-    if armor > 0 {
-        (armor - 1, true)
-    } else {
-        (0, false)
-    }
+/// respawn (the hit punched through the armor).
+pub fn armor_hit(armor: u8, amount: u8) -> (u8, bool) {
+    let new_armor = armor.saturating_sub(amount);
+    (new_armor, armor >= amount)
 }
 
 /// Cap an accumulated fan force so stacking multiple fans cannot explode the
@@ -422,6 +450,7 @@ pub fn gather_use_targets(
         if let Some((distance, f)) = facing(tf.translation) {
             candidates.push(UseCandidate {
                 target: ent.id,
+                kind: InteractionKind::Unlock,
                 priority: USE_PRIORITY_UNLOCK,
                 distance,
                 facing: f,
@@ -441,6 +470,7 @@ pub fn gather_use_targets(
         }
         candidates.push(UseCandidate {
             target: ent.id,
+            kind: InteractionKind::Sign,
             priority: USE_PRIORITY_SIGN,
             distance,
             facing: f,
@@ -451,6 +481,7 @@ pub fn gather_use_targets(
         if let Some((distance, f)) = facing(tf.translation) {
             candidates.push(UseCandidate {
                 target: ent.id,
+                kind: InteractionKind::Trigger,
                 priority: USE_PRIORITY_ORB,
                 distance,
                 facing: f,
@@ -458,8 +489,10 @@ pub fn gather_use_targets(
         }
     }
 
+    let winner = select_use_target(candidates);
     use_sel.pressed = true;
-    use_sel.selected = select_use_target(candidates);
+    use_sel.selected = winner.map(|c| c.target);
+    use_sel.kind = winner.map(|c| c.kind);
 }
 
 /// Compute this frame's player (and throwable) contacts against every
@@ -557,7 +590,7 @@ pub fn detect_contacts(
 
     {
         for (crate_e, ctf, vel) in &crates {
-            if vel.linvel.length() < THROWN_MIN_SPEED {
+            if vel.linear.length() < THROWN_MIN_SPEED {
                 continue;
             }
             let c_he = Vec3::splat(0.4);
@@ -569,7 +602,7 @@ pub fn detect_contacts(
                     SWITCH_VOLUME_HE,
                 ) {
                     memory.touch(InteractionKey {
-                        actor: crate_e.index(),
+                        actor: crate_e.index_u32(),
                         target: ent.id,
                     });
                 }
@@ -577,7 +610,7 @@ pub fn detect_contacts(
             for (ent, o_tf) in &orbs {
                 if player_overlaps_volume(ctf.translation, c_he, o_tf.translation, ORB_VOLUME_HE) {
                     memory.touch(InteractionKey {
-                        actor: crate_e.index(),
+                        actor: crate_e.index_u32(),
                         target: ent.id,
                     });
                 }
@@ -585,7 +618,7 @@ pub fn detect_contacts(
             for (ent, p_tf) in &pads {
                 if player_overlaps_volume(ctf.translation, c_he, p_tf.translation, PAD_HE) {
                     memory.touch(InteractionKey {
-                        actor: crate_e.index(),
+                        actor: crate_e.index_u32(),
                         target: ent.id,
                     });
                 }
@@ -594,7 +627,7 @@ pub fn detect_contacts(
                 if player_overlaps_volume(ctf.translation, c_he, b_tf.translation, BUMPER_VOLUME_HE)
                 {
                     memory.touch(InteractionKey {
-                        actor: crate_e.index(),
+                        actor: crate_e.index_u32(),
                         target: ent.id,
                     });
                 }
@@ -680,7 +713,7 @@ pub fn detect_damage(
 
     {
         for (crate_e, ctf, vel) in &thrown {
-            if vel.linvel.length() < THROWN_MIN_SPEED {
+            if vel.linear.length() < THROWN_MIN_SPEED {
                 continue;
             }
             let c_he = Vec3::splat(0.4);
@@ -717,6 +750,7 @@ pub fn detect_damage(
 /// launch pad, bumper) with consistent bookkeeping.
 pub fn resolve_forced_motion(
     level: Res<LevelDocument>,
+    mut ui: ResMut<MakerUi>,
     mut requests: ResMut<ForcedMotionRequests>,
     mut player_q: Query<
         (&mut Transform, &mut Player, &mut MoveState, &mut Visibility),
@@ -736,6 +770,14 @@ pub fn resolve_forced_motion(
     };
 
     if motion.respawn {
+        // The respawn source distinguishes a death (fell out / off the map)
+        // from a manual R reset.
+        let status = if motion.source.target == NO_TARGET {
+            "You fell off the level!"
+        } else {
+            "Level restarted!"
+        };
+        ui.set_status(status);
         respawn_player(&mut tf, &mut player, &mut move_state, &mut vis, &level);
         return;
     }
@@ -779,7 +821,7 @@ pub fn resolve_launch_pads(
     }
     for (ent, pad) in &pads {
         let key = InteractionKey::player(ent.id);
-        if memory.entered(key) {
+        if activation_fires(ActivationMode::TopContact, memory.entered(key), false) {
             requests.push(ForcedMotion {
                 source: key,
                 priority: PRIORITY_LAUNCH,
@@ -793,11 +835,11 @@ pub fn resolve_launch_pads(
     for (crate_e, mut vel) in &mut crates {
         for (ent, pad) in &pads {
             let key = InteractionKey {
-                actor: crate_e.index(),
+                actor: crate_e.index_u32(),
                 target: ent.id,
             };
             if memory.entered(key) {
-                vel.linvel = landing_velocity(pad.impulse, pad.yaw_rad);
+                vel.linear = landing_velocity(pad.impulse, pad.yaw_rad);
             }
         }
     }
@@ -812,7 +854,10 @@ pub fn resolve_bumpers(
     player_q: Query<&Transform, With<Player>>,
     mut requests: ResMut<ForcedMotionRequests>,
     bumpers: Query<(&LevelEnt, &Transform, &Bumper), Without<Player>>,
-    mut crates: Query<(Entity, &mut Velocity), (With<super::rapier::Throwable>, Without<Player>)>,
+    mut crates: Query<
+        (Entity, &Transform, &mut Velocity),
+        (With<super::rapier::Throwable>, Without<Player>),
+    >,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -822,7 +867,7 @@ pub fn resolve_bumpers(
     };
     for (ent, tf, bumper) in &bumpers {
         let key = InteractionKey::player(ent.id);
-        if !memory.entered(key) {
+        if !activation_fires(ActivationMode::TouchEnter, memory.entered(key), false) {
             continue;
         }
         let delta = pt.translation - tf.translation;
@@ -842,18 +887,18 @@ pub fn resolve_bumpers(
         });
         ui.set_status("Boing!");
     }
-    for (crate_e, mut vel) in &mut crates {
+    for (crate_e, ctf, mut vel) in &mut crates {
         for (ent, tf, bumper) in &bumpers {
             let key = InteractionKey {
-                actor: crate_e.index(),
+                actor: crate_e.index_u32(),
                 target: ent.id,
             };
             if !memory.entered(key) {
                 continue;
             }
-            let delta = *tf.translation - *tf.translation;
+            let delta = ctf.translation - tf.translation;
             let horiz = Vec3::new(delta.x, 0.0, delta.z).normalize_or_zero();
-            vel.linvel = if horiz == Vec3::ZERO {
+            vel.linear = if horiz == Vec3::ZERO {
                 Vec3::Y * bumper.strength
             } else {
                 horiz * bumper.strength + Vec3::Y * (bumper.strength * 0.55)
@@ -876,7 +921,7 @@ pub fn resolve_cannons(
     }
     for (ent, tf, cannon) in &cannons {
         let key = InteractionKey::player(ent.id);
-        if !memory.entered(key) {
+        if !activation_fires(ActivationMode::TouchEnter, memory.entered(key), false) {
             continue;
         }
         let delta = cannon.target - tf.translation;
@@ -983,7 +1028,7 @@ pub fn resolve_teleporters(
             continue;
         }
         let key = InteractionKey::player(ent.id);
-        if !memory.entered(key) {
+        if !activation_fires(ActivationMode::TouchEnter, memory.entered(key), false) {
             continue;
         }
         let endpoints = grouped.get(&tp.link).map(Vec::as_slice).unwrap_or(&[]);
@@ -1099,43 +1144,49 @@ pub fn resolve_use(
 
     let selected = use_sel.selected.unwrap();
 
-    // Lock gate: highest use priority; consumes a key only when unlocked.
-    for (_e, ent, mut gate, mut vis) in &mut gates {
-        if ent.id == selected && !gate.open {
-            let ch = gate.link as usize;
-            if ch >= player.keys.len() || player.keys[ch] == 0 {
-                ui.set_status(format!("Need key (ch {})", gate.link));
-            } else {
-                player.keys[ch] -= 1;
-                gate.open = true;
-                gate.open_timer = gate.open_for;
-                *vis = Visibility::Hidden;
-                ui.set_status("Gate unlocked!");
+    // Route by the kind of the arbitrated target so only the matching family is
+    // scanned; the priority order (gate > sign > orb) lives in the arbitration.
+    match use_sel.kind {
+        Some(InteractionKind::Unlock) => {
+            for (_e, ent, mut gate, mut vis) in &mut gates {
+                if ent.id == selected && !gate.open {
+                    let ch = gate.link as usize;
+                    if ch >= player.keys.len() || player.keys[ch] == 0 {
+                        ui.set_status(format!("Need key (ch {})", gate.link));
+                    } else {
+                        player.keys[ch] -= 1;
+                        gate.open = true;
+                        gate.open_timer = gate.open_for;
+                        *vis = Visibility::Hidden;
+                        ui.set_status("Gate unlocked!");
+                    }
+                    return;
+                }
             }
-            return;
         }
-    }
-
-    // Sign.
-    for (ent, sign) in &signs {
-        if ent.id == selected {
-            ui.status.clear();
-            ui.sign_dialog_open = true;
-            ui.sign_dialog_lines = wrap_sign_text(&sign.text);
-            return;
-        }
-    }
-
-    // Trigger orb on explicit use.
-    for (e, ent, mut orb) in &mut orbs {
-        if ent.id == selected {
-            orb.timer = (orb.timer - time.delta_secs()).max(0.0);
-            if orb.timer > 0.0 {
-                continue;
+        Some(InteractionKind::Sign) => {
+            for (ent, sign) in &signs {
+                if ent.id == selected {
+                    ui.status.clear();
+                    ui.sign_dialog_open = true;
+                    ui.sign_dialog_lines = wrap_sign_text(&sign.text);
+                    return;
+                }
             }
-            fire_orb(&mut commands, &mut link, &mut trauma, &mut ui, e, &mut orb);
-            return;
         }
+        Some(InteractionKind::Trigger) => {
+            for (e, ent, mut orb) in &mut orbs {
+                if ent.id == selected {
+                    orb.timer = (orb.timer - time.delta_secs()).max(0.0);
+                    if orb.timer > 0.0 {
+                        continue;
+                    }
+                    fire_orb(&mut commands, &mut link, &mut trauma, &mut ui, e, &mut orb);
+                    return;
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1148,11 +1199,12 @@ fn damage_player(
     move_state: &mut MoveState,
     vis: &mut Visibility,
     level: &LevelDocument,
+    amount: u8,
 ) {
     if player.invuln > 0.0 {
         return;
     }
-    let (new_armor, alive) = armor_hit(player.armor);
+    let (new_armor, alive) = armor_hit(player.armor, amount);
     player.armor = new_armor;
     if alive {
         player.invuln = 0.6;
@@ -1222,6 +1274,7 @@ pub fn resolve_damage(
                     &mut move_state,
                     &mut vis,
                     &level,
+                    req.amount,
                 );
             }
             continue;
@@ -1243,6 +1296,7 @@ pub fn resolve_damage(
                 ent.id,
                 e,
                 contents,
+                req.source == player_e,
             );
             continue;
         }
@@ -1280,16 +1334,19 @@ fn defeat_prowler(
     id: LevelEntityId,
     e: Entity,
     contents: Option<&Contents>,
+    player_bounce: bool,
 ) {
     if let Some(contents) = contents {
         spawn_drops(commands, assets, counter, origin, contents);
     }
     commands.entity(e).despawn();
     map.0.remove(&id);
-    player.velocity.y = JUMP_SPEED * 0.8;
-    player.on_ground = false;
-    player.coyote = 0.0;
-    Juice::squash_stretch(commands, player_e, Vec2::new(1.3, 0.7), 0.12);
+    if player_bounce {
+        player.velocity.y = JUMP_SPEED * 0.8;
+        player.on_ground = false;
+        player.coyote = 0.0;
+        Juice::squash_stretch(commands, player_e, Vec2::new(1.3, 0.7), 0.12);
+    }
     ScreenEffects::add_trauma(trauma, 0.18);
     ui.score += 200;
     let total = ui.score;
@@ -1354,8 +1411,15 @@ pub fn play_hazard_goal(
         if !manual_reset {
             ui.deaths += 1;
         }
+        // Deaths use the `NO_TARGET` source; a manual R reset uses the
+        // `RESET_TARGET` sentinel so the respawn reason is visible to the UI.
+        let source = if manual_reset {
+            InteractionKey::player(RESET_TARGET)
+        } else {
+            InteractionKey::player(NO_TARGET)
+        };
         forced.push(ForcedMotion {
-            source: InteractionKey::player(NO_TARGET),
+            source,
             priority: PRIORITY_RESPAWN,
             position: None,
             velocity: None,
@@ -1421,20 +1485,23 @@ mod tests {
         let winner = select_use_target(vec![
             UseCandidate {
                 target: 42,
+                kind: InteractionKind::Trigger,
                 priority: USE_PRIORITY_ORB,
                 distance: 1.0,
                 facing: 0.9,
             },
             UseCandidate {
                 target: 10,
+                kind: InteractionKind::Sign,
                 priority: USE_PRIORITY_SIGN,
                 distance: 1.0,
                 facing: 0.9,
             },
         ]);
-        assert_eq!(winner, Some(10));
+        assert_eq!(winner.map(|c| c.target), Some(10));
+        assert_eq!(winner.map(|c| c.kind), Some(InteractionKind::Sign));
         // Exactly one winner: a press resolves to a single target.
-        assert_ne!(winner, Some(42));
+        assert_ne!(winner.map(|c| c.target), Some(42));
     }
 
     #[test]
@@ -1442,12 +1509,14 @@ mod tests {
         let c1 = vec![
             UseCandidate {
                 target: 7,
+                kind: InteractionKind::Sign,
                 priority: USE_PRIORITY_SIGN,
                 distance: 1.5,
                 facing: 0.6,
             },
             UseCandidate {
                 target: 3,
+                kind: InteractionKind::Trigger,
                 priority: USE_PRIORITY_ORB,
                 distance: 1.0,
                 facing: 0.95,
@@ -1456,12 +1525,14 @@ mod tests {
         let c2 = vec![
             UseCandidate {
                 target: 3,
+                kind: InteractionKind::Trigger,
                 priority: USE_PRIORITY_ORB,
                 distance: 1.0,
                 facing: 0.95,
             },
             UseCandidate {
                 target: 7,
+                kind: InteractionKind::Sign,
                 priority: USE_PRIORITY_SIGN,
                 distance: 1.5,
                 facing: 0.6,
@@ -1469,8 +1540,9 @@ mod tests {
         ];
         let r1 = select_use_target(c1);
         let r2 = select_use_target(c2);
-        assert_eq!(r1, r2);
-        assert_eq!(r1, Some(3));
+        assert_eq!(r1.map(|c| c.target), r2.map(|c| c.target));
+        // Higher priority (sign, 20) wins over the orb (10).
+        assert_eq!(r1.map(|c| c.target), Some(7));
     }
 
     #[test]
@@ -1616,19 +1688,21 @@ mod tests {
 
     #[test]
     fn prowler_damage_consumes_armor_before_respawn() {
-        let (armor, alive) = armor_hit(2);
+        let (armor, alive) = armor_hit(2, 1);
         assert_eq!((armor, alive), (1, true));
-        let (armor, alive) = armor_hit(1);
+        let (armor, alive) = armor_hit(1, 1);
         assert_eq!((armor, alive), (0, true));
-        let (armor, alive) = armor_hit(0);
+        let (armor, alive) = armor_hit(0, 1);
         assert_eq!((armor, alive), (0, false));
+        let (armor, alive) = armor_hit(3, 2);
+        assert_eq!((armor, alive), (1, true));
     }
 
     #[test]
     fn thrown_impacts_dedupe_to_one_event() {
         let mut requests = DamageRequests::default();
-        let target = Entity::from_raw(77);
-        let source = Entity::from_raw(1);
+        let target = Entity::from_raw_u32(77).unwrap();
+        let source = Entity::from_raw_u32(1).unwrap();
         // Two impacts from the same collision source frame.
         requests.push(DamageRequest {
             target,
@@ -1648,7 +1722,8 @@ mod tests {
 
     #[test]
     fn fan_force_is_capped_when_overlapping_multiple_fans() {
-        let from_two_fans = Vec3::new(24.0, 0.0, 0.0);
+        // Two overlapping fans stack to 36, well above the 30 cap.
+        let from_two_fans = Vec3::new(36.0, 0.0, 0.0);
         let capped = cap_fan_force(from_two_fans, MAX_FAN_FORCE);
         assert!(capped.length() <= MAX_FAN_FORCE + 1e-4);
         assert!((capped.length() - MAX_FAN_FORCE).abs() < 1e-3);
