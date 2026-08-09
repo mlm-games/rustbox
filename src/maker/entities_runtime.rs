@@ -11,17 +11,20 @@ use bevy::{
 };
 
 use game_utils_bevy::juice::Juice;
-use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
+use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 use super::MakerCleanup;
-use super::camera::CameraRig;
-use super::collision::is_solid;
+use super::collision::{is_solid, rotated_box_aabb};
 use super::entity_data::{
     ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
 };
+use super::interaction::{
+    cap_fan_force, gateway_blocked, heal_allowed, player_overlaps_volume, InteractionKey,
+    InteractionMemory, MAX_FAN_FORCE,
+};
 use super::level::LevelDocument;
-use super::mode::{InputCapture, MakerMode};
-use super::player::{ActionState, JUMP_SPEED, MoveState, Player, respawn_player};
+use super::mode::MakerMode;
+use super::player::{ActionState, MoveState, Player};
 use super::track::{TrackDataExt, TrackId};
 use super::ui_bridge::MakerUi;
 #[cfg(feature = "physics")]
@@ -43,7 +46,6 @@ pub struct GlimmerTag;
 pub struct LaunchPad {
     pub impulse: f32,
     pub yaw_rad: f32,
-    pub cooldown: f32,
 }
 
 #[derive(Component)]
@@ -108,7 +110,6 @@ pub struct GateSolid;
 #[derive(Component)]
 pub struct Teleporter {
     pub link: u32,
-    pub cooldown: f32,
 }
 
 #[derive(Component)]
@@ -278,7 +279,6 @@ pub struct CrumblePlate {
 pub struct Cannon {
     pub target: Vec3,
     pub arc: f32,
-    pub cooldown: f32,
 }
 
 /// Simple procedural active visuals for kit entities: `base_y` anchors a bob,
@@ -298,9 +298,30 @@ pub struct LinkState {
     pub clock: f32,
 }
 
+/// A runtime dynamic solid (gate, seal, crate, crumble plate) used for
+/// collision. `rotation` keeps rotated visuals physically aligned.
+#[derive(Clone, Copy, Debug)]
+pub struct RuntimeSolid {
+    #[allow(dead_code)] // reserves future per-owner lookups
+    pub owner: Entity,
+    pub center: Vec3,
+    pub half_extents: Vec3,
+    pub rotation: Quat,
+}
+
 #[derive(Resource, Default)]
 pub struct RuntimeSolids {
-    pub boxes: Vec<(Vec3, Vec3)>,
+    pub solids: Vec<RuntimeSolid>,
+}
+
+impl RuntimeSolids {
+    /// World-space AABB covers for `move_and_collide` / `stand_headroom`.
+    pub fn aabbs(&self) -> Vec<(Vec3, Vec3)> {
+        self.solids
+            .iter()
+            .map(|s| rotated_box_aabb(s.center, s.half_extents, s.rotation))
+            .collect()
+    }
 }
 
 #[derive(Resource)]
@@ -1041,7 +1062,6 @@ pub fn reconcile_entities(
                 ecmds.insert(LaunchPad {
                     impulse: data.param,
                     yaw_rad: yaw,
-                    cooldown: 0.0,
                 });
                 #[cfg(feature = "physics")]
                 if playing {
@@ -1143,7 +1163,6 @@ pub fn reconcile_entities(
             EntityKind::Teleporter => {
                 ecmds.insert(Teleporter {
                     link: data.link,
-                    cooldown: data.param.max(0.15),
                 });
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
@@ -1247,7 +1266,6 @@ pub fn reconcile_entities(
                 ecmds.insert(Cannon {
                     target: (target - from) * Vec3::new(1.0, 0.0, 1.0) + from,
                     arc: data.param.max(1.0),
-                    cooldown: 0.0,
                 });
                 #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
@@ -1361,83 +1379,6 @@ pub fn wrap_sign_text(text: &str) -> Vec<String> {
     out
 }
 
-/// Play-mode sign reading. Pressing the interact key (I) while in front of a
-/// sign opens a modal dialog with its text; pressing it again (or Space /
-/// Escape) closes it. While open the dialog blocks player input via
-/// `InputCapture` (see `update_input_capture`).
-pub fn read_signs(
-    mode: Res<MakerMode>,
-    capture: Res<InputCapture>,
-    keys: Res<ButtonInput<KeyCode>>,
-    rig: Res<CameraRig>,
-    mut ui: ResMut<MakerUi>,
-    player_q: Query<&Transform, With<Player>>,
-    signs: Query<(&Transform, &Sign), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    let Ok(pt) = player_q.single() else {
-        return;
-    };
-
-    if ui.sign_dialog_open {
-        if keys.just_pressed(KeyCode::KeyI)
-            || keys.just_pressed(KeyCode::Space)
-            || keys.just_pressed(KeyCode::Escape)
-        {
-            ui.sign_dialog_open = false;
-            ui.sign_dialog_lines.clear();
-        }
-        return;
-    }
-
-    if capture.ui_wants_keyboard || !keys.just_pressed(KeyCode::KeyI) {
-        return;
-    }
-
-    // The play camera's yaw is the look direction (matches player_controller).
-    let (sin, cos) = rig.yaw.sin_cos();
-    let player_forward = Vec3::new(-sin, 0.0, -cos);
-
-    let mut best: Option<(f32, String)> = None;
-    for (tf, sign) in &signs {
-        let dist = pt.translation.distance(tf.translation);
-        if dist > 1.8 {
-            continue;
-        }
-        let to_player = (pt.translation - tf.translation) * Vec3::new(1.0, 0.0, 1.0);
-        if to_player.length_squared() < 1e-6 {
-            continue;
-        }
-        let to_player_n = to_player.normalize();
-        let sign_forward = Vec3::new(-sign.yaw_rad.sin(), 0.0, -sign.yaw_rad.cos());
-        if sign_forward.dot(to_player_n) < 0.2 {
-            continue;
-        }
-        if player_forward.dot(-to_player_n) < 0.2 {
-            continue;
-        }
-        if best.as_ref().is_none_or(|(bd, _)| dist < *bd) {
-            best = Some((dist, sign.text.clone()));
-        }
-    }
-
-    let Some((_, text)) = best else {
-        return;
-    };
-    ui.status.clear();
-    ui.sign_dialog_open = true;
-    ui.sign_dialog_lines = wrap_sign_text(&text);
-}
-
-pub fn tick_launch_pads_cooldown(time: Res<Time>, mut pads: Query<&mut LaunchPad>) {
-    let dt = time.delta_secs();
-    for mut pad in &mut pads {
-        pad.cooldown = (pad.cooldown - dt).max(0.0);
-    }
-}
-
 pub fn touch_checkpoints(
     mode: Res<MakerMode>,
     mut ui: ResMut<MakerUi>,
@@ -1531,64 +1472,30 @@ pub fn update_seals(
     }
 }
 
-/// Player touches an orb -> pulse its channel. Holding/interacting near an orb
-/// (I) also fires it, mirroring sign reading.
-pub fn trigger_orbs(
-    time: Res<Time>,
-    mode: Res<MakerMode>,
-    mut link: ResMut<LinkState>,
-    mut ui: ResMut<MakerUi>,
-    mut trauma: ResMut<Trauma>,
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    capture: Res<InputCapture>,
-    player_q: Query<&Transform, With<Player>>,
-    mut orbs: Query<(Entity, &Transform, &mut TriggerOrb)>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    link.clock += time.delta_secs();
-    let Ok(pt) = player_q.single() else {
-        return;
-    };
-    let interact = keys.just_pressed(KeyCode::KeyI) && !capture.ui_wants_keyboard;
-
-    for (e, ot, mut orb) in &mut orbs {
-        orb.timer = (orb.timer - time.delta_secs()).max(0.0);
-        if orb.timer > 0.0 {
-            continue;
-        }
-        let dist = pt.translation.distance(ot.translation);
-        let touch = dist < 1.0 || (interact && dist < 1.5);
-        if !touch {
-            continue;
-        }
-        orb.timer = orb.cooldown;
-        let t = link.clock;
-        if orb.channel == 0 {
-            ui.set_status("Orb has no channel set.");
-            continue;
-        }
-        link.pulses.insert(orb.channel, t);
-        Juice::pop_in(&mut commands, e, 0.15);
-        ScreenEffects::add_trauma(&mut trauma, 0.1);
-        ui.set_status(format!("Channel {} triggered!", orb.channel));
-    }
-}
-
-/// Gates open while (clock - last_pulse) < duration; close crush-safe.
+/// Gates open while (clock - last_pulse) < duration; close crush-safe, waiting
+/// for every body (player / crate / prowler) to clear the doorway.
 pub fn update_relay_gates(
     mode: Res<MakerMode>,
     link: Res<LinkState>,
     mut commands: Commands,
     player_q: Query<(&Transform, &Player)>,
-    mut gates: Query<(Entity, &Transform, &mut RelayGate, &mut Visibility)>,
+    prowlers: Query<&Transform, With<Prowler>>,
+    crates: Query<&Transform, With<CrateProp>>,
+    mut gates: Query<(Entity, &Transform, &mut RelayGate, &mut Visibility), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
     }
-    let player = player_q.single().ok();
+    let mut bodies: Vec<(Vec3, Vec3)> = Vec::new();
+    if let Ok((pt, p)) = player_q.single() {
+        bodies.push((pt.translation, p.half_extents));
+    }
+    for t in &prowlers {
+        bodies.push((t.translation, Vec3::splat(0.35)));
+    }
+    for t in &crates {
+        bodies.push((t.translation, Vec3::splat(0.5)));
+    }
 
     for (e, gt, mut gate, mut vis) in &mut gates {
         let powered = gate.channel != 0
@@ -1605,14 +1512,12 @@ pub fn update_relay_gates(
             #[cfg(feature = "physics")]
             commands.entity(e).remove::<Collider>();
         } else if !powered && gate.open {
-            // Crush-safe close: wait until the player isn't in the doorway.
-            let blocked = player.is_some_and(|(pt, p)| {
-                let d = (pt.translation - gt.translation).abs();
-                d.x < p.half_extents.x + 0.5
-                    && d.y < p.half_extents.y + 1.0
-                    && d.z < p.half_extents.z + 0.2
-            });
-            if blocked {
+            // Crush-safe close: wait until nothing is in the doorway.
+            if gateway_blocked(
+                bodies.iter().copied(),
+                gt.translation,
+                Vec3::new(0.5, 1.0, 0.2),
+            ) {
                 gate.want_close = true;
             } else {
                 gate.open = false;
@@ -1739,184 +1644,103 @@ pub fn move_prowlers(
     }
 }
 
-pub fn prowler_touch(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    level: Res<LevelDocument>,
-    mut ui: ResMut<MakerUi>,
-    mut trauma: ResMut<Trauma>,
-    mut flash: ResMut<FlashWhite>,
-    mut map: ResMut<EntityEntities>,
-    assets: Res<EntityAssets>,
-    mut counter: ResMut<DropIdCounter>,
-    mut player_q: Query<
-        (
-            Entity,
-            &mut Transform,
-            &mut Player,
-            &mut MoveState,
-            &mut Visibility,
-        ),
-        Without<Prowler>,
-    >,
-    prowlers: Query<
-        (Entity, &Transform, &LevelEnt, Option<&Contents>),
-        (With<Prowler>, Without<Player>),
-    >,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-
-    let Ok((player_e, mut pt, mut player, mut move_state, mut vis)) = player_q.single_mut() else {
-        return;
-    };
-
-    let he = player.half_extents;
-    let ph = Vec3::splat(0.35);
-
-    for (prow_e, prow_tf, ent, contents) in &prowlers {
-        let d = (pt.translation - prow_tf.translation).abs();
-        let overlap = d.x < he.x + ph.x && d.y < he.y + ph.y && d.z < he.z + ph.z;
-        if !overlap {
-            continue;
-        }
-
-        let player_bottom = pt.translation.y - he.y;
-        let is_stomp = player.velocity.y < -0.5 && player_bottom > prow_tf.translation.y - 0.05;
-
-        if is_stomp {
-            if let Some(contents) = contents {
-                spawn_drops(
-                    &mut commands,
-                    &assets,
-                    &mut counter,
-                    prow_tf.translation,
-                    contents,
-                );
-            }
-            commands.entity(prow_e).despawn();
-            map.0.remove(&ent.id);
-
-            player.velocity.y = JUMP_SPEED * 0.8;
-            player.on_ground = false;
-            player.coyote = 0.0;
-            Juice::squash_stretch(&mut commands, player_e, Vec2::new(1.3, 0.7), 0.12);
-            ScreenEffects::add_trauma(&mut trauma, 0.18);
-            ui.score += 200;
-            let total = ui.score;
-            ui.set_status(format!("Prowler defeated! +{total}"));
-        } else {
-            ui.deaths += 1;
-            respawn_player(&mut pt, &mut player, &mut move_state, &mut vis, &level);
-            ScreenEffects::add_trauma(&mut trauma, 0.35);
-            ScreenEffects::flash_white(&mut flash, 0.15);
-            ui.set_status("Ouch!");
-            break;
-        }
-    }
-}
-
 pub fn rebuild_runtime_solids(
     mut solids: ResMut<RuntimeSolids>,
-    seals: Query<(&Transform, &Seal), With<SealSolid>>,
-    gates: Query<(&Transform, &RelayGate), With<GateSolid>>,
-    lock_gates: Query<(&Transform, &LockGate)>,
-    crates: Query<(&Transform, &CrateProp)>,
-    plates: Query<(&Transform, &CrumblePlate)>,
+    seals: Query<(Entity, &Transform, &Seal), With<SealSolid>>,
+    gates: Query<(Entity, &Transform, &RelayGate), With<GateSolid>>,
+    lock_gates: Query<(Entity, &Transform, &LockGate)>,
+    crates: Query<(Entity, &Transform, &CrateProp)>,
+    plates: Query<(Entity, &Transform, &CrumblePlate)>,
 ) {
-    solids.boxes.clear();
-    for (tf, seal) in &seals {
-        if !seal.open {
-            solids
-                .boxes
-                .push((tf.translation, Vec3::new(0.5, 1.0, 0.15)));
-        }
-    }
-    for (tf, gate) in &gates {
-        if !gate.open {
-            solids
-                .boxes
-                .push((tf.translation, Vec3::new(0.5, 1.0, 0.2)));
-        }
-    }
-    for (tf, lock) in &lock_gates {
-        if !lock.open {
-            solids
-                .boxes
-                .push((tf.translation, Vec3::new(0.55, 1.2, 0.3)));
-        }
-    }
-    for (tf, _crate) in &crates {
-        solids
-            .boxes
-            .push((tf.translation, Vec3::new(0.5, 0.5, 0.5)));
-    }
-    for (tf, plate) in &plates {
-        if !plate.gone {
-            solids
-                .boxes
-                .push((tf.translation, Vec3::new(0.5, 0.12, 0.5)));
-        }
-    }
+    solids.solids = build_solids(
+        seals.iter().map(|(e, t, s)| (e, t.translation, t.rotation, s.open)).collect(),
+        gates.iter().map(|(e, t, g)| (e, t.translation, t.rotation, g.open)).collect(),
+        lock_gates
+            .iter()
+            .map(|(e, t, l)| (e, t.translation, t.rotation, l.open))
+            .collect(),
+        crates.iter().map(|(e, t, _)| (e, t.translation, t.rotation)).collect(),
+        plates
+            .iter()
+            .map(|(e, t, p)| (e, t.translation, t.rotation, p.gone))
+            .collect(),
+    );
 }
 
-pub fn use_teleporters(
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut player_q: Query<(&mut Transform, &mut Player)>,
-    teleporters: Query<(&LevelEnt, &Transform, &Teleporter), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    let Ok((mut pt, mut player)) = player_q.single_mut() else {
-        return;
-    };
-    if player.pad_cooldown > 0.0 {
-        return;
-    }
-
-    let mut from_link = None;
-    for (_ent, tf, tp) in &teleporters {
-        if tp.link == 0 {
-            continue;
-        }
-        if pt.translation.distance(tf.translation) < 1.1 {
-            from_link = Some((tp.link, tp.cooldown, tf.translation));
-            break;
+/// Pure solid-table builder (shared with tests). Collision state derives from
+/// authoritative open/gone flags, never from visibility.
+pub fn build_solids(
+    seals: Vec<(Entity, Vec3, Quat, bool)>,
+    gates: Vec<(Entity, Vec3, Quat, bool)>,
+    lock_gates: Vec<(Entity, Vec3, Quat, bool)>,
+    crates: Vec<(Entity, Vec3, Quat)>,
+    plates: Vec<(Entity, Vec3, Quat, bool)>,
+) -> Vec<RuntimeSolid> {
+    let mut out = Vec::new();
+    for (e, center, rotation, open) in seals {
+        if !open {
+            out.push(RuntimeSolid {
+                owner: e,
+                center,
+                half_extents: Vec3::new(0.5, 1.0, 0.15),
+                rotation,
+            });
         }
     }
-    let Some((link, cd, from_pos)) = from_link else {
-        return;
-    };
-
-    // Destination = other teleporter on same link, else no-op.
-    let mut dest = None;
-    for (_ent, tf, tp) in &teleporters {
-        if tp.link == link && tf.translation.distance(from_pos) > 0.5 {
-            dest = Some(tf.translation + Vec3::Y * 0.9);
-            break;
+    for (e, center, rotation, open) in gates {
+        if !open {
+            out.push(RuntimeSolid {
+                owner: e,
+                center,
+                half_extents: Vec3::new(0.5, 1.0, 0.2),
+                rotation,
+            });
         }
     }
-    let Some(to) = dest else {
-        ui.set_status("Teleporter needs a linked pair");
-        return;
-    };
-
-    pt.translation = to;
-    player.velocity = Vec3::ZERO;
-    player.pad_cooldown = cd;
-    ui.set_status("Warped!");
+    for (e, center, rotation, open) in lock_gates {
+        if !open {
+            out.push(RuntimeSolid {
+                owner: e,
+                center,
+                half_extents: Vec3::new(0.55, 1.2, 0.3),
+                rotation,
+            });
+        }
+    }
+    for (e, center, rotation) in crates {
+        out.push(RuntimeSolid {
+            owner: e,
+            center,
+            half_extents: Vec3::new(0.5, 0.5, 0.5),
+            rotation,
+        });
+    }
+    for (e, center, rotation, gone) in plates {
+        if !gone {
+            out.push(RuntimeSolid {
+                owner: e,
+                center,
+                half_extents: Vec3::new(0.5, 0.12, 0.5),
+                rotation,
+            });
+        }
+    }
+    out
 }
 
+/// Fans accumulate a capped force. Continuous fans apply after forced motion
+/// unless a position override (teleport / respawn) won this frame.
 pub fn apply_fans(
     time: Res<Time>,
     mode: Res<MakerMode>,
+    forced: Res<super::interaction::ForcedMotionRequests>,
     mut player_q: Query<(&Transform, &mut Player)>,
     fans: Query<(&Transform, &Fan), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
+        return;
+    }
+    if forced.position_applied {
         return;
     }
     let Ok((pt, mut player)) = player_q.single_mut() else {
@@ -1924,6 +1748,7 @@ pub fn apply_fans(
     };
     let dt = time.delta_secs();
 
+    let mut force = Vec3::ZERO;
     for (tf, fan) in &fans {
         // Simple axis-aligned volume in front of the fan.
         let to_p = pt.translation - tf.translation;
@@ -1935,99 +1760,11 @@ pub fn apply_fans(
         if lateral > 1.4 {
             continue;
         }
-        player.velocity += fan.dir * fan.strength * dt;
+        force += fan.dir * fan.strength * dt;
         // slight lift so fans feel useful in 3D platforming
-        player.velocity.y += fan.strength * 0.15 * dt;
+        force.y += fan.strength * 0.15 * dt;
     }
-}
-
-pub fn touch_bumpers(
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut player_q: Query<(&Transform, &mut Player)>,
-    bumpers: Query<(&Transform, &Bumper), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    let Ok((pt, mut player)) = player_q.single_mut() else {
-        return;
-    };
-    if player.pad_cooldown > 0.0 {
-        return;
-    }
-
-    for (tf, bumper) in &bumpers {
-        let delta = pt.translation - tf.translation;
-        if delta.length() > 1.15 {
-            continue;
-        }
-        let dir = if delta.length_squared() < 1e-4 {
-            Vec3::Y
-        } else {
-            delta.normalize()
-        };
-        // Mostly horizontal pop with upward bias (mushroom feel).
-        let mut kick = dir * bumper.strength;
-        kick.y = kick.y.abs().max(bumper.strength * 0.55);
-        player.velocity = kick;
-        player.on_ground = false;
-        player.pad_cooldown = 0.2;
-        ui.set_status("Boing!");
-        break;
-    }
-}
-
-pub fn break_crates(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut map: ResMut<EntityEntities>,
-    assets: Res<EntityAssets>,
-    mut counter: ResMut<DropIdCounter>,
-    player_q: Query<(&Transform, &Player)>,
-    crates: Query<(Entity, &Transform, &LevelEnt, &CrateProp, Option<&Contents>), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    let Ok((pt, player)) = player_q.single() else {
-        return;
-    };
-
-    for (e, tf, ent, crate_prop, contents) in &crates {
-        if !crate_prop.breakable {
-            continue;
-        }
-        let d = (pt.translation - tf.translation).abs();
-        let he = player.half_extents;
-        let ph = Vec3::splat(0.45);
-        let overlap = d.x < he.x + ph.x && d.y < he.y + ph.y && d.z < he.z + ph.z;
-        if !overlap {
-            continue;
-        }
-
-        let player_bottom = pt.translation.y - he.y;
-        let stomp = player.velocity.y < -0.5 && player_bottom > tf.translation.y - 0.05;
-        let slam = player.slamming;
-        if !(stomp || slam) {
-            continue;
-        }
-
-        if let Some(contents) = contents {
-            spawn_drops(
-                &mut commands,
-                &assets,
-                &mut counter,
-                tf.translation,
-                contents,
-            );
-        }
-        commands.entity(e).despawn();
-        map.0.remove(&ent.id);
-        ui.score += 50;
-        ui.set_status("Crate smashed!");
-    }
+    player.velocity += cap_fan_force(force, MAX_FAN_FORCE);
 }
 
 pub fn update_drops(
@@ -2104,9 +1841,10 @@ pub fn collect_keys(
     let Ok((pt, mut player)) = player_q.single_mut() else {
         return;
     };
+    let he = player.half_extents;
 
     for (e, tf, ent, key) in &keys {
-        if pt.translation.distance(tf.translation) > 1.0 {
+        if !player_overlaps_volume(pt.translation, he, tf.translation, Vec3::splat(0.5)) {
             continue;
         }
         let ch = key.link as usize;
@@ -2119,50 +1857,57 @@ pub fn collect_keys(
     }
 }
 
+/// Lock gates unlock only through the arbitrated explicit use target
+/// (`interaction::resolve_use`). This system handles timed closing and re-arms
+/// the gate; closing waits until the doorway is clear, so it never consumes a
+/// second key merely because a timed gate closed while the player stayed near.
 pub fn update_lock_gates(
     time: Res<Time>,
     mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut player_q: Query<(&Transform, &mut Player)>,
+    player_q: Query<(&Transform, &Player)>,
+    prowlers: Query<&Transform, With<Prowler>>,
+    crates: Query<&Transform, With<CrateProp>>,
     mut gates: Query<(&mut LockGate, &mut Visibility, &Transform), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
     }
-    let Ok((pt, mut player)) = player_q.single_mut() else {
-        return;
-    };
     let dt = time.delta_secs();
 
-    for (mut gate, mut vis, tf) in &mut gates {
-        if gate.open {
-            if gate.open_for > 0.0 {
-                gate.open_timer -= dt;
-                if gate.open_timer <= 0.0 {
-                    gate.open = false;
-                    *vis = Visibility::Visible;
-                }
-            }
-            continue;
-        }
+    let mut bodies: Vec<(Vec3, Vec3)> = Vec::new();
+    if let Ok((pt, p)) = player_q.single() {
+        bodies.push((pt.translation, p.half_extents));
+    }
+    for t in &prowlers {
+        bodies.push((t.translation, Vec3::splat(0.35)));
+    }
+    for t in &crates {
+        bodies.push((t.translation, Vec3::splat(0.5)));
+    }
 
-        // Unlock when player touches and holds matching key.
-        if pt.translation.distance(tf.translation) > 1.3 {
+    for (mut gate, mut vis, tf) in &mut gates {
+        if !gate.open {
             continue;
         }
-        let ch = gate.link as usize;
-        if ch >= player.keys.len() || player.keys[ch] == 0 {
-            ui.set_status(format!("Need key (ch {})", gate.link));
+        if gate.open_for <= 0.0 {
             continue;
         }
-        player.keys[ch] -= 1;
-        gate.open = true;
-        gate.open_timer = gate.open_for;
-        *vis = Visibility::Hidden;
-        ui.set_status("Gate unlocked!");
+        gate.open_timer -= dt;
+        if gate.open_timer <= 0.0
+            && !gateway_blocked(
+                bodies.iter().copied(),
+                tf.translation,
+                Vec3::new(0.55, 1.2, 0.3),
+            )
+        {
+            gate.open = false;
+            *vis = Visibility::Visible;
+        }
     }
 }
 
+/// Heal orbs use shape overlap and are only consumed when armor is below the
+/// cap. Drop-pop animation still blocks pickup via `Without<DropPop>`.
 pub fn collect_heal_orbs(
     mut commands: Commands,
     mode: Res<MakerMode>,
@@ -2180,18 +1925,25 @@ pub fn collect_heal_orbs(
     let Ok((pt, mut player)) = player_q.single_mut() else {
         return;
     };
+    let he = player.half_extents;
 
     for (e, tf, ent) in &orbs {
-        if pt.translation.distance(tf.translation) > 1.0 {
+        if !player_overlaps_volume(pt.translation, he, tf.translation, Vec3::splat(0.5)) {
             continue;
         }
-        player.armor = (player.armor + 1).min(3);
+        if !heal_allowed(player.armor) {
+            ui.set_status("Armor full");
+            continue;
+        }
+        player.armor += 1;
         commands.entity(e).despawn();
         map.0.remove(&ent.id);
         ui.set_status(format!("Armor {}", player.armor));
     }
 }
 
+/// Speed rings apply their boost without touching any shared cooldown, so they
+/// cannot suppress bumpers, teleporters, or cannons.
 pub fn touch_speed_rings(
     mut commands: Commands,
     mode: Res<MakerMode>,
@@ -2208,16 +1960,13 @@ pub fn touch_speed_rings(
     let Ok((pt, mut player)) = player_q.single_mut() else {
         return;
     };
-    if player.pad_cooldown > 0.0 {
-        return;
-    }
+    let he = player.half_extents;
 
     for (e, tf, ring, dropped) in &rings {
-        if pt.translation.distance(tf.translation) > 1.2 {
+        if !player_overlaps_volume(pt.translation, he, tf.translation, Vec3::splat(0.6)) {
             continue;
         }
         player.speed_boost = player.speed_boost.max(ring.duration);
-        player.pad_cooldown = 0.35;
 
         if dropped.is_some() {
             commands.entity(e).despawn();
@@ -2228,37 +1977,31 @@ pub fn touch_speed_rings(
     }
 }
 
+/// Crumble plates trigger on top contact (via `InteractionMemory`) with a
+/// short warning delay, then stay gone for the run.
 pub fn update_crumble_plates(
     time: Res<Time>,
     mode: Res<MakerMode>,
-    player_q: Query<(&Transform, &Player)>,
-    mut plates: Query<(&mut CrumblePlate, &mut Visibility, &Transform), Without<Player>>,
+    memory: Res<InteractionMemory>,
+    mut plates: Query<(&LevelEnt, &mut CrumblePlate, &mut Visibility), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
         return;
     }
-    let Ok((pt, player)) = player_q.single() else {
-        return;
-    };
     let dt = time.delta_secs();
 
-    for (mut plate, mut vis, tf) in &mut plates {
+    for (ent, mut plate, mut vis) in &mut plates {
         if plate.gone {
             *vis = Visibility::Hidden;
             continue;
         }
 
-        let on_top = {
-            let d = pt.translation - tf.translation;
-            d.x.abs() < 0.65 && d.z.abs() < 0.65 && d.y > 0.2 && d.y < 1.4 && player.on_ground
-        };
-
-        if on_top && !plate.triggered {
+        if !plate.triggered && memory.entered(InteractionKey::player(ent.id)) {
             plate.triggered = true;
             plate.timer = plate.delay;
         }
 
-        if plate.triggered && !plate.gone {
+        if plate.triggered {
             plate.timer -= dt;
             if plate.timer <= 0.0 {
                 plate.gone = true;
@@ -2268,50 +2011,55 @@ pub fn update_crumble_plates(
     }
 }
 
-pub fn launch_cannons(
-    time: Res<Time>,
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut player_q: Query<(&Transform, &mut Player)>,
-    mut cannons: Query<(&Transform, &mut Cannon), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
-        return;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const E: Entity = Entity::from_raw(1);
+
+    #[test]
+    fn hidden_crumble_plate_is_no_longer_solid() {
+        // A live plate is solid; once gone it drops out of the solid table.
+        let solids = build_solids(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![(E, Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, false)],
+        );
+        assert_eq!(solids.len(), 1);
+
+        let solids = build_solids(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![(E, Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, true)],
+        );
+        assert!(solids.is_empty());
     }
-    let Ok((pt, mut player)) = player_q.single_mut() else {
-        return;
-    };
-    let dt = time.delta_secs();
 
-    for (tf, mut cannon) in &mut cannons {
-        cannon.cooldown = (cannon.cooldown - dt).max(0.0);
-        if cannon.cooldown > 0.0 {
-            continue;
-        }
-        let to_p = pt.translation - tf.translation;
-        let d = to_p * Vec3::new(1.0, 0.0, 1.0);
-        if d.length() > 0.8 || to_p.y < 0.0 || to_p.y > 1.2 {
-            continue;
-        }
+    #[test]
+    fn rotated_gates_use_rotated_collision() {
+        let identity = build_solids(
+            vec![],
+            vec![],
+            vec![(E, Vec3::ZERO, Quat::IDENTITY, false)],
+            vec![],
+            vec![],
+        );
+        assert_eq!(identity[0].half_extents, Vec3::new(0.55, 1.2, 0.3));
 
-        let delta = cannon.target - tf.translation;
-        let horiz = (delta * Vec3::new(1.0, 0.0, 1.0)).length();
-        if horiz < 0.01 {
-            continue;
-        }
-        // Choose flight time from horizontal range and a fixed launch speed;
-        // apex is driven by `arc`.
-        let g = 25.0;
-        let t_peak = (2.0 * cannon.arc / g).sqrt();
-        let t = 2.0 * t_peak;
-        let dir = (delta * Vec3::new(1.0, 0.0, 1.0)).normalize();
-        let mut v = dir * (horiz / t);
-        v.y = g * t_peak + delta.y / t;
+        // A thin gate rotated 90° has its wide and thin axes swapped.
+        let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let (center, he) = rotated_box_aabb(Vec3::ZERO, Vec3::new(0.55, 1.2, 0.3), rot);
+        assert_eq!(center, Vec3::ZERO);
+        assert!((he.x - 0.3).abs() < 1e-4);
+        assert!((he.z - 0.55).abs() < 1e-4);
+        assert!((he.y - 1.2).abs() < 1e-4);
 
-        player.velocity = v;
-        player.on_ground = false;
-        player.pad_cooldown = 0.3;
-        cannon.cooldown = 0.5;
-        ui.set_status("Fired!");
+        // The rotated gate covers a different footprint than the unrotated one.
+        let (_, he_flat) = rotated_box_aabb(Vec3::ZERO, Vec3::new(0.55, 1.2, 0.3), Quat::IDENTITY);
+        assert!((he_flat.x - he.x).abs() > 0.1);
     }
 }

@@ -907,6 +907,21 @@ pub fn aabb_hits_solid(level: &LevelDocument, center: Vec3, he: Vec3) -> bool {
     false
 }
 
+/// World-space AABB that fully covers a box rotated by `rotation`. Keeps
+/// rotated runtime solids (thin gates, plates) physically aligned with their
+/// visuals for the axis-aligned `move_and_collide` / overlap tests.
+pub fn rotated_box_aabb(center: Vec3, half_extents: Vec3, rotation: Quat) -> (Vec3, Vec3) {
+    let x = rotation * Vec3::X;
+    let y = rotation * Vec3::Y;
+    let z = rotation * Vec3::Z;
+    let he = Vec3::new(
+        x.x.abs() * half_extents.x + y.x.abs() * half_extents.y + z.x.abs() * half_extents.z,
+        x.y.abs() * half_extents.x + y.y.abs() * half_extents.y + z.y.abs() * half_extents.z,
+        x.z.abs() * half_extents.x + y.z.abs() * half_extents.y + z.z.abs() * half_extents.z,
+    );
+    (center, he)
+}
+
 /// Nudge `p` away from the wall along `face` until it no longer overlaps solid.
 fn push_out_of_wall(level: &LevelDocument, mut p: Vec3, he: Vec3, face: Vec2) -> Vec3 {
     for _ in 0..4 {

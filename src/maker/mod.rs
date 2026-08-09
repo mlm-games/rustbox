@@ -10,13 +10,13 @@ pub mod cursor;
 pub mod editor;
 pub mod entities_runtime;
 pub mod entity_data;
+pub mod interaction;
 pub mod interactive_blocks;
 pub mod level;
 pub mod limits;
 pub mod mode;
 pub mod online;
 pub mod player;
-#[cfg(feature = "physics")]
 pub mod rapier;
 pub mod rendering;
 pub mod storage;
@@ -37,6 +37,7 @@ use camera::CameraRig;
 use campaign::LevelSource;
 use commands::CommandHistory;
 use entities_runtime::{EntityEntities, RuntimeSolids};
+use interaction::InteractionSet;
 use level::LevelDocument;
 use mode::{BlockBrush, BrushTab, InputCapture, MakerMode, PlaceYaw, SelectedEntityKind};
 use rendering::ChunkEntities;
@@ -91,6 +92,10 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::EditorClipboard>()
             .init_resource::<mode::PastePreview>()
             .init_resource::<entities_runtime::LinkState>()
+            .init_resource::<interaction::InteractionMemory>()
+            .init_resource::<interaction::ForcedMotionRequests>()
+            .init_resource::<interaction::DamageRequests>()
+            .init_resource::<interaction::UseSelection>()
             .init_resource::<campaign::LevelSource>()
             .init_resource::<campaign::CampaignProgress>()
             .init_resource::<rendering::WaterBoundaryState>()
@@ -147,16 +152,11 @@ impl Plugin for MakerPlugin {
                     rendering::tick_ghosts,
                     entities_runtime::reconcile_entities,
                     entities_runtime::bob_glimmers,
-                    entities_runtime::tick_launch_pads_cooldown,
-                    entities_runtime::tick_track_followers.before(player::player_controller),
-                    entities_runtime::tick_drift_plates.before(player::player_controller),
-                    entities_runtime::rebuild_runtime_solids
-                        .after(entities_runtime::update_relay_gates),
+                    entities_runtime::despawn_drops_when_dirty
+                        .before(entities_runtime::reconcile_entities),
                     player::sync_mode,
-                    player::player_controller.run_if(in_play),
-                    player::play_hazard_goal.run_if(in_play),
-                    entities_runtime::collect_glimmers.run_if(in_play),
-                    entities_runtime::update_seals.run_if(in_play),
+                    interactive_blocks::reset_onoff_state,
+                    entities_runtime::animate_kit,
                 )
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)
@@ -170,58 +170,96 @@ impl Plugin for MakerPlugin {
                     .run_if(not_paused)
                     .run_if(not_blocked),
             )
+            .configure_sets(
+                Update,
+                (
+                    InteractionSet::MoveWorld,
+                    InteractionSet::PlayerMotion.run_if(in_play),
+                    InteractionSet::Detect.run_if(in_play),
+                    InteractionSet::Resolve.run_if(in_play),
+                    InteractionSet::SyncCollision.run_if(in_play),
+                    InteractionSet::Feedback.run_if(in_play),
+                )
+                    .chain()
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
+            )
             .add_systems(
                 Update,
                 (
-                    entities_runtime::use_teleporters
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    interactive_blocks::touch_onoff_switches
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    interactive_blocks::sync_pulse
-                        .run_if(in_state(AppState::InGame))
-                        .run_if(not_paused)
-                        .run_if(not_blocked)
-                        .before(player::player_controller),
+                    // 1. MoveWorld: tracks, drift plates, prowler patrols.
+                    entities_runtime::tick_drift_plates.in_set(InteractionSet::MoveWorld),
+                    entities_runtime::tick_track_followers.in_set(InteractionSet::MoveWorld),
+                    entities_runtime::move_prowlers.in_set(InteractionSet::MoveWorld),
+                    interactive_blocks::sync_pulse.in_set(InteractionSet::MoveWorld),
+                    // 2. PlayerMotion.
+                    player::player_controller.in_set(InteractionSet::PlayerMotion),
+                    // 3. Detect: latch roll, contacts, use target, damage.
+                    interaction::begin_interaction_frame.in_set(InteractionSet::Detect),
+                    interaction::gather_use_targets
+                        .in_set(InteractionSet::Detect)
+                        .after(interaction::begin_interaction_frame)
+                        .after(ui_bridge::update_input_capture),
+                    interaction::detect_contacts
+                        .in_set(InteractionSet::Detect)
+                        .after(interaction::begin_interaction_frame),
+                    interaction::detect_damage
+                        .in_set(InteractionSet::Detect)
+                        .after(interaction::begin_interaction_frame),
+                )
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
+            )
+            .add_systems(
+                Update,
+                (
+                    // 4. Resolve: use, forced motion, gates, pickups, damage.
+                    interaction::resolve_use.in_set(InteractionSet::Resolve),
+                    interaction::resolve_launch_pads.in_set(InteractionSet::Resolve),
+                    interaction::resolve_bumpers.in_set(InteractionSet::Resolve),
+                    interaction::resolve_cannons.in_set(InteractionSet::Resolve),
+                    interaction::resolve_teleporters.in_set(InteractionSet::Resolve),
+                    interaction::play_hazard_goal.in_set(InteractionSet::Resolve),
+                    interactive_blocks::touch_onoff_switches.in_set(InteractionSet::Resolve),
+                    entities_runtime::update_crumble_plates.in_set(InteractionSet::Resolve),
+                    entities_runtime::update_lock_gates.in_set(InteractionSet::Resolve),
+                    entities_runtime::update_relay_gates.in_set(InteractionSet::Resolve),
+                    entities_runtime::touch_speed_rings.in_set(InteractionSet::Resolve),
+                    entities_runtime::touch_checkpoints.in_set(InteractionSet::Resolve),
+                    entities_runtime::collect_glimmers.in_set(InteractionSet::Resolve),
+                    entities_runtime::collect_dropped_glimmers.in_set(InteractionSet::Resolve),
+                    entities_runtime::collect_keys.in_set(InteractionSet::Resolve),
+                    entities_runtime::collect_heal_orbs.in_set(InteractionSet::Resolve),
+                    interaction::resolve_damage
+                        .in_set(InteractionSet::Resolve)
+                        .after(interaction::play_hazard_goal),
+                )
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
+            )
+            .add_systems(
+                Update,
+                (
+                    entities_runtime::update_drops.in_set(InteractionSet::Resolve),
+                    entities_runtime::update_seals.in_set(InteractionSet::Resolve),
+                    interaction::resolve_forced_motion
+                        .in_set(InteractionSet::Resolve)
+                        .after(interaction::resolve_use)
+                        .after(interaction::resolve_launch_pads)
+                        .after(interaction::resolve_bumpers)
+                        .after(interaction::resolve_cannons)
+                        .after(interaction::resolve_teleporters)
+                        .after(interaction::resolve_damage),
                     entities_runtime::apply_fans
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::touch_bumpers
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::break_crates
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::collect_keys
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::update_lock_gates
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::collect_heal_orbs
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::touch_speed_rings
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::update_crumble_plates
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::launch_cannons
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::read_signs
-                        .run_if(in_play)
-                        .after(player::player_controller),
-                    entities_runtime::update_drops.run_if(in_play),
-                    entities_runtime::collect_dropped_glimmers.run_if(in_play),
-                    entities_runtime::despawn_drops_when_dirty
-                        .before(entities_runtime::reconcile_entities),
-                    entities_runtime::animate_kit
-                        .run_if(in_state(AppState::InGame))
-                        .run_if(not_paused)
-                        .run_if(not_blocked),
+                        .in_set(InteractionSet::Resolve)
+                        .after(interaction::resolve_forced_motion),
+                    // 5. SyncCollision: rebuild runtime solids from state.
+                    entities_runtime::rebuild_runtime_solids.in_set(InteractionSet::SyncCollision),
+                    // 6. Feedback: camera follows the (possibly teleported) player.
+                    camera::play_camera_follow.in_set(InteractionSet::Feedback),
                 )
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)
@@ -250,19 +288,8 @@ impl Plugin for MakerPlugin {
                     editor::draw_paste_preview_gizmos.run_if(in_edit),
                     editor::update_placement_preview.run_if(in_edit),
                     entities_runtime::draw_link_gizmos.run_if(in_edit),
-                    entities_runtime::move_prowlers.after(entities_runtime::tick_track_followers),
-                    entities_runtime::prowler_touch
-                        .after(player::player_controller)
-                        .after(entities_runtime::move_prowlers)
-                        .run_if(in_play),
-                    entities_runtime::touch_checkpoints.run_if(in_play),
-                    entities_runtime::trigger_orbs.run_if(in_play),
-                    entities_runtime::update_relay_gates
-                        .after(entities_runtime::trigger_orbs)
-                        .run_if(in_play),
                     camera::frame_selection_hotkey.run_if(in_edit),
                     camera::edit_camera_control.run_if(in_edit),
-                    camera::play_camera_follow.run_if(in_play),
                 )
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)

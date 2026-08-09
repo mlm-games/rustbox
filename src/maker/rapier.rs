@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-use super::entities_runtime::{DriftPlate, LaunchPad, Seal, TrackFollower};
+use super::entities_runtime::{DriftPlate, Seal, TrackFollower};
 use super::mode::MakerMode;
 use super::player::Player;
 
@@ -11,7 +11,6 @@ pub fn rapier_plugin(app: &mut App) {
             Update,
             (
                 sync_drift_plates,
-                apply_launch_impulses,
                 sync_seal_open,
                 move_held_objects,
                 pickup_throwables.after(move_held_objects),
@@ -34,30 +33,6 @@ fn sync_drift_plates(
         let delta = target - tf.translation;
         vel.linear = delta / 0.016;
         tf.translation = target;
-    }
-}
-
-/// LaunchPad applies an impulse to the player.
-fn apply_launch_impulses(
-    mut pads: Query<(&Transform, &mut LaunchPad)>,
-    mut player: Query<(&Transform, &mut ExternalImpulse), With<crate::maker::player::Player>>,
-) {
-    for (pad_tf, mut pad) in &mut pads {
-        if pad.cooldown > 0.0 {
-            continue;
-        }
-        for (ptf, mut impulse) in &mut player {
-            let flat = Vec3::new(ptf.translation.x, 0.0, ptf.translation.z);
-            let pad_flat = Vec3::new(pad_tf.translation.x, 0.0, pad_tf.translation.z);
-            if flat.distance(pad_flat) < 0.8
-                && (ptf.translation.y - pad_tf.translation.y).abs() < 1.3
-            {
-                let dir = Quat::from_rotation_y(pad.yaw_rad) * Vec3::NEG_Z;
-                impulse.impulse = dir * pad.impulse;
-                impulse.torque_impulse = Vec3::ZERO;
-                pad.cooldown = 0.45;
-            }
-        }
     }
 }
 

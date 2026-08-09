@@ -167,10 +167,10 @@ pub struct Player {
     pub keys: [u8; 10],
     /// Extra hits before death; HealOrb adds 1, max 3.
     pub armor: u8,
+    /// Brief post-hit invulnerability (seconds remaining).
+    pub invuln: f32,
     /// Speed boost timer (seconds remaining).
     pub speed_boost: f32,
-    /// Brief bumper/teleport input lock so you don't re-trigger instantly.
-    pub pad_cooldown: f32,
     /// Hanging from a hangable underside (thin conveyor / hang rail).
     pub move_mode: PlayerMoveMode,
     /// Seconds until a new hang grab is allowed after releasing.
@@ -201,8 +201,8 @@ impl Default for Player {
             checkpoint_id: None,
             keys: [0; 10],
             armor: 0,
+            invuln: 0.0,
             speed_boost: 0.0,
-            pad_cooldown: 0.0,
             move_mode: PlayerMoveMode::Normal,
             hang_cooldown: 0.0,
         }
@@ -302,7 +302,6 @@ pub fn respawn_player(
     player.grip_cooldown = 0.0;
     player.grip_time = 0.0;
     player.crouched = false;
-    player.pad_cooldown = 0.0;
     *move_state = MoveState::default();
 }
 
@@ -315,8 +314,8 @@ pub fn reset_player_run(
 ) {
     player.keys = [0; 10];
     player.armor = 0;
+    player.invuln = 0.0;
     player.speed_boost = 0.0;
-    player.pad_cooldown = 0.0;
     player.respawn_point = spawn_center(level);
     player.checkpoint_id = None;
     respawn_player(transform, player, move_state, vis, level);
@@ -471,7 +470,7 @@ pub fn player_controller(
             transform.translation.x,
             transform.translation.z,
             he,
-            &solids.boxes,
+            &solids.aabbs(),
         );
         let effectively_crouching = want_crouch || !can_stand;
         player.crouched = effectively_crouching;
@@ -644,7 +643,7 @@ pub fn player_controller(
         player.jump_buffer = (player.jump_buffer - dt).max(0.0);
         player.launch = (player.launch - dt).max(0.0);
         player.speed_boost = (player.speed_boost - dt).max(0.0);
-        player.pad_cooldown = (player.pad_cooldown - dt).max(0.0);
+        player.invuln = (player.invuln - dt).max(0.0);
 
         if keys.just_pressed(KeyCode::Space) {
             player.jump_buffer = tuning.jump_buffer;
@@ -745,7 +744,7 @@ pub fn player_controller(
             move_he,
             player.velocity * dt,
             &level,
-            &solids.boxes,
+            &solids.aabbs(),
         );
         if result.hit_x || result.hit_z {
             let n = result.wall_normal;
@@ -943,60 +942,6 @@ pub fn player_controller(
             player.on_ground = false;
             player.coyote = 0.0;
             player.was_on_ground = false;
-        }
-    }
-}
-
-pub fn play_hazard_goal(
-    keys: Res<ButtonInput<KeyCode>>,
-    level: Res<LevelDocument>,
-    mut ui: ResMut<super::ui_bridge::MakerUi>,
-    mut q: Query<(&mut Transform, &mut Player, &mut MoveState, &mut Visibility)>,
-) {
-    for (mut transform, mut player, mut move_state, mut vis) in &mut q {
-        let he = player.half_extents;
-        let hit_hazard = overlaps_kind(
-            transform.translation,
-            he,
-            &level,
-            super::block::BlockKind::Hazard,
-        ) || overlaps_kind(
-            transform.translation,
-            he,
-            &level,
-            super::block::BlockKind::Spikes,
-        );
-        let fell_off = transform.translation.y < -20.0;
-        let bounds = level.play_bounds();
-        let out_of_bounds = transform.translation.x < bounds.0.x as f32 - 0.5
-            || transform.translation.x > bounds.1.x as f32 + 0.5
-            || transform.translation.z < bounds.0.z as f32 - 0.5
-            || transform.translation.z > bounds.1.z as f32 + 0.5;
-        let manual_reset = keys.just_pressed(KeyCode::KeyR);
-
-        if hit_hazard || fell_off || out_of_bounds || manual_reset {
-            let vulnerable = player.pad_cooldown <= 0.0;
-            if hit_hazard && player.armor > 0 && vulnerable {
-                player.armor -= 1;
-                player.pad_cooldown = 0.6;
-
-                // Move away slightly so the player is not left inside the hazard.
-                player.velocity.y = JUMP_SPEED * 0.55;
-                player.on_ground = false;
-
-                ui.set_status(format!("Ouch! Armor left: {}", player.armor));
-            } else if !hit_hazard || vulnerable || player.armor == 0 {
-                if hit_hazard || fell_off || out_of_bounds {
-                    ui.deaths += 1;
-                }
-                respawn_player(
-                    &mut transform,
-                    &mut player,
-                    &mut move_state,
-                    &mut vis,
-                    &level,
-                );
-            }
         }
     }
 }
