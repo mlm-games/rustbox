@@ -99,7 +99,6 @@ game-utils = { git = "https://github.com/mlm-games/game-utils" }
 game-utils-bevy = { git = "https://github.com/mlm-games/game-utils" }
 bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", default-features = false, features = [
     "dim3",
-    "parallel",
 ] }
 rustbox-format = { path = "crates/rustbox-format" }
 ehttp = { version = "0.7", features = ["multipart", "json"] }
@@ -124,6 +123,12 @@ getrandom_03 = { version = "0.3", features = [
     "wasm_js",
 ], package = "getrandom" }
 getrandom_02 = { version = "0.2", features = ["js"], package = "getrandom" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", default-features = false, features = [
+    "dim3",
+    "parallel",
+] }
 
 [package.metadata.android]
 features = ["bevy/android-native-activity"]
