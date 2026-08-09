@@ -67,7 +67,6 @@ pub struct MakerPlugin;
 impl Plugin for MakerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(online::OnlinePlugin);
-        #[cfg(feature = "physics")]
         app.add_plugins(crate::maker::rapier::rapier_plugin);
         app.init_resource::<MakerMode>()
             .init_resource::<BlockBrush>()

@@ -19,15 +19,14 @@ use super::entity_data::{
     ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
 };
 use super::interaction::{
-    cap_fan_force, gateway_blocked, heal_allowed, player_overlaps_volume, InteractionKey,
-    InteractionMemory, MAX_FAN_FORCE,
+    InteractionKey, InteractionMemory, MAX_FAN_FORCE, cap_fan_force, gateway_blocked, heal_allowed,
+    player_overlaps_volume,
 };
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::{ActionState, MoveState, Player};
 use super::track::{TrackDataExt, TrackId};
 use super::ui_bridge::MakerUi;
-#[cfg(feature = "physics")]
 use bevy_rapier3d::prelude::{Collider, RigidBody, Sensor, Velocity};
 
 #[derive(Resource, Default)]
@@ -239,7 +238,6 @@ pub fn spawn_drops(
             _ => {}
         }
 
-        #[cfg(feature = "physics")]
         ecmds.insert(Sensor);
     }
 }
@@ -1055,7 +1053,6 @@ pub fn reconcile_entities(
         match data.kind {
             EntityKind::Glimmer => {
                 ecmds.insert(GlimmerTag);
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
             }
             EntityKind::LaunchPad => {
@@ -1063,7 +1060,6 @@ pub fn reconcile_entities(
                     impulse: data.param,
                     yaw_rad: yaw,
                 });
-                #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert((
                         RigidBody::KinematicPositionBased,
@@ -1077,7 +1073,6 @@ pub fn reconcile_entities(
                     open: false,
                 });
                 ecmds.insert(SealSolid);
-                #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert(Collider::cuboid(0.35, 0.35, 0.35));
                 }
@@ -1096,7 +1091,6 @@ pub fn reconcile_entities(
                     t: 0.0,
                     carry: Vec3::ZERO,
                 });
-                #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert((
                         RigidBody::KinematicPositionBased,
@@ -1131,7 +1125,6 @@ pub fn reconcile_entities(
                     cooldown: data.param.max(0.2),
                     timer: 0.0,
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
             }
             EntityKind::RelayGate => {
@@ -1142,7 +1135,6 @@ pub fn reconcile_entities(
                     want_close: false,
                 });
                 ecmds.insert(GateSolid);
-                #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert((RigidBody::Fixed, Collider::cuboid(0.5, 1.0, 0.2)));
                 }
@@ -1157,14 +1149,10 @@ pub fn reconcile_entities(
                         cell.z as f32 + 0.5,
                     ),
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
             }
             EntityKind::Teleporter => {
-                ecmds.insert(Teleporter {
-                    link: data.link,
-                });
-                #[cfg(feature = "physics")]
+                ecmds.insert(Teleporter { link: data.link });
                 ecmds.insert(Sensor);
             }
             EntityKind::Fan => {
@@ -1185,7 +1173,6 @@ pub fn reconcile_entities(
                 ecmds.insert(Bumper {
                     strength: data.param.max(1.0),
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
                 ecmds.insert(KitAnim {
                     base_y: tf.translation.y,
@@ -1207,7 +1194,6 @@ pub fn reconcile_entities(
                 ecmds.insert(KeyPickup {
                     link: data.link.max(1).min(9),
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
                 ecmds.insert(KitAnim {
                     base_y: tf.translation.y,
@@ -1226,7 +1212,6 @@ pub fn reconcile_entities(
             }
             EntityKind::HealOrb => {
                 ecmds.insert(HealOrb);
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
                 ecmds.insert(KitAnim {
                     base_y: tf.translation.y,
@@ -1239,7 +1224,6 @@ pub fn reconcile_entities(
                 ecmds.insert(SpeedRing {
                     duration: data.param.max(0.25),
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
                 ecmds.insert(KitAnim {
                     base_y: tf.translation.y,
@@ -1267,7 +1251,6 @@ pub fn reconcile_entities(
                     target: (target - from) * Vec3::new(1.0, 0.0, 1.0) + from,
                     arc: data.param.max(1.0),
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
                 ecmds.insert(KitAnim {
                     base_y: tf.translation.y,
@@ -1278,7 +1261,6 @@ pub fn reconcile_entities(
             }
             EntityKind::OnOffSwitch => {
                 ecmds.insert(OnOffSwitch);
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
             }
             EntityKind::Sign => {
@@ -1286,7 +1268,6 @@ pub fn reconcile_entities(
                     text: data.sign_text.clone(),
                     yaw_rad: data.yaw_deg.to_radians(),
                 });
-                #[cfg(feature = "physics")]
                 ecmds.insert(Sensor);
             }
             EntityKind::TossCrate => {
@@ -1297,7 +1278,6 @@ pub fn reconcile_entities(
                     item: data.contents,
                     link: data.link,
                 });
-                #[cfg(feature = "physics")]
                 if playing {
                     ecmds.insert((
                         RigidBody::Dynamic,
@@ -1509,7 +1489,6 @@ pub fn update_relay_gates(
             gate.want_close = false;
             *vis = Visibility::Hidden;
             commands.entity(e).remove::<GateSolid>();
-            #[cfg(feature = "physics")]
             commands.entity(e).remove::<Collider>();
         } else if !powered && gate.open {
             // Crush-safe close: wait until nothing is in the doorway.
@@ -1524,7 +1503,6 @@ pub fn update_relay_gates(
                 gate.want_close = false;
                 *vis = Visibility::Visible;
                 commands.entity(e).insert(GateSolid);
-                #[cfg(feature = "physics")]
                 commands.entity(e).insert(Collider::cuboid(0.5, 1.0, 0.2));
             }
         }
@@ -1653,13 +1631,22 @@ pub fn rebuild_runtime_solids(
     plates: Query<(Entity, &Transform, &CrumblePlate)>,
 ) {
     solids.solids = build_solids(
-        seals.iter().map(|(e, t, s)| (e, t.translation, t.rotation, s.open)).collect(),
-        gates.iter().map(|(e, t, g)| (e, t.translation, t.rotation, g.open)).collect(),
+        seals
+            .iter()
+            .map(|(e, t, s)| (e, t.translation, t.rotation, s.open))
+            .collect(),
+        gates
+            .iter()
+            .map(|(e, t, g)| (e, t.translation, t.rotation, g.open))
+            .collect(),
         lock_gates
             .iter()
             .map(|(e, t, l)| (e, t.translation, t.rotation, l.open))
             .collect(),
-        crates.iter().map(|(e, t, _)| (e, t.translation, t.rotation)).collect(),
+        crates
+            .iter()
+            .map(|(e, t, _)| (e, t.translation, t.rotation))
+            .collect(),
         plates
             .iter()
             .map(|(e, t, p)| (e, t.translation, t.rotation, p.gone))

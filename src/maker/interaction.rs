@@ -5,16 +5,14 @@ use bevy::prelude::*;
 use super::camera::CameraRig;
 use super::collision::{aabb_hits_solid, rotated_box_aabb};
 use super::entities_runtime::{
-    wrap_sign_text, Bumper, Cannon, CrateProp, CrumblePlate, EntityEntities, EntityAssets,
+    Bumper, Cannon, Contents, CrateProp, CrumblePlate, DropIdCounter, EntityAssets, EntityEntities,
     LaunchPad, LevelEnt, LinkState, LockGate, OnOffSwitch, Prowler, RuntimeSolids, Sign,
-    Teleporter, TriggerOrb, DropIdCounter, Contents, spawn_drops,
+    Teleporter, TriggerOrb, spawn_drops, wrap_sign_text,
 };
 use super::entity_data::LevelEntityId;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
-use super::player::{
-    ActionState, JUMP_SPEED, MoveState, Player, PlayerMoveMode, respawn_player,
-};
+use super::player::{ActionState, JUMP_SPEED, MoveState, Player, PlayerMoveMode, respawn_player};
 use super::ui_bridge::MakerUi;
 
 use game_utils_bevy::juice::Juice;
@@ -345,11 +343,7 @@ pub fn armor_hit(armor: u8) -> (u8, bool) {
 /// player.
 pub fn cap_fan_force(force: Vec3, cap: f32) -> Vec3 {
     let len = force.length();
-    if len > cap {
-        force / len * cap
-    } else {
-        force
-    }
+    if len > cap { force / len * cap } else { force }
 }
 
 pub const MAX_FAN_FORCE: f32 = 30.0;
@@ -366,7 +360,6 @@ const PLATE_TOP_OFFSET: f32 = 0.12;
 const PLATE_HE: Vec3 = Vec3::new(0.5, 0.12, 0.5);
 const TOP_TOLERANCE: f32 = 0.2;
 
-#[cfg(feature = "physics")]
 const THROWN_MIN_SPEED: f32 = 4.0;
 
 /// Advance the contact latch and clear the arbitrated use selection. Must be
@@ -485,8 +478,10 @@ pub fn detect_contacts(
     cannons: Query<(&LevelEnt, &Transform), With<Cannon>>,
     lock_gates: Query<(&LevelEnt, &Transform), With<LockGate>>,
     plates: Query<(&LevelEnt, &Transform), With<CrumblePlate>>,
-    #[cfg(feature = "physics")]
-    crates: Query<(Entity, &Transform, &Velocity), (With<super::rapier::Throwable>, Without<Player>)>,
+    crates: Query<
+        (Entity, &Transform, &Velocity),
+        (With<super::rapier::Throwable>, Without<Player>),
+    >,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -531,20 +526,35 @@ pub fn detect_contacts(
     }
     for (ent, tf) in &pads {
         let top = tf.translation.y + PAD_TOP_OFFSET;
-        if crossed_platform_top(pos, prev_pos, he, tf.translation, PAD_HE, top, TOP_TOLERANCE, player.velocity.y)
-        {
+        if crossed_platform_top(
+            pos,
+            prev_pos,
+            he,
+            tf.translation,
+            PAD_HE,
+            top,
+            TOP_TOLERANCE,
+            player.velocity.y,
+        ) {
             memory.touch(InteractionKey::player(ent.id));
         }
     }
     for (ent, tf) in &plates {
         let top = tf.translation.y + PLATE_TOP_OFFSET;
-        if crossed_platform_top(pos, prev_pos, he, tf.translation, PLATE_HE, top, TOP_TOLERANCE, player.velocity.y)
-        {
+        if crossed_platform_top(
+            pos,
+            prev_pos,
+            he,
+            tf.translation,
+            PLATE_HE,
+            top,
+            TOP_TOLERANCE,
+            player.velocity.y,
+        ) {
             memory.touch(InteractionKey::player(ent.id));
         }
     }
 
-    #[cfg(feature = "physics")]
     {
         for (crate_e, ctf, vel) in &crates {
             if vel.linvel.length() < THROWN_MIN_SPEED {
@@ -601,8 +611,10 @@ pub fn detect_damage(
     player_q: Query<(Entity, &Transform, &Player)>,
     prowlers: Query<(Entity, &Transform), With<Prowler>>,
     crates: Query<(Entity, &Transform, &CrateProp)>,
-    #[cfg(feature = "physics")]
-    thrown: Query<(Entity, &Transform, &Velocity), (With<super::rapier::Throwable>, Without<Player>)>,
+    thrown: Query<
+        (Entity, &Transform, &Velocity),
+        (With<super::rapier::Throwable>, Without<Player>),
+    >,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -666,7 +678,6 @@ pub fn detect_damage(
         }
     }
 
-    #[cfg(feature = "physics")]
     {
         for (crate_e, ctf, vel) in &thrown {
             if vel.linvel.length() < THROWN_MIN_SPEED {
@@ -761,7 +772,6 @@ pub fn resolve_launch_pads(
     memory: Res<InteractionMemory>,
     mut requests: ResMut<ForcedMotionRequests>,
     pads: Query<(&LevelEnt, &LaunchPad), Without<Player>>,
-    #[cfg(feature = "physics")]
     mut crates: Query<(Entity, &mut Velocity), (With<super::rapier::Throwable>, Without<Player>)>,
 ) {
     if *mode != MakerMode::Play {
@@ -780,7 +790,6 @@ pub fn resolve_launch_pads(
             });
         }
     }
-    #[cfg(feature = "physics")]
     for (crate_e, mut vel) in &mut crates {
         for (ent, pad) in &pads {
             let key = InteractionKey {
@@ -803,7 +812,6 @@ pub fn resolve_bumpers(
     player_q: Query<&Transform, With<Player>>,
     mut requests: ResMut<ForcedMotionRequests>,
     bumpers: Query<(&LevelEnt, &Transform, &Bumper), Without<Player>>,
-    #[cfg(feature = "physics")]
     mut crates: Query<(Entity, &mut Velocity), (With<super::rapier::Throwable>, Without<Player>)>,
 ) {
     if *mode != MakerMode::Play {
@@ -834,7 +842,6 @@ pub fn resolve_bumpers(
         });
         ui.set_status("Boing!");
     }
-    #[cfg(feature = "physics")]
     for (crate_e, mut vel) in &mut crates {
         for (ent, tf, bumper) in &bumpers {
             let key = InteractionKey {
@@ -960,7 +967,8 @@ pub fn resolve_teleporters(
         return;
     }
 
-    let mut grouped: std::collections::HashMap<u32, Vec<(LevelEntityId, Vec3)>> = Default::default();
+    let mut grouped: std::collections::HashMap<u32, Vec<(LevelEntityId, Vec3)>> =
+        Default::default();
     for (ent, tf, tp) in &teleporters {
         if tp.link != 0 {
             grouped
@@ -1177,7 +1185,13 @@ pub fn resolve_damage(
     mut counter: ResMut<DropIdCounter>,
     mut requests: ResMut<DamageRequests>,
     mut player_q: Query<
-        (Entity, &mut Transform, &mut Player, &mut MoveState, &mut Visibility),
+        (
+            Entity,
+            &mut Transform,
+            &mut Player,
+            &mut MoveState,
+            &mut Visibility,
+        ),
         With<Player>,
     >,
     prowlers: Query<(Entity, &LevelEnt, &Transform, Option<&Contents>), With<Prowler>>,
@@ -1200,16 +1214,20 @@ pub fn resolve_damage(
         if req.target == player_e {
             if req.attack.is_none() {
                 damage_player(
-                    &mut ui, &mut trauma, &mut flash, &mut pt, &mut player, &mut move_state,
-                    &mut vis, &level,
+                    &mut ui,
+                    &mut trauma,
+                    &mut flash,
+                    &mut pt,
+                    &mut player,
+                    &mut move_state,
+                    &mut vis,
+                    &level,
                 );
             }
             continue;
         }
 
-        if let Some((e, ent, tf, contents)) = prowlers
-            .iter()
-            .find(|(e, _, _, _)| *e == req.target)
+        if let Some((e, ent, tf, contents)) = prowlers.iter().find(|(e, _, _, _)| *e == req.target)
             && req.attack.is_some()
         {
             defeat_prowler(
@@ -1229,9 +1247,8 @@ pub fn resolve_damage(
             continue;
         }
 
-        if let Some((e, ent, tf, _prop, contents)) = crates
-            .iter()
-            .find(|(e, _, _, _, _)| *e == req.target)
+        if let Some((e, ent, tf, _prop, contents)) =
+            crates.iter().find(|(e, _, _, _, _)| *e == req.target)
             && req.attack.is_some()
         {
             break_crate(
@@ -1498,14 +1515,28 @@ mod tests {
         // Landing frame: touching -> entered.
         mem.begin_frame();
         assert!(crossed_platform_top(
-            pos, prev, HE, Vec3::new(0.0, 0.825, 0.0), PAD_HE, 1.0, TOP_TOLERANCE, -2.0
+            pos,
+            prev,
+            HE,
+            Vec3::new(0.0, 0.825, 0.0),
+            PAD_HE,
+            1.0,
+            TOP_TOLERANCE,
+            -2.0
         ));
         mem.touch(key);
         assert!(mem.entered(key));
         // Standing frame: still touching, not entered.
         mem.begin_frame();
         assert!(crossed_platform_top(
-            pos, pos, HE, Vec3::new(0.0, 0.825, 0.0), PAD_HE, 1.0, TOP_TOLERANCE, 0.0
+            pos,
+            pos,
+            HE,
+            Vec3::new(0.0, 0.825, 0.0),
+            PAD_HE,
+            1.0,
+            TOP_TOLERANCE,
+            0.0
         ));
         mem.touch(key);
         assert!(!mem.entered(key));
@@ -1672,7 +1703,10 @@ mod tests {
             assert_eq!(da, db);
         }
         // From 30 the destination wraps to the lowest id (10).
-        assert_eq!(teleport_destination(&endpoints_a, 30).map(|e| e.0), Some(10));
+        assert_eq!(
+            teleport_destination(&endpoints_a, 30).map(|e| e.0),
+            Some(10)
+        );
         // Unpaired links have no destination.
         assert_eq!(teleport_destination(&[(1, Vec3::X)], 1), None);
     }
