@@ -1,9 +1,10 @@
 // Data-driven entity asset manifest (see `src/maker/asset_manifest.rs`).
 //
 // Swapping an asset pack = editing this file; the interaction kernel and
-// collision engine never change. Every kind keeps its built-in default unless
-// it has an entry here. A missing / malformed file silently falls back to the
-// defaults, so this file can be deleted and the game still runs.
+// collision engine never change. Every kind is listed below so the file acts
+// as the pack definition; kinds absent here keep their built-in default. A
+// missing / malformed file silently falls back to the defaults, so this file
+// can be deleted and the game still runs.
 //
 // Entry fields:
 //   model:    glTF scene path for `AssetServer` ("models/pack/Seal.gltf#Scene0")
@@ -15,11 +16,201 @@
 //             | Cylinder(r,h) | Wedge(hx,hy,hz). None = no collider.
 //   solid:    kinematic solid for the hand-rolled engine:
 //             Box(hx,hy,hz) | Wedge(hx,hy,hz). None = non-solid.
+//   preview:  palette preview PNG path under assets/; missing = kind default
+//             (images/entities/{kind}.png).
 //
 // Wedges rise toward local +X: low (hinge) edge at -hx, tall edge at +hx.
 EntityModelManifest(
     entities: {
-        // Example override (built-in defaults for the wedge).
+        "Glimmer": EntityAssetEntry(
+            model: Some("models/pack/Glimmer.gltf#Scene0"),
+            scale: 0.11,
+            y_offset: -0.20,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/glimmer.png"),
+        ),
+        "LaunchPad": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Cylinder(0.15, 0.45)),
+            solid: None,
+            preview: Some("images/entities/launch_pad.png"),
+        ),
+        "Seal": EntityAssetEntry(
+            model: Some("models/pack/Seal.gltf#Scene0"),
+            scale: 0.5,
+            y_offset: -1.0,
+            tint: Model,
+            collider: Some(Box(0.35, 0.35, 0.35)),
+            solid: Some(Box(0.5, 1.0, 0.15)),
+            preview: Some("images/entities/seal.png"),
+        ),
+        "DriftPlate": EntityAssetEntry(
+            model: Some("models/pack/DriftPlate.gltf#Scene0"),
+            scale: 0.8,
+            y_offset: -0.18,
+            tint: Model,
+            collider: Some(Box(0.7, 0.12, 0.7)),
+            solid: None,
+            preview: Some("images/entities/drift_plate.png"),
+        ),
+        "Prowler": EntityAssetEntry(
+            model: Some("models/pack/Prowler.gltf#Scene0"),
+            scale: 0.34,
+            y_offset: -0.4,
+            tint: Model,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/prowler.png"),
+        ),
+        "TriggerOrb": EntityAssetEntry(
+            model: Some("models/pack/TriggerOrb.gltf#Scene0"),
+            scale: 0.8,
+            y_offset: -1.0,
+            tint: Link,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/trigger_orb.png"),
+        ),
+        "RelayGate": EntityAssetEntry(
+            model: Some("models/pack/RelayGate.gltf#Scene0"),
+            scale: 0.5,
+            y_offset: -1.0,
+            tint: Link,
+            collider: Some(Box(0.5, 1.0, 0.2)),
+            solid: Some(Box(0.5, 1.0, 0.2)),
+            preview: Some("images/entities/relay_gate.png"),
+        ),
+        "Checkpoint": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/checkpoint.png"),
+        ),
+        "Teleporter": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/teleporter.png"),
+        ),
+        "Fan": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/fan.png"),
+        ),
+        "Bumper": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/bumper.png"),
+        ),
+        "Crate": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: None,
+            solid: Some(Box(0.5, 0.5, 0.5)),
+            preview: Some("images/entities/crate.png"),
+        ),
+        "Key": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/key.png"),
+        ),
+        "LockGate": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: None,
+            solid: Some(Box(0.55, 1.2, 0.3)),
+            preview: Some("images/entities/lock_gate.png"),
+        ),
+        "HealOrb": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/heal_orb.png"),
+        ),
+        "SpeedRing": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/speed_ring.png"),
+        ),
+        "CrumblePlate": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: None,
+            solid: Some(Box(0.5, 0.12, 0.5)),
+            preview: Some("images/entities/crumble_plate.png"),
+        ),
+        "Cannon": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/cannon.png"),
+        ),
+        "OnOffSwitch": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/on_off_switch.png"),
+        ),
+        "TossCrate": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Box(0.4, 0.4, 0.4)),
+            solid: Some(Box(0.5, 0.5, 0.5)),
+            preview: Some("images/entities/toss_crate.png"),
+        ),
+        "Sign": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Sensor),
+            solid: None,
+            preview: Some("images/entities/sign.png"),
+        ),
         "Wedge": EntityAssetEntry(
             model: None,
             scale: 1.0,
@@ -27,6 +218,7 @@ EntityModelManifest(
             tint: Kind,
             collider: Some(Wedge(0.5, 0.5, 0.5)),
             solid: Some(Wedge(0.5, 0.5, 0.5)),
+            preview: Some("images/entities/wedge.png"),
         ),
     },
 )

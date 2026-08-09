@@ -9,6 +9,7 @@ use rustbox_format::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockShape};
 
 use super::MakerCleanup;
 use super::block::{BlockKind, BlockKindColor};
+use super::block_asset_manifest::BlockAssetManifest;
 use super::chunk::CHUNK_SIZE;
 use super::level::{BlockData, LevelDocument, Theme};
 use super::player;
@@ -24,35 +25,28 @@ pub struct MakerAssets {
     pub ghost_mats: HashMap<BlockKind, Handle<StandardMaterial>>,
     /// Rot-0 mesh for each block shape (previews/ghosts rotate their Transform).
     pub shape_meshes: HashMap<BlockShape, Handle<Mesh>>,
-    /// Real pack models that replace the procedural cube for a few landmark
-    /// block kinds (Goal, Bounce, Hazard, Spikes). Sparse by design.
+    /// Real pack models that replace the procedural cube for block kinds with
+    /// a `BlockAssetManifest` model (Goal, Bounce, Hazard, Spikes by default).
     pub block_overlays: HashMap<BlockKind, Handle<WorldAsset>>,
+    /// Block kind×shape visual manifest (model/preview/placement) loaded from
+    /// `assets/models/blocks.ron`. Overlay decisions read from here so a pack
+    /// swap is data-only.
+    pub block_manifest: BlockAssetManifest,
 }
 
-/// Block kinds rendered with a real pack model instead of the procedural cube.
-/// Leaves the colored chunk mesh mostly intact ("old models") and overlays a
-/// glTF scene only for the sparse landmark kinds whose names match a pack model.
-fn overlay_gltf(kind: BlockKind) -> Option<&'static str> {
-    match kind {
-        BlockKind::Goal => Some("models/pack/Goal_Flag.gltf#Scene0"),
-        BlockKind::Bounce => Some("models/pack/Bouncer.gltf#Scene0"),
-        BlockKind::Hazard => Some("models/pack/Hazard_SpikeTrap.gltf#Scene0"),
-        BlockKind::Spikes => Some("models/pack/Spikes.gltf#Scene0"),
-        _ => None,
-    }
+/// glTF model path for a block kind (any shape), via the block manifest.
+/// `None` = rendered by the procedural chunk mesh.
+fn overlay_model<'a>(manifest: &'a BlockAssetManifest, kind: BlockKind) -> Option<&'a str> {
+    manifest.overlay(kind).and_then(|e| e.model.as_deref())
 }
 
 /// Per-kind overlay placement: (scale, y-offset from the cell floor). The
 /// overlay root sits at the cell center, so -0.5 seats the model base on the
 /// cell floor.
-fn overlay_placement(kind: BlockKind) -> Option<(f32, f32)> {
-    match kind {
-        BlockKind::Goal => Some((0.6, -0.5)),
-        BlockKind::Bounce => Some((0.55, -0.5)),
-        BlockKind::Hazard => Some((0.5, -0.5)),
-        BlockKind::Spikes => Some((0.5, -0.5)),
-        _ => None,
-    }
+fn overlay_placement(manifest: &BlockAssetManifest, kind: BlockKind) -> Option<(f32, f32)> {
+    manifest
+        .overlay(kind)
+        .map(|e| (e.scale, e.y_offset))
 }
 
 /// Spawned overlay scene entity per overlaid block cell. Keyed like chunks.
@@ -701,13 +695,19 @@ fn finish_mesh(out: MeshOut) -> Mesh {
 }
 
 /// Append the geometry for a single block at `cell` into `out`.
-fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &BlockData) {
+fn append_block(
+    out: &mut MeshOut,
+    level: &LevelDocument,
+    cell: IVec3,
+    block: &BlockData,
+    manifest: &BlockAssetManifest,
+) {
     if block.kind == BlockKind::Water {
         return;
     }
     // Landmark kinds with a real pack model keep the cell empty in the chunk
     // mesh; the model scene (spawned by reconcile_block_overlays) replaces it.
-    if overlay_gltf(block.kind).is_some() {
+    if overlay_model(manifest, block.kind).is_some() {
         return;
     }
     // Timed Pulse blocks disappear while the pulse is off.
@@ -735,7 +735,11 @@ fn append_block(out: &mut MeshOut, level: &LevelDocument, cell: IVec3, block: &B
     }
 }
 
-fn build_chunk_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
+fn build_chunk_mesh(
+    level: &LevelDocument,
+    cpos: IVec3,
+    manifest: &BlockAssetManifest,
+) -> Option<Mesh> {
     let mut out = MeshOut {
         positions: Vec::new(),
         normals: Vec::new(),
@@ -752,7 +756,7 @@ fn build_chunk_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
                 let Some(block) = level.get_block(cell) else {
                     continue;
                 };
-                append_block(&mut out, level, cell, block);
+                append_block(&mut out, level, cell, block, manifest);
             }
         }
     }
@@ -828,7 +832,7 @@ pub fn rebuild_dirty_chunks(
     let dirty: Vec<IVec3> = level.dirty_chunks.drain().collect();
 
     for cpos in dirty {
-        match build_chunk_mesh(&level, cpos) {
+        match build_chunk_mesh(&level, cpos, &assets.block_manifest) {
             Some(mesh) => {
                 let handle = meshes.add(mesh);
                 match chunks.0.get(&cpos) {
@@ -939,7 +943,7 @@ pub fn reconcile_block_overlays(
         let keep = level
             .map
             .get(cell)
-            .is_some_and(|b| overlay_gltf(b.kind).is_some());
+            .is_some_and(|b| overlay_model(&assets.block_manifest, b.kind).is_some());
         if !keep {
             commands.entity(*e).despawn();
         }
@@ -949,7 +953,7 @@ pub fn reconcile_block_overlays(
     // Spawn overlays for cells missing one.
     for (cell, block) in &level.map {
         let kind = block.kind;
-        let Some((scale, y_off)) = overlay_placement(kind) else {
+        let Some((scale, y_off)) = overlay_placement(&assets.block_manifest, kind) else {
             continue;
         };
         if overlays.0.contains_key(cell) {
@@ -1179,6 +1183,7 @@ pub fn setup_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
     level: Res<LevelDocument>,
+    manifest: Res<BlockAssetManifest>,
 ) {
     let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
 
@@ -1218,8 +1223,8 @@ pub fn setup_world(
 
     let mut block_overlays = HashMap::new();
     for kind in ALL_BLOCK_KINDS {
-        if let Some(path) = overlay_gltf(*kind) {
-            block_overlays.insert(*kind, asset_server.load(path));
+        if let Some(path) = overlay_model(&manifest, *kind) {
+            block_overlays.insert(*kind, asset_server.load(path.to_owned()));
         }
     }
 
@@ -1232,6 +1237,7 @@ pub fn setup_world(
         ghost_mats,
         shape_meshes,
         block_overlays,
+        block_manifest: manifest.clone(),
     };
 
     commands.spawn((

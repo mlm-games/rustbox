@@ -1,0 +1,60 @@
+// Data-driven block asset manifest (see `src/maker/block_asset_manifest.rs`).
+//
+// Key format is "{kind:?}/{shape:?}", e.g. "Grass/Full" or "Ice/Slope". Every
+// kind × shape pair covered by the built-in defaults; entries here replace the
+// default for that pair. A missing / malformed file silently falls back to the
+// defaults.
+//
+// Entry fields:
+//   model:         glTF scene path for `AssetServer`
+//                  ("models/pack/Goal_Flag.gltf#Scene0") or None for the
+//                  procedural chunk mesh.
+//   preview:       palette preview PNG path under assets/.
+//   scale/y_offset: placement of a spawned model root.
+//   tint:          Model (keep albedo) | Kind (flat kind color) | Theme | Link.
+//   collider:      BuiltinShape (engine shape math) | Box(hx,hy,hz)
+//                  | Wedge(hx,hy,hz) | Mesh(path).
+//   visual_bounds: axis-aligned [x, y, z] footprint of the shape.
+//
+// Landmark kinds below point at pack models (same as the defaults). Re-skinning
+// a block palette = editing this file only.
+BlockAssetManifest(
+    blocks: {
+        "Goal/Full": (
+            model: Some("models/pack/Goal_Flag.gltf#Scene0"),
+            preview: "images/blocks/goal.png",
+            scale: 0.6,
+            y_offset: -0.5,
+            tint: Model,
+            collider: BuiltinShape,
+            visual_bounds: (1.0, 1.0, 1.0),
+        ),
+        "Bounce/Full": (
+            model: Some("models/pack/Bouncer.gltf#Scene0"),
+            preview: "images/blocks/bounce.png",
+            scale: 0.55,
+            y_offset: -0.5,
+            tint: Model,
+            collider: BuiltinShape,
+            visual_bounds: (1.0, 1.0, 1.0),
+        ),
+        "Hazard/Full": (
+            model: Some("models/pack/Hazard_SpikeTrap.gltf#Scene0"),
+            preview: "images/blocks/hazard.png",
+            scale: 0.5,
+            y_offset: -0.5,
+            tint: Model,
+            collider: BuiltinShape,
+            visual_bounds: (1.0, 1.0, 1.0),
+        ),
+        "Spikes/Full": (
+            model: Some("models/pack/Spikes.gltf#Scene0"),
+            preview: "images/blocks/spikes.png",
+            scale: 0.5,
+            y_offset: -0.5,
+            tint: Model,
+            collider: BuiltinShape,
+            visual_bounds: (1.0, 1.0, 1.0),
+        ),
+    },
+)

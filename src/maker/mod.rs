@@ -1,5 +1,6 @@
 pub mod asset_manifest;
 pub mod block;
+pub mod block_asset_manifest;
 pub mod camera;
 pub mod campaign;
 pub mod catalog;
@@ -70,6 +71,7 @@ impl Plugin for MakerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(online::OnlinePlugin);
         app.add_plugins(crate::maker::rapier::rapier_plugin);
+        app.insert_resource(block_asset_manifest::BlockAssetManifest::defaults());
         app.init_resource::<MakerMode>()
             .init_resource::<BlockBrush>()
             .init_resource::<SelectedEntityKind>()

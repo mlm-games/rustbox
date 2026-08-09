@@ -75,6 +75,11 @@ pub struct EntityAssetEntry {
     pub collider: Option<ColliderPrimitive>,
     /// Kinematic solid (or `None` for non-solid kinds like sensors/pickups).
     pub solid: Option<SolidShape>,
+    /// Palette preview PNG path under `assets/` (e.g.
+    /// `images/previews/entities/glimmer.png`). `None` = the per-kind default
+    /// PNG (`images/entities/{kind}.png`).
+    #[serde(default)]
+    pub preview: Option<String>,
 }
 
 /// Full per-kind manifest. Keyed by `EntityKind` name (`"Seal"`, `"Wedge"`).
@@ -100,6 +105,13 @@ impl EntityModelManifest {
 
     pub fn collider(&self, kind: EntityKind) -> Option<ColliderPrimitive> {
         self.entry(kind).and_then(|e| e.collider)
+    }
+
+    /// Palette preview path for a kind, falling back to `images/entities/*.png`.
+    pub fn preview(&self, kind: EntityKind) -> String {
+        self.entry(kind)
+            .and_then(|e| e.preview.clone())
+            .unwrap_or_else(|| format!("images/entities/{}.png", preview_base(kind)))
     }
 
     /// Load the manifest from disk, falling back to the built-in defaults when
@@ -129,6 +141,7 @@ impl EntityModelManifest {
                 tint,
                 collider,
                 solid,
+                preview: None,
             }
         };
         let mut m = HashMap::new();
@@ -333,6 +346,35 @@ pub fn kind_name(kind: EntityKind) -> &'static str {
     }
 }
 
+/// Palette preview file base name for an entity kind (`"glimmer"`, ...).
+/// Mirrors the names under `assets/images/entities/`.
+pub fn preview_base(kind: EntityKind) -> &'static str {
+    match kind {
+        EntityKind::Glimmer => "glimmer",
+        EntityKind::LaunchPad => "launch_pad",
+        EntityKind::Seal => "seal",
+        EntityKind::DriftPlate => "drift_plate",
+        EntityKind::Prowler => "prowler",
+        EntityKind::TriggerOrb => "trigger_orb",
+        EntityKind::RelayGate => "relay_gate",
+        EntityKind::Checkpoint => "checkpoint",
+        EntityKind::Teleporter => "teleporter",
+        EntityKind::Fan => "fan",
+        EntityKind::Bumper => "bumper",
+        EntityKind::Crate => "crate",
+        EntityKind::Key => "key",
+        EntityKind::LockGate => "lock_gate",
+        EntityKind::HealOrb => "heal_orb",
+        EntityKind::SpeedRing => "speed_ring",
+        EntityKind::CrumblePlate => "crumble_plate",
+        EntityKind::Cannon => "cannon",
+        EntityKind::OnOffSwitch => "on_off_switch",
+        EntityKind::TossCrate => "toss_crate",
+        EntityKind::Sign => "sign",
+        EntityKind::Wedge => "wedge",
+    }
+}
+
 /// Look up a kind from its manifest key, `None` for unknown names.
 pub fn kind_from_name(name: &str) -> Option<EntityKind> {
     match name {
@@ -476,5 +518,38 @@ mod tests {
             SolidShape::Wedge(0.5, 0.5, 0.5).half_extents(),
             Vec3::splat(0.5)
         );
+    }
+
+    #[test]
+    fn every_kind_has_a_preview_beneath_assets() {
+        let m = EntityModelManifest::defaults();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for kind in [
+            EntityKind::Glimmer,
+            EntityKind::LaunchPad,
+            EntityKind::Seal,
+            EntityKind::DriftPlate,
+            EntityKind::Prowler,
+            EntityKind::TriggerOrb,
+            EntityKind::RelayGate,
+            EntityKind::Checkpoint,
+            EntityKind::Teleporter,
+            EntityKind::Fan,
+            EntityKind::Bumper,
+            EntityKind::Crate,
+            EntityKind::Key,
+            EntityKind::LockGate,
+            EntityKind::HealOrb,
+            EntityKind::SpeedRing,
+            EntityKind::CrumblePlate,
+            EntityKind::Cannon,
+            EntityKind::OnOffSwitch,
+            EntityKind::TossCrate,
+            EntityKind::Sign,
+            EntityKind::Wedge,
+        ] {
+            let p = root.join(m.preview(kind));
+            assert!(p.exists(), "{}: preview missing at {}", kind.label(), p.display());
+        }
     }
 }
