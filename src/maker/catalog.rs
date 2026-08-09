@@ -60,6 +60,7 @@ pub const KIND_CANNON: u32 = 1 << 17;
 pub const KIND_ON_OFF_SWITCH: u32 = 1 << 18;
 pub const KIND_TOSS_CRATE: u32 = 1 << 19;
 pub const KIND_SIGN: u32 = 1 << 20;
+pub const KIND_WEDGE: u32 = 1 << 21;
 
 pub fn kind_flag(kind: EntityKind) -> u32 {
     match kind {
@@ -84,6 +85,7 @@ pub fn kind_flag(kind: EntityKind) -> u32 {
         EntityKind::OnOffSwitch => KIND_ON_OFF_SWITCH,
         EntityKind::TossCrate => KIND_TOSS_CRATE,
         EntityKind::Sign => KIND_SIGN,
+        EntityKind::Wedge => KIND_WEDGE,
     }
 }
 

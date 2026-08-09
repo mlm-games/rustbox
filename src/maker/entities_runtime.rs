@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use bevy::{
@@ -14,7 +16,8 @@ use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 use super::MakerCleanup;
-use super::collision::{is_solid, rotated_box_aabb};
+use super::asset_manifest::SolidShape;
+use super::collision::{is_solid, solid_floor_normal, solid_top_height};
 use super::entity_data::{
     ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
 };
@@ -126,6 +129,11 @@ pub struct Bumper {
 pub struct CrateProp {
     pub breakable: bool,
 }
+
+/// Non-Rapier solid marker for a spawned wedge ramp. Collision derives from
+/// `SolidShape::Wedge` (manifest), never from the visual mesh.
+#[derive(Component)]
+pub struct Wedge;
 
 /// Stand-alone on/off switch. Touching it flips the global on/off state
 /// (commit 18: toggles OnOffConveyorA/B).
@@ -296,13 +304,14 @@ pub struct LinkState {
     pub clock: f32,
 }
 
-/// A runtime dynamic solid (gate, seal, crate, crumble plate) used for
-/// collision. `rotation` keeps rotated visuals physically aligned.
+/// A runtime dynamic solid (gate, seal, crate, crumble plate, wedge) used for
+/// collision. `rotation` keeps rotated visuals physically aligned; the shape
+/// (box or wedge) comes from the asset manifest, never from a render mesh.
 #[derive(Clone, Copy, Debug)]
 pub struct RuntimeSolid {
     pub owner: Entity,
     pub center: Vec3,
-    pub half_extents: Vec3,
+    pub shape: SolidShape,
     pub rotation: Quat,
 }
 
@@ -312,12 +321,23 @@ pub struct RuntimeSolids {
 }
 
 impl RuntimeSolids {
-    /// World-space AABB covers for `move_and_collide` / `stand_headroom`.
-    pub fn aabbs(&self) -> Vec<(Vec3, Vec3)> {
+    /// Highest solid top surface under the horizontal point `(wx, wz)`
+    /// (wedge tops slope; boxes are flat). `f32::NEG_INFINITY` over open void.
+    pub fn top_height(&self, wx: f32, wz: f32) -> f32 {
         self.solids
             .iter()
-            .map(|s| rotated_box_aabb(s.center, s.half_extents, s.rotation))
-            .collect()
+            .filter_map(|s| solid_top_height(s, wx, wz))
+            .fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    /// Floor normal underfoot when standing on an entity wedge (flat solids
+    /// report `Vec3::Y`).
+    pub fn floor_normal(&self, wx: f32, wz: f32) -> Vec3 {
+        self.solids
+            .iter()
+            .filter_map(|s| solid_floor_normal(s, wx, wz))
+            .find(|n| n.y < 0.999)
+            .unwrap_or(Vec3::Y)
     }
 }
 
@@ -327,6 +347,7 @@ pub struct EntityAssets {
     pub pad_mesh: Handle<Mesh>,
     pub marker_mesh: Handle<Mesh>,
     pub sign_board_mesh: Handle<Mesh>,
+    pub wedge_mesh: Handle<Mesh>,
     pub mats: HashMap<EntityKind, Handle<StandardMaterial>>,
     pub link_mats: HashMap<u32, Handle<StandardMaterial>>,
 }
@@ -380,6 +401,7 @@ pub fn setup_entity_assets(
         EntityKind::Cannon,
         EntityKind::OnOffSwitch,
         EntityKind::TossCrate,
+        EntityKind::Wedge,
         EntityKind::Sign,
     ] {
         let mut m = StandardMaterial::from_color(kind.color());
@@ -429,15 +451,66 @@ pub fn setup_entity_assets(
     let pad_mesh = meshes.add(Cylinder::new(0.45, 0.15));
     let marker_mesh = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
     let sign_board_mesh = meshes.add(Cuboid::new(0.9, 0.45, 0.08));
+    let wedge_mesh = meshes.add(build_wedge_mesh());
 
     commands.insert_resource(EntityAssets {
         scenes,
         pad_mesh,
         marker_mesh,
         sign_board_mesh,
+        wedge_mesh,
         mats,
         link_mats,
     });
+}
+
+fn build_wedge_mesh() -> Mesh {
+    let mut flat: Vec<([f32; 3], [f32; 3])> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    fn quad(out: &mut Vec<([f32; 3], [f32; 3])>, idx: &mut Vec<u32>, v: [Vec3; 4]) {
+        let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
+        let base = out.len() as u32;
+        for p in v {
+            out.push((p.to_array(), n.to_array()));
+        }
+        idx.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
+    }
+    let a = Vec3::new(-0.5, -0.5, -0.5);
+    let b = Vec3::new(0.5, -0.5, -0.5);
+    let c = Vec3::new(0.5, 0.5, -0.5);
+    let d = Vec3::new(-0.5, -0.5, 0.5);
+    let e = Vec3::new(0.5, -0.5, 0.5);
+    let f = Vec3::new(0.5, 0.5, 0.5);
+    quad(&mut flat, &mut indices, [a, d, f, c]); // ramp
+    quad(&mut flat, &mut indices, [d, a, b, e]); // bottom
+    quad(&mut flat, &mut indices, [b, c, f, e]); // back (vertical wall)
+    quad(&mut flat, &mut indices, [a, c, b, b]); // front side (triangle)
+    quad(&mut flat, &mut indices, [e, f, d, d]); // back side (triangle)
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        flat.iter().map(|(_, n)| *n).collect::<Vec<_>>(),
+    );
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+fn wedge_prism_points() -> Vec<Vec3> {
+    vec![
+        Vec3::new(-0.5, -0.5, -0.5),
+        Vec3::new(0.5, -0.5, -0.5),
+        Vec3::new(0.5, 0.5, -0.5),
+        Vec3::new(-0.5, -0.5, 0.5),
+        Vec3::new(0.5, -0.5, 0.5),
+        Vec3::new(0.5, 0.5, 0.5),
+    ]
 }
 
 /// Gameplay position of an entity's root transform (kept identical to the
@@ -465,6 +538,7 @@ fn root_y_off(kind: EntityKind) -> f32 {
         EntityKind::OnOffSwitch => 0.15,
         EntityKind::TossCrate => 0.5,
         EntityKind::Sign => 0.1,
+        EntityKind::Wedge => 0.5,
     }
 }
 
@@ -513,6 +587,7 @@ fn visual_for(
         | EntityKind::Cannon
         | EntityKind::OnOffSwitch
         | EntityKind::TossCrate
+        | EntityKind::Wedge
         | EntityKind::Sign => return None,
     };
     let scene = assets.scenes[&kind].clone();
@@ -1014,6 +1089,19 @@ pub fn reconcile_entities(
                     ))
                     .id(),
 
+                EntityKind::Wedge => commands
+                    .spawn((
+                        tf,
+                        Mesh3d(assets.wedge_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Wedge].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
                 EntityKind::Sign => {
                     let root = commands
                         .spawn((
@@ -1268,6 +1356,15 @@ pub fn reconcile_entities(
                     yaw_rad: data.yaw_deg.to_radians(),
                 });
                 ecmds.insert(Sensor);
+            }
+            EntityKind::Wedge => {
+                ecmds.insert(Wedge);
+                if playing {
+                    ecmds.insert((
+                        RigidBody::Fixed,
+                        Collider::convex_hull(&wedge_prism_points()).unwrap(),
+                    ));
+                }
             }
             EntityKind::TossCrate => {
                 ecmds.insert(CrateProp {
@@ -1641,6 +1738,7 @@ pub fn rebuild_runtime_solids(
     lock_gates: Query<(Entity, &Transform, &LockGate)>,
     crates: Query<(Entity, &Transform, &CrateProp)>,
     plates: Query<(Entity, &Transform, &CrumblePlate)>,
+    wedges: Query<(Entity, &Transform), With<Wedge>>,
 ) {
     solids.solids = build_solids(
         seals
@@ -1663,6 +1761,10 @@ pub fn rebuild_runtime_solids(
             .iter()
             .map(|(e, t, p)| (e, t.translation, t.rotation, p.gone))
             .collect(),
+        wedges
+            .iter()
+            .map(|(e, t)| (e, t.translation, t.rotation))
+            .collect(),
     );
 }
 
@@ -1674,6 +1776,7 @@ pub fn build_solids(
     lock_gates: Vec<(Entity, Vec3, Quat, bool)>,
     crates: Vec<(Entity, Vec3, Quat)>,
     plates: Vec<(Entity, Vec3, Quat, bool)>,
+    wedges: Vec<(Entity, Vec3, Quat)>,
 ) -> Vec<RuntimeSolid> {
     let mut out = Vec::new();
     for (e, center, rotation, open) in seals {
@@ -1681,7 +1784,7 @@ pub fn build_solids(
             out.push(RuntimeSolid {
                 owner: e,
                 center,
-                half_extents: Vec3::new(0.5, 1.0, 0.15),
+                shape: SolidShape::Box(0.5, 1.0, 0.15),
                 rotation,
             });
         }
@@ -1691,7 +1794,7 @@ pub fn build_solids(
             out.push(RuntimeSolid {
                 owner: e,
                 center,
-                half_extents: Vec3::new(0.5, 1.0, 0.2),
+                shape: SolidShape::Box(0.5, 1.0, 0.2),
                 rotation,
             });
         }
@@ -1701,7 +1804,7 @@ pub fn build_solids(
             out.push(RuntimeSolid {
                 owner: e,
                 center,
-                half_extents: Vec3::new(0.55, 1.2, 0.3),
+                shape: SolidShape::Box(0.55, 1.2, 0.3),
                 rotation,
             });
         }
@@ -1710,7 +1813,7 @@ pub fn build_solids(
         out.push(RuntimeSolid {
             owner: e,
             center,
-            half_extents: Vec3::new(0.5, 0.5, 0.5),
+            shape: SolidShape::Box(0.5, 0.5, 0.5),
             rotation,
         });
     }
@@ -1719,10 +1822,18 @@ pub fn build_solids(
             out.push(RuntimeSolid {
                 owner: e,
                 center,
-                half_extents: Vec3::new(0.5, 0.12, 0.5),
+                shape: SolidShape::Box(0.5, 0.12, 0.5),
                 rotation,
             });
         }
+    }
+    for (e, center, rotation) in wedges {
+        out.push(RuntimeSolid {
+            owner: e,
+            center,
+            shape: SolidShape::Wedge(0.5, 0.5, 0.5),
+            rotation,
+        });
     }
     out
 }
@@ -2015,6 +2126,7 @@ pub fn update_crumble_plates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::maker::collision::rotated_box_aabb;
 
     fn e() -> Entity {
         Entity::from_raw_u32(1).unwrap()
@@ -2029,6 +2141,7 @@ mod tests {
             vec![],
             vec![],
             vec![(e(), Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, false)],
+            vec![],
         );
         assert_eq!(solids.len(), 1);
 
@@ -2038,6 +2151,7 @@ mod tests {
             vec![],
             vec![],
             vec![(e(), Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, true)],
+            vec![],
         );
         assert!(solids.is_empty());
     }
@@ -2050,8 +2164,9 @@ mod tests {
             vec![(e(), Vec3::ZERO, Quat::IDENTITY, false)],
             vec![],
             vec![],
+            vec![],
         );
-        assert_eq!(identity[0].half_extents, Vec3::new(0.55, 1.2, 0.3));
+        assert_eq!(identity[0].shape.half_extents(), Vec3::new(0.55, 1.2, 0.3));
 
         // A thin gate rotated 90° has its wide and thin axes swapped.
         let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -2064,5 +2179,20 @@ mod tests {
         // The rotated gate covers a different footprint than the unrotated one.
         let (_, he_flat) = rotated_box_aabb(Vec3::ZERO, Vec3::new(0.55, 1.2, 0.3), Quat::IDENTITY);
         assert!((he_flat.x - he.x).abs() > 0.1);
+    }
+
+    #[test]
+    fn wedges_enter_the_solid_table_as_wedge_shapes() {
+        let solids = build_solids(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![(e(), Vec3::new(4.0, 0.5, 2.0), Quat::IDENTITY)],
+        );
+        assert_eq!(solids.len(), 1);
+        assert_eq!(solids[0].shape, SolidShape::Wedge(0.5, 0.5, 0.5));
+        assert_eq!(solids[0].center, Vec3::new(4.0, 0.5, 2.0));
     }
 }

@@ -287,7 +287,7 @@ pub fn activation_fires(mode: ActivationMode, entered: bool, use_selected: bool)
 pub fn solid_blocks(solids: &RuntimeSolids, exclude: Entity, center: Vec3, he: Vec3) -> bool {
     solids.solids.iter().any(|s| {
         s.owner != exclude && {
-            let (c, sh) = rotated_box_aabb(s.center, s.half_extents, s.rotation);
+            let (c, sh) = rotated_box_aabb(s.center, s.shape.half_extents(), s.rotation);
             aabb_overlap(c, sh, center, he)
         }
     })
@@ -1062,7 +1062,8 @@ fn teleport_clear(pos: Vec3, he: Vec3, level: &LevelDocument, solids: &RuntimeSo
         return false;
     }
     for solid in &solids.solids {
-        let (center, s_he) = rotated_box_aabb(solid.center, solid.half_extents, solid.rotation);
+        let (center, s_he) =
+            rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
         if aabb_overlap(pos, he, center, s_he) {
             return false;
         }

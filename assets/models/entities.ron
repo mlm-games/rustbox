@@ -1,0 +1,32 @@
+// Data-driven entity asset manifest (see `src/maker/asset_manifest.rs`).
+//
+// Swapping an asset pack = editing this file; the interaction kernel and
+// collision engine never change. Every kind keeps its built-in default unless
+// it has an entry here. A missing / malformed file silently falls back to the
+// defaults, so this file can be deleted and the game still runs.
+//
+// Entry fields:
+//   model:    glTF scene path for `AssetServer` ("models/pack/Seal.gltf#Scene0")
+//             or None for a procedural mesh.
+//   scale:    visual scale applied to the spawned model root.
+//   y_offset: vertical offset applied to the spawned model root.
+//   tint:     Kind (flat kind color) | Link (channel color) | Model (keep albedo).
+//   collider: rapier collider for play mode: Sensor | Box(hx,hy,hz)
+//             | Cylinder(r,h) | Wedge(hx,hy,hz). None = no collider.
+//   solid:    kinematic solid for the hand-rolled engine:
+//             Box(hx,hy,hz) | Wedge(hx,hy,hz). None = non-solid.
+//
+// Wedges rise toward local +X: low (hinge) edge at -hx, tall edge at +hx.
+EntityModelManifest(
+    entities: {
+        // Example override (built-in defaults for the wedge).
+        "Wedge": EntityAssetEntry(
+            model: None,
+            scale: 1.0,
+            y_offset: 0.0,
+            tint: Kind,
+            collider: Some(Wedge(0.5, 0.5, 0.5)),
+            solid: Some(Wedge(0.5, 0.5, 0.5)),
+        ),
+    },
+)

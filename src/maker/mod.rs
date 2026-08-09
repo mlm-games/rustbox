@@ -1,3 +1,4 @@
+pub mod asset_manifest;
 pub mod block;
 pub mod camera;
 pub mod campaign;

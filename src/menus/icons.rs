@@ -20,7 +20,7 @@ const BLOCK_ICONS: [&[u8]; 17] = [
     include_bytes!("../../assets/images/blocks/timed_pulse.png"),
 ];
 
-const ENTITY_ICONS: [&[u8]; 21] = [
+const ENTITY_ICONS: [&[u8]; 22] = [
     include_bytes!("../../assets/images/entities/glimmer.png"),
     include_bytes!("../../assets/images/entities/launch_pad.png"),
     include_bytes!("../../assets/images/entities/seal.png"),
@@ -42,6 +42,7 @@ const ENTITY_ICONS: [&[u8]; 21] = [
     include_bytes!("../../assets/images/entities/on_off_switch.png"),
     include_bytes!("../../assets/images/entities/toss_crate.png"),
     include_bytes!("../../assets/images/entities/sign.png"),
+    include_bytes!("../../assets/images/entities/wedge.png"),
 ];
 
 fn register(rc: &RenderContext, list: &[&[u8]]) -> Vec<ImageHandle> {

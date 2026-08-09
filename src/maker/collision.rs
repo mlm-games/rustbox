@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
+use super::asset_manifest::SolidShape;
 use super::block::BlockKind;
+use super::entities_runtime::RuntimeSolid;
 use super::level::{BlockData, LevelDocument};
 use rustbox_format::BlockShape;
 
@@ -199,7 +201,7 @@ fn resolve_axis(
     delta: f32,
     axis: usize,
     level: &LevelDocument,
-    extras: &[(Vec3, Vec3)],
+    extras: &[RuntimeSolid],
     probe: Option<[f32; 2]>,
 ) -> bool {
     if delta == 0.0 {
@@ -398,11 +400,8 @@ fn resolve_axis(
         }
     }
 
-    // Extras (gates, seals, crates, plates) are axis-aligned boxes at
-    // (`ec`, half-extent `ehe`). Resolve them as full AABBs so the player
-    // stops flush against the face it moves into instead of sinking into the
-    // box's center and getting slammed back out.
-    for (ec, ehe) in extras {
+    for solid in extras {
+        let (ec, ehe) = rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
         let ec = ec.to_array();
         let ehe = ehe.to_array();
         let bmin = [ec[0] - ehe[0], ec[1] - ehe[1], ec[2] - ehe[2]];
@@ -426,14 +425,19 @@ fn resolve_axis(
 
         if axis == 1 {
             // Vertical: shape like the block solver - snap to the top surface
-            // when feet cross it while landing, or the underside when the head
-            // crosses it while jumping. This makes extras standable without
-            // the point-overlap bounce.
             if delta < 0.0 {
                 let feet = p[1] - he[1];
                 let prev_feet = feet - delta;
-                let top = bmax[1];
-                if feet <= top + 0.001 && prev_feet >= top - 0.001 {
+                let (sx, sz) = if let Some([px, pz]) = probe {
+                    (px, pz)
+                } else {
+                    (p[0], p[2])
+                };
+                let top = wedge_top_height(solid, sx, sz).unwrap_or(bmax[1]);
+                let ride = solid.shape.is_wedge();
+                if feet <= top + 0.001
+                    && (prev_feet >= top - 0.001 || (ride && prev_feet >= top - LANDING_RIDE))
+                {
                     p[1] = top + he[1];
                     collided = true;
                 }
@@ -447,7 +451,17 @@ fn resolve_axis(
                 }
             }
         } else {
-            if p[1] - he[1] >= bmax[1] - LANDING_RIDE {
+            let ride_top = if solid.shape.is_wedge() {
+                wedge_top_height(
+                    solid,
+                    p[0].clamp(bmin[0], bmax[0]),
+                    p[2].clamp(bmin[2], bmax[2]),
+                )
+                .unwrap_or(bmax[1])
+            } else {
+                bmax[1]
+            };
+            if p[1] - he[1] >= ride_top - LANDING_RIDE {
                 continue;
             }
             // Horizontal: only push out along this axis when the leading edge
@@ -545,7 +559,7 @@ fn try_step_axis(
     delta: f32,
     axis: usize,
     level: &LevelDocument,
-    extras: &[(Vec3, Vec3)],
+    extras: &[RuntimeSolid],
 ) -> Option<Vec3> {
     if delta == 0.0 {
         return None;
@@ -609,7 +623,7 @@ pub fn move_and_collide(
     he: Vec3,
     delta: Vec3,
     level: &LevelDocument,
-    extras: &[(Vec3, Vec3)],
+    extras: &[RuntimeSolid],
 ) -> MoveResult {
     let mut wall_normal = Vec3::ZERO;
     let mut stepped_up = false;
@@ -685,7 +699,15 @@ pub fn move_and_collide(
 
     let on_ground = (hit_y && delta.y <= 0.0) || stepped_up;
     let floor_normal = if on_ground {
-        floor_normal_at(level, pos.x, pos.z)
+        let mut n = floor_normal_at(level, pos.x, pos.z);
+        // A wedge underfoot wins: its ramp normal drives slope slide.
+        for solid in extras {
+            if let Some(sn) = solid_floor_normal(solid, pos.x, pos.z) {
+                n = sn;
+                break;
+            }
+        }
+        n
     } else {
         Vec3::Y
     };
@@ -776,7 +798,7 @@ pub fn stand_headroom(
     x: f32,
     z: f32,
     he: Vec3,
-    extras: &[(Vec3, Vec3)],
+    extras: &[RuntimeSolid],
 ) -> bool {
     let center = Vec3::new(x, feet_y + he.y, z);
     // Slight shrink so flush walls beside you don't false-block standing.
@@ -786,14 +808,20 @@ pub fn stand_headroom(
     }
     let min = center - probe;
     let max = center + probe;
-    for (ec, ehe) in extras {
-        if min.x < ec.x + ehe.x
+    for solid in extras {
+        let (ec, ehe) = rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
+        if !(min.x < ec.x + ehe.x
             && max.x > ec.x - ehe.x
-            && min.y < ec.y + ehe.y
-            && max.y > ec.y - ehe.y
             && min.z < ec.z + ehe.z
-            && max.z > ec.z - ehe.z
+            && max.z > ec.z - ehe.z)
         {
+            continue;
+        }
+        let sx = (min.x.max(ec.x - ehe.x) + max.x.min(ec.x + ehe.x)) * 0.5;
+        let sz = (min.z.max(ec.z - ehe.z) + max.z.min(ec.z + ehe.z)) * 0.5;
+        let top = wedge_top_height(solid, sx, sz).unwrap_or(ec.y + ehe.y);
+        let lo = ec.y - ehe.y;
+        if min.y < top - 0.001 && max.y > lo + 0.001 {
             return false;
         }
     }
@@ -920,6 +948,58 @@ pub fn rotated_box_aabb(center: Vec3, half_extents: Vec3, rotation: Quat) -> (Ve
         x.z.abs() * half_extents.x + y.z.abs() * half_extents.y + z.z.abs() * half_extents.z,
     );
     (center, he)
+}
+
+/// World-space height of a wedge's ramp surface directly below `(wx, wz)`, if
+/// that horizontal point is over the wedge footprint. `None` outside it (or
+/// for non-wedge shapes).
+///
+/// The ramp rises along local +X from `-hy` (at `lx = -hx`) to `+hy` (at
+/// `lx = +hx`), constant across the ±hz span - matching block `Slope`s.
+pub fn wedge_top_height(solid: &RuntimeSolid, wx: f32, wz: f32) -> Option<f32> {
+    let SolidShape::Wedge(hx, hy, hz) = solid.shape else {
+        return None;
+    };
+    let inv = solid.rotation.inverse();
+    let local = inv * (Vec3::new(wx, solid.center.y, wz) - solid.center);
+    if local.x < -hx || local.x > hx || local.z < -hz || local.z > hz {
+        return None;
+    }
+    let ramp = solid.center + solid.rotation * Vec3::new(local.x, (hy / hx) * local.x, local.z);
+    Some(ramp.y)
+}
+
+/// Top-surface height of any runtime solid under `(wx, wz)`: a box's flat top
+/// or a wedge's ramp height. `None` when the point is outside the footprint.
+pub fn solid_top_height(solid: &RuntimeSolid, wx: f32, wz: f32) -> Option<f32> {
+    match solid.shape {
+        SolidShape::Box(..) => {
+            let (c, he) =
+                rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
+            if (wx - c.x).abs() <= he.x && (wz - c.z).abs() <= he.z {
+                Some(c.y + he.y)
+            } else {
+                None
+            }
+        }
+        SolidShape::Wedge(..) => wedge_top_height(solid, wx, wz),
+    }
+}
+
+/// Unit floor normal of a wedge's ramp when standing on it; `None` for flat
+/// shapes or outside the footprint.
+pub fn solid_floor_normal(solid: &RuntimeSolid, wx: f32, wz: f32) -> Option<Vec3> {
+    match solid.shape {
+        SolidShape::Box(..) => None,
+        SolidShape::Wedge(hx, hy, _) => {
+            if wedge_top_height(solid, wx, wz).is_some() {
+                let n = solid.rotation * Vec3::new(-hy / hx, 1.0, 0.0);
+                Some(n.normalize_or_zero())
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// Nudge `p` away from the wall along `face` until it no longer overlaps solid.
@@ -1401,8 +1481,13 @@ mod tests {
 
     /// A closed relay gate is a box centered at (4, 2.0, 0) with half-extents
     /// (0.5, 1.0, 0.2): x in [3.5, 4.5], y in [1.0, 3.0], z in [-0.2, 0.2].
-    fn gate_extra() -> (Vec3, Vec3) {
-        (Vec3::new(4.0, 2.0, 0.0), Vec3::new(0.5, 1.0, 0.2))
+    fn gate_extra() -> RuntimeSolid {
+        RuntimeSolid {
+            owner: Entity::from_raw_u32(99).unwrap(),
+            center: Vec3::new(4.0, 2.0, 0.0),
+            shape: SolidShape::Box(0.5, 1.0, 0.2),
+            rotation: Quat::IDENTITY,
+        }
     }
 
     #[test]
@@ -1561,6 +1646,95 @@ mod tests {
             pos.x,
             pos.z
         );
+    }
+
+    fn wedge_solid(center: Vec3) -> RuntimeSolid {
+        RuntimeSolid {
+            owner: Entity::from_raw_u32(99).unwrap(),
+            center,
+            shape: SolidShape::Wedge(0.5, 0.5, 0.5),
+            rotation: Quat::IDENTITY,
+        }
+    }
+
+    #[test]
+    fn wedge_top_height_slopes_along_x() {
+        let w = wedge_solid(Vec3::ZERO);
+        assert!((wedge_top_height(&w, -0.5, 0.0).unwrap() - (-0.5)).abs() < 1e-4);
+        assert!((wedge_top_height(&w, 0.0, 0.0).unwrap() - 0.0).abs() < 1e-4);
+        assert!((wedge_top_height(&w, 0.5, 0.0).unwrap() - 0.5).abs() < 1e-4);
+        assert!((wedge_top_height(&w, 0.0, 0.49).unwrap() - 0.0).abs() < 1e-4);
+        assert_eq!(wedge_top_height(&w, 0.6, 0.0), None);
+    }
+
+    #[test]
+    fn wedge_floor_normal_leans_into_rise() {
+        let w = wedge_solid(Vec3::ZERO);
+        let n = solid_floor_normal(&w, 0.0, 0.0).unwrap();
+        assert!((n.x - -0.707).abs() < 1e-3, "n={n}");
+        assert!((n.y - 0.707).abs() < 1e-3, "n={n}");
+        assert!(solid_floor_normal(&w, 1.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn player_walks_up_wedge_slope() {
+        let level = wall_level();
+        // Wedge floating in the clear zone at z=10 (no starter blocks there):
+        // ramp y = 0.5 + x.
+        let w = [wedge_solid(Vec3::new(0.0, 0.5, 10.0))];
+        let ramp = |x: f32| 0.5 + x;
+        // Start on the ramp near the low end.
+        let mut pos = Vec3::new(-0.3, ramp(-0.3) + HE.y, 10.0);
+        let mut vy = 0.0f32;
+        let dt = 1.0f32 / 60.0;
+        let mut tracked = true;
+        let mut steps = 0;
+        // Walk up while still over the ramp (tall edge at x = 0.5); once past
+        // it the player walks off the edge and falls, which is expected.
+        while pos.x < 0.45 && steps < 200 {
+            vy = (vy - 25.0 * dt).max(-40.0);
+            let r = move_and_collide(pos, HE, Vec3::new(0.08, vy * dt, 0.0), &level, &w);
+            if (r.pos.y - HE.y - ramp(r.pos.x)).abs() > 0.15 {
+                tracked = false;
+            }
+            pos = r.pos;
+            steps += 1;
+        }
+        // Must have climbed most of the ramp with feet tracking the slope.
+        assert!(steps < 200, "stuck before climbing: x={}", pos.x);
+        assert!(pos.x > 0.2, "did not advance up the wedge: x={}", pos.x);
+        assert!(tracked, "feet drifted off the ramp");
+    }
+
+    #[test]
+    fn wedge_tall_face_blocks_from_ground() {
+        let level = wall_level();
+        // Wedge at (0, 0.5, 10): tall face top at y=1.0, base at y=0.0.
+        let w = [wedge_solid(Vec3::new(0.0, 0.5, 10.0))];
+        // Approach the tall (+X) face at base level (feet at 0.0, well below
+        // the 1.0-high tall edge): the ramp must act as a wall.
+        let r = move_and_collide(
+            Vec3::new(1.2, 0.9, 10.0),
+            HE,
+            Vec3::new(-1.2, 0.0, 0.0),
+            &level,
+            &w,
+        );
+        assert!(
+            (r.pos.x - (0.5 + HE.x)).abs() < 0.02,
+            "did not stop at tall face: x={}",
+            r.pos.x
+        );
+        assert!(r.hit_x);
+    }
+
+    #[test]
+    fn floor_level_wedge_does_not_block_standing() {
+        let level = wall_level();
+        // Wedge in the clear zone at z=10; mid-ramp height 0.5.
+        let w = [wedge_solid(Vec3::new(0.0, 0.5, 10.0))];
+        let can_stand = stand_headroom(&level, 0.5, 0.0, 10.0, HE, &w);
+        assert!(can_stand, "standing on the ramp must stay allowed");
     }
 }
 

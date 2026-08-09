@@ -64,6 +64,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             EntityKind::OnOffSwitch => ("toolbar-onoff", "On/Off Switch"),
             EntityKind::TossCrate => ("toolbar-tosscrate", "Toss Crate"),
             EntityKind::Sign => ("toolbar-sign", "Sign"),
+            EntityKind::Wedge => ("toolbar-wedge", "Wedge"),
         };
 
         body.push(inspector_section(
@@ -86,7 +87,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
 
         if !matches!(
             e.kind,
-            EntityKind::Checkpoint | EntityKind::Key | EntityKind::Sign
+            EntityKind::Checkpoint | EntityKind::Key | EntityKind::Sign | EntityKind::Wedge
         ) {
             let (param_key, param_fb, step) = match e.kind {
                 EntityKind::Glimmer => ("inspector-value", "Value", 0.5),
@@ -107,7 +108,9 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                 EntityKind::Cannon => ("inspector-arc", "Arc", 1.0),
                 EntityKind::OnOffSwitch => ("inspector-starts-on", "Starts On", 1.0),
                 EntityKind::TossCrate => ("inspector-breakable", "Breakable", 1.0),
-                EntityKind::Checkpoint | EntityKind::Key | EntityKind::Sign => unreachable!(),
+                EntityKind::Checkpoint | EntityKind::Key | EntityKind::Sign | EntityKind::Wedge => {
+                    unreachable!()
+                }
             };
             let a_minus = actions.clone();
             let a_plus = actions.clone();

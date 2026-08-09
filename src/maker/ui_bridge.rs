@@ -347,6 +347,7 @@ pub fn push_ui_state(
         EntityKind::OnOffSwitch => 18,
         EntityKind::TossCrate => 19,
         EntityKind::Sign => 20,
+        EntityKind::Wedge => 21,
     };
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,

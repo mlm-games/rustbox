@@ -1372,6 +1372,7 @@ fn process_ui_actions(
                         18 => EntityKind::OnOffSwitch,
                         19 => EntityKind::TossCrate,
                         20 => EntityKind::Sign,
+                        21 => EntityKind::Wedge,
                         _ => EntityKind::Glimmer,
                     };
                     m.commands.push(UiCommand::SelectEntity(kind));

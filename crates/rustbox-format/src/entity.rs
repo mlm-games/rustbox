@@ -32,6 +32,9 @@ pub enum EntityKind {
     /// A readable wooden signpost that shows its `sign_text` in a dialog when
     /// the player interacts with it.
     Sign,
+    /// A 45° wedge/ramp solid. Passive: walk up the slope, slide down the
+    /// steep side.
+    Wedge,
 }
 
 impl EntityKind {
@@ -58,6 +61,7 @@ impl EntityKind {
             Self::OnOffSwitch => "On/Off Switch",
             Self::TossCrate => "Toss Crate",
             Self::Sign => "Sign",
+            Self::Wedge => "Wedge",
         }
     }
 

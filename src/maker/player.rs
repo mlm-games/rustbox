@@ -470,7 +470,7 @@ pub fn player_controller(
             transform.translation.x,
             transform.translation.z,
             he,
-            &solids.aabbs(),
+            &solids.solids,
         );
         let effectively_crouching = want_crouch || !can_stand;
         player.crouched = effectively_crouching;
@@ -535,10 +535,16 @@ pub fn player_controller(
         }
         let hanging = player.move_mode == PlayerMoveMode::Hanging;
 
-        // Formal floor normal (sampled surface gradient).
+        // Formal floor normal (sampled surface gradient). An entity wedge
+        // underfoot wins over the block sample so slope slide / steepness
+        // behaves identically for both.
         if player.on_ground {
-            let sampled_n =
+            let wedge_n = solids.floor_normal(transform.translation.x, transform.translation.z);
+            let mut sampled_n =
                 floor_normal_at(&level, transform.translation.x, transform.translation.z);
+            if wedge_n != Vec3::Y {
+                sampled_n = wedge_n;
+            }
             if sampled_n.length_squared() > 0.0 {
                 move_state.floor_normal = sampled_n;
             }
@@ -744,7 +750,7 @@ pub fn player_controller(
             move_he,
             player.velocity * dt,
             &level,
-            &solids.aabbs(),
+            &solids.solids,
         );
         if result.hit_x || result.hit_z {
             let n = result.wall_normal;
