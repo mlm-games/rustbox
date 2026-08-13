@@ -46,6 +46,12 @@ pub const BUNDLED_LEVELS: &[BundledLevel] = &[
         teaches: "Trigger Orbs pulse Relay Gates",
         source: include_str!("../../assets/levels/05_channel_surfing.ron"),
     },
+    BundledLevel {
+        id: "06_model_gallery",
+        name: "Model Gallery",
+        teaches: "Every block shape and entity, on display",
+        source: include_str!("../../assets/levels/06_model_gallery.ron"),
+    },
 ];
 
 pub fn load_bundled(index: usize) -> Option<LevelData> {

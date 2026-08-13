@@ -11,6 +11,7 @@ use super::MakerCleanup;
 use super::block::{BlockKind, BlockKindColor};
 use super::block_asset_manifest::BlockAssetManifest;
 use super::chunk::CHUNK_SIZE;
+use super::entities_runtime::ModelMaterial;
 use super::level::{BlockData, LevelDocument, Theme};
 use super::player;
 use super::theme;
@@ -27,25 +28,37 @@ pub struct MakerAssets {
     pub shape_meshes: HashMap<BlockShape, Handle<Mesh>>,
     /// Real pack models that replace the procedural cube for block kinds with
     /// a `BlockAssetManifest` model (Goal, Bounce, Hazard, Spikes by default).
-    pub block_overlays: HashMap<BlockKind, Handle<WorldAsset>>,
+    pub block_overlays: HashMap<(BlockKind, BlockShape), Handle<WorldAsset>>,
     /// Block kind×shape visual manifest (model/preview/placement) loaded from
     /// `assets/models/blocks.ron`. Overlay decisions read from here so a pack
     /// swap is data-only.
     pub block_manifest: BlockAssetManifest,
 }
 
-/// glTF model path for a block kind (any shape), via the block manifest.
-/// `None` = rendered by the procedural chunk mesh.
-fn overlay_model<'a>(manifest: &'a BlockAssetManifest, kind: BlockKind) -> Option<&'a str> {
-    manifest.overlay(kind).and_then(|e| e.model.as_deref())
+/// glTF model path for a block kind×shape pair, via the block manifest.
+/// `None` = rendered by the procedural chunk mesh. Water always stays
+/// procedural (translucent surface), regardless of the manifest.
+fn overlay_model<'a>(
+    manifest: &'a BlockAssetManifest,
+    kind: BlockKind,
+    shape: BlockShape,
+) -> Option<&'a str> {
+    if kind == BlockKind::Water {
+        return None;
+    }
+    manifest.entry(kind, shape).and_then(|e| e.model.as_deref())
 }
 
-/// Per-kind overlay placement: (scale, y-offset from the cell floor). The
+/// Per-pair overlay placement: (scale, y-offset from the cell floor). The
 /// overlay root sits at the cell center, so -0.5 seats the model base on the
 /// cell floor.
-fn overlay_placement(manifest: &BlockAssetManifest, kind: BlockKind) -> Option<(f32, f32)> {
+fn overlay_placement(
+    manifest: &BlockAssetManifest,
+    kind: BlockKind,
+    shape: BlockShape,
+) -> Option<(f32, f32)> {
     manifest
-        .overlay(kind)
+        .entry(kind, shape)
         .map(|e| (e.scale, e.y_offset))
 }
 
@@ -705,9 +718,9 @@ fn append_block(
     if block.kind == BlockKind::Water {
         return;
     }
-    // Landmark kinds with a real pack model keep the cell empty in the chunk
+    // Landmark kinds with a real glTF model keep the cell empty in the chunk
     // mesh; the model scene (spawned by reconcile_block_overlays) replaces it.
-    if overlay_model(manifest, block.kind).is_some() {
+    if overlay_model(manifest, block.kind, block.shape).is_some() {
         return;
     }
     // Timed Pulse blocks disappear while the pulse is off.
@@ -922,8 +935,8 @@ pub fn rebuild_dirty_chunks(
 }
 
 /// Spawns/despawns the real pack-model scenes that visually replace the
-/// procedural cube for the sparse landmark block kinds (Goal, Bounce, Hazard,
-/// Spikes). Runs on the same dirty trigger as the chunk meshes; the overlay
+/// procedural cube for block kind×shape pairs with a `BlockAssetManifest`
+/// model. Runs on the same dirty trigger as the chunk meshes; the overlay
 /// is a child of a per-cell root so the cell transform matches chunk rendering.
 pub fn reconcile_block_overlays(
     mut commands: Commands,
@@ -938,12 +951,13 @@ pub fn reconcile_block_overlays(
         return;
     }
 
-    // Despawn overlays whose cell no longer holds a matching kind.
+    // Despawn overlays whose cell no longer holds a matching kind×shape
+    // (including Timed Pulse blocks while the pulse is off).
     overlays.0.retain(|cell, e| {
-        let keep = level
-            .map
-            .get(cell)
-            .is_some_and(|b| overlay_model(&assets.block_manifest, b.kind).is_some());
+        let keep = level.map.get(cell).is_some_and(|b| {
+            !(b.kind.is_pulse() && !level.pulse_on)
+                && overlay_model(&assets.block_manifest, b.kind, b.shape).is_some()
+        });
         if !keep {
             commands.entity(*e).despawn();
         }
@@ -953,13 +967,20 @@ pub fn reconcile_block_overlays(
     // Spawn overlays for cells missing one.
     for (cell, block) in &level.map {
         let kind = block.kind;
-        let Some((scale, y_off)) = overlay_placement(&assets.block_manifest, kind) else {
+        let shape = block.shape;
+        if block.kind.is_pulse() && !level.pulse_on {
+            continue;
+        }
+        let Some((scale, y_off)) = overlay_placement(&assets.block_manifest, kind, shape) else {
             continue;
         };
         if overlays.0.contains_key(cell) {
             continue;
         }
-        let scene = assets.block_overlays[&kind].clone();
+        let Some(scene) = assets.block_overlays.get(&(kind, shape)) else {
+            continue;
+        };
+        let scene = scene.clone();
         let yaw = block.rot as f32 * std::f32::consts::FRAC_PI_2;
         let root = commands
             .spawn((
@@ -972,6 +993,7 @@ pub fn reconcile_block_overlays(
         commands.entity(root).with_children(|p| {
             p.spawn((
                 WorldAssetRoot(scene),
+                ModelMaterial(assets.ghost_mats[&kind].clone()),
                 MakerCleanup,
                 Visibility::default(),
                 Transform::from_translation(Vec3::new(0.0, y_off, 0.0))
@@ -1191,7 +1213,7 @@ pub fn setup_world(
     chunk_mat.perceptual_roughness = 0.9;
     let chunk_material = materials.add(chunk_mat);
 
-    let player_scene = asset_server.load("models/pack/Player.gltf#Scene0");
+    let player_scene = asset_server.load("models/cubeworld/Character_Male_2.gltf#Scene0");
 
     // Pack model ships its own materials; this is only an inert fallback.
     let player_material = materials.add(StandardMaterial {
@@ -1223,8 +1245,13 @@ pub fn setup_world(
 
     let mut block_overlays = HashMap::new();
     for kind in ALL_BLOCK_KINDS {
-        if let Some(path) = overlay_model(&manifest, *kind) {
-            block_overlays.insert(*kind, asset_server.load(path.to_owned()));
+        for shape in ALL_BLOCK_SHAPES {
+            if let Some(path) = overlay_model(&manifest, *kind, *shape) {
+                block_overlays.insert(
+                    (*kind, *shape),
+                    asset_server.load(path.to_owned()),
+                );
+            }
         }
     }
 

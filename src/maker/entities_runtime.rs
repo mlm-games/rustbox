@@ -16,12 +16,12 @@ use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 use super::MakerCleanup;
-use super::asset_manifest::SolidShape;
+use super::asset_manifest::{EntityModelManifest, SolidShape, TintMode};
 use super::collision::{is_solid, solid_floor_normal, solid_top_height};
 use super::entity_data::{
-    ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
-};
-use super::interaction::{
+    ALL_ENTITY_KINDS, ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId,
+    link_color,
+};use super::interaction::{
     InteractionKey, InteractionMemory, MAX_FAN_FORCE, cap_fan_force, gateway_blocked, heal_allowed,
     player_overlaps_volume, solid_blocks,
 };
@@ -380,6 +380,7 @@ pub fn setup_entity_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
+    manifest: Res<EntityModelManifest>,
 ) {
     let mut mats = HashMap::new();
     for kind in [
@@ -422,31 +423,14 @@ pub fn setup_entity_assets(
         link_mats.insert(ch, materials.add(m));
     }
 
+    // Model scenes come from the manifest: every kind with a glTF model gets a
+    // scene handle here; kinds with `model: None` keep their procedural mesh.
     let mut scenes = HashMap::new();
-    scenes.insert(
-        EntityKind::Glimmer,
-        asset_server.load("models/pack/Glimmer.gltf#Scene0"),
-    );
-    scenes.insert(
-        EntityKind::Seal,
-        asset_server.load("models/pack/Seal.gltf#Scene0"),
-    );
-    scenes.insert(
-        EntityKind::DriftPlate,
-        asset_server.load("models/pack/DriftPlate.gltf#Scene0"),
-    );
-    scenes.insert(
-        EntityKind::Prowler,
-        asset_server.load("models/pack/Prowler.gltf#Scene0"),
-    );
-    scenes.insert(
-        EntityKind::TriggerOrb,
-        asset_server.load("models/pack/TriggerOrb.gltf#Scene0"),
-    );
-    scenes.insert(
-        EntityKind::RelayGate,
-        asset_server.load("models/pack/RelayGate.gltf#Scene0"),
-    );
+    for kind in ALL_ENTITY_KINDS {
+        if let Some(path) = manifest.entry(*kind).and_then(|e| e.model.as_deref()) {
+            scenes.insert(*kind, asset_server.load(path.to_owned()));
+        }
+    }
 
     let pad_mesh = meshes.add(Cylinder::new(0.45, 0.15));
     let marker_mesh = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
@@ -560,45 +544,25 @@ fn stack_offset(index: usize) -> Vec3 {
 
 /// Per-kind visual config: (scene, material, scene scale, child y-offset).
 /// The root transform keeps its current gameplay position; the glTF model is a
-/// child so gameplay hitboxes and transforms stay untouched.
+/// child so gameplay hitboxes and transforms stay untouched. Reads the
+/// manifest, so a `model: None` kind falls back to its procedural mesh.
 fn visual_for(
     kind: EntityKind,
     link: u32,
     assets: &EntityAssets,
+    manifest: &EntityModelManifest,
 ) -> Option<(Handle<WorldAsset>, Handle<StandardMaterial>, f32, f32)> {
-    let (scale, y_off) = match kind {
-        EntityKind::Glimmer => (0.11, -0.20),
-        EntityKind::Seal => (0.5, -1.0),
-        EntityKind::DriftPlate => (0.8, -0.18),
-        EntityKind::Prowler => (0.34, -0.4),
-        EntityKind::TriggerOrb => (0.8, -1.0),
-        EntityKind::RelayGate => (0.5, -1.0),
-        EntityKind::LaunchPad
-        | EntityKind::Checkpoint
-        | EntityKind::Teleporter
-        | EntityKind::Fan
-        | EntityKind::Bumper
-        | EntityKind::Crate
-        | EntityKind::Key
-        | EntityKind::LockGate
-        | EntityKind::HealOrb
-        | EntityKind::SpeedRing
-        | EntityKind::CrumblePlate
-        | EntityKind::Cannon
-        | EntityKind::OnOffSwitch
-        | EntityKind::TossCrate
-        | EntityKind::Wedge
-        | EntityKind::Sign => return None,
-    };
-    let scene = assets.scenes[&kind].clone();
-    let material = match kind {
-        EntityKind::Glimmer => assets.mats[&kind].clone(),
-        EntityKind::TriggerOrb | EntityKind::RelayGate => assets.link_mats[&link.min(9)].clone(),
+    let entry = manifest.entry(kind)?;
+    entry.model.as_deref()?;
+    let scene = assets.scenes.get(&kind)?.clone();
+    let material = match entry.tint {
+        TintMode::Kind => assets.mats[&kind].clone(),
+        TintMode::Link => assets.link_mats[&link.min(9)].clone(),
         // Pack models ship their own multi-material colors (auto-attached by
         // the fork's glTF handler); this is only an inert fallback.
-        _ => assets.mats[&kind].clone(),
+        TintMode::Model => assets.mats[&kind].clone(),
     };
-    Some((scene, material, scale, y_off))
+    Some((scene, material, entry.scale, entry.y_offset))
 }
 
 /// glTF scenes instantiate asynchronously (a frame after the WorldAssetRoot is
@@ -662,11 +626,11 @@ pub fn init_clip_library(asset_server: Res<AssetServer>, mut lib: ResMut<ClipLib
     lib.pending = vec![
         (
             "player",
-            asset_server.load::<Gltf>("models/pack/Player.gltf"),
+            asset_server.load::<Gltf>("models/cubeworld/Character_Male_2.gltf"),
         ),
         (
             "prowler",
-            asset_server.load::<Gltf>("models/pack/Prowler.gltf"),
+            asset_server.load::<Gltf>("models/cubeworld/Goblin.gltf"),
         ),
     ];
 }
@@ -839,6 +803,7 @@ pub fn reconcile_entities(
     mut commands: Commands,
     mut level: ResMut<LevelDocument>,
     assets: Option<Res<EntityAssets>>,
+    manifest: Res<EntityModelManifest>,
     mut map: ResMut<EntityEntities>,
     mode: Res<MakerMode>,
 ) {
@@ -880,7 +845,7 @@ pub fn reconcile_entities(
         }
 
         let eid = if let Some((scene, material, scale, y_off)) =
-            visual_for(data.kind, data.link, &assets)
+            visual_for(data.kind, data.link, &assets, &manifest)
         {
             let root = commands
                 .spawn((
@@ -1130,6 +1095,32 @@ pub fn reconcile_entities(
                     });
                     root
                 }
+
+                EntityKind::Glimmer => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.5)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Glimmer].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
+
+                EntityKind::Prowler => commands
+                    .spawn((
+                        tf.with_scale(Vec3::splat(0.8)),
+                        Mesh3d(assets.marker_mesh.clone()),
+                        MeshMaterial3d(assets.mats[&EntityKind::Prowler].clone()),
+                        LevelEnt {
+                            id: data.id,
+                            kind: data.kind,
+                        },
+                        MakerCleanup,
+                    ))
+                    .id(),
 
                 _ => unreachable!("non-visual entity kind without primitive fallback"),
             }

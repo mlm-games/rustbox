@@ -64,7 +64,7 @@ pub enum TintMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EntityAssetEntry {
     /// glTF scene path loaded via the `AssetServer` (e.g.
-    /// `models/pack/Seal.gltf#Scene0`). `None` = procedural mesh.
+    /// `models/rustbox/entities/Seal.glb#Scene0`). `None` = procedural mesh.
     pub model: Option<String>,
     /// Visual scale applied to the spawned model root.
     pub scale: f32,
@@ -83,7 +83,7 @@ pub struct EntityAssetEntry {
 }
 
 /// Full per-kind manifest. Keyed by `EntityKind` name (`"Seal"`, `"Wedge"`).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Resource)]
 pub struct EntityModelManifest {
     pub entities: HashMap<String, EntityAssetEntry>,
 }
@@ -124,9 +124,12 @@ impl EntityModelManifest {
             .unwrap_or_else(Self::defaults)
     }
 
-    /// Built-in manifest (mirrors the historical hardcoded values). The RON
-    /// file on disk overrides these per kind; entries absent from the file
-    /// keep their defaults, so a partial pack swap stays safe.
+    /// Built-in manifest (mirrors `tools/asset_build/gen_manifests.py`). Every
+    /// kind maps to its `models/rustbox/entities/{Kind}.glb` kitbash at cell
+    /// scale (base-on-origin for ground entities, centered for collectibles),
+    /// with `y_offset` cancelling the gameplay root lift so bases sit on the
+    /// floor. The RON file on disk overrides these per kind; entries absent
+    /// from the file keep their defaults, so a partial pack swap stays safe.
     pub fn defaults() -> Self {
         let entry = |model: Option<&str>,
                      scale: f32,
@@ -144,168 +147,39 @@ impl EntityModelManifest {
                 preview: None,
             }
         };
+        // (kind, scale, y_offset, tint, collider, solid) — matches the RON.
+        let rows: [(&str, f32, f32, TintMode, Option<ColliderPrimitive>, Option<SolidShape>); 22] = [
+            ("Glimmer", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("LaunchPad", 1.0, -0.1, TintMode::Link, Some(ColliderPrimitive::Cylinder(0.15, 0.45)), None),
+            ("Seal", 1.0, -1.0, TintMode::Model, Some(ColliderPrimitive::Box(0.35, 0.35, 0.35)), Some(SolidShape::Box(0.5, 1.0, 0.15))),
+            ("DriftPlate", 1.0, -0.15, TintMode::Model, Some(ColliderPrimitive::Box(0.7, 0.12, 0.7)), None),
+            ("Prowler", 1.0, -0.4, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
+            ("TriggerOrb", 1.0, 0.0, TintMode::Link, Some(ColliderPrimitive::Sensor), None),
+            ("RelayGate", 1.0, -1.0, TintMode::Link, Some(ColliderPrimitive::Box(0.5, 1.0, 0.2)), Some(SolidShape::Box(0.5, 1.0, 0.2))),
+            ("Checkpoint", 1.0, -0.55, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("Teleporter", 1.0, -0.15, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("Fan", 1.0, -0.5, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("Bumper", 1.0, -0.35, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("Crate", 1.0, -0.5, TintMode::Kind, None, Some(SolidShape::Box(0.5, 0.5, 0.5))),
+            ("Key", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("LockGate", 1.0, -0.5, TintMode::Kind, None, Some(SolidShape::Box(0.55, 1.2, 0.3))),
+            ("HealOrb", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("SpeedRing", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("CrumblePlate", 1.0, -0.08, TintMode::Kind, None, Some(SolidShape::Box(0.5, 0.12, 0.5))),
+            ("Cannon", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("OnOffSwitch", 1.0, -0.15, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("TossCrate", 1.0, -0.5, TintMode::Kind, Some(ColliderPrimitive::Box(0.4, 0.4, 0.4)), Some(SolidShape::Box(0.5, 0.5, 0.5))),
+            ("Sign", 1.0, -0.1, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
+            ("Wedge", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Wedge(0.5, 0.5, 0.5)), Some(SolidShape::Wedge(0.5, 0.5, 0.5))),
+        ];
         let mut m = HashMap::new();
-        m.insert(
-            kind_name(EntityKind::Glimmer).to_string(),
-            entry(
-                Some("models/pack/Glimmer.gltf#Scene0"),
-                0.11,
-                -0.20,
-                TintMode::Kind,
-                Some(ColliderPrimitive::Sensor),
-                None,
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::LaunchPad).to_string(),
-            entry(
-                None,
-                1.0,
-                0.0,
-                TintMode::Kind,
-                Some(ColliderPrimitive::Cylinder(0.15, 0.45)),
-                None,
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::Seal).to_string(),
-            entry(
-                Some("models/pack/Seal.gltf#Scene0"),
-                0.5,
-                -1.0,
-                TintMode::Model,
-                Some(ColliderPrimitive::Box(0.35, 0.35, 0.35)),
-                Some(SolidShape::Box(0.5, 1.0, 0.15)),
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::DriftPlate).to_string(),
-            entry(
-                Some("models/pack/DriftPlate.gltf#Scene0"),
-                0.8,
-                -0.18,
-                TintMode::Model,
-                Some(ColliderPrimitive::Box(0.7, 0.12, 0.7)),
-                None,
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::Prowler).to_string(),
-            entry(
-                Some("models/pack/Prowler.gltf#Scene0"),
-                0.34,
-                -0.4,
-                TintMode::Model,
-                Some(ColliderPrimitive::Sensor),
-                None,
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::TriggerOrb).to_string(),
-            entry(
-                Some("models/pack/TriggerOrb.gltf#Scene0"),
-                0.8,
-                -1.0,
-                TintMode::Link,
-                Some(ColliderPrimitive::Sensor),
-                None,
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::RelayGate).to_string(),
-            entry(
-                Some("models/pack/RelayGate.gltf#Scene0"),
-                0.5,
-                -1.0,
-                TintMode::Link,
-                Some(ColliderPrimitive::Box(0.5, 1.0, 0.2)),
-                Some(SolidShape::Box(0.5, 1.0, 0.2)),
-            ),
-        );
-        // Non-model kinds: sensors interact via AABB/trigger logic only.
-        let sensor = |kind: EntityKind| {
-            (
-                kind_name(kind).to_string(),
-                entry(
-                    None,
-                    1.0,
-                    0.0,
-                    TintMode::Kind,
-                    Some(ColliderPrimitive::Sensor),
-                    None,
-                ),
-            )
-        };
-        for kind in [
-            EntityKind::Checkpoint,
-            EntityKind::Teleporter,
-            EntityKind::Fan,
-            EntityKind::Bumper,
-            EntityKind::Key,
-            EntityKind::HealOrb,
-            EntityKind::SpeedRing,
-            EntityKind::Cannon,
-            EntityKind::OnOffSwitch,
-            EntityKind::Sign,
-        ] {
-            m.insert(sensor(kind).0, sensor(kind).1);
+        for (name, scale, y_offset, tint, collider, solid) in rows {
+            let path = format!("models/rustbox/entities/{name}.glb#Scene0");
+            m.insert(
+                name.to_string(),
+                entry(Some(&path), scale, y_offset, tint, collider, solid),
+            );
         }
-        // Box-shaped solids with no physics collider.
-        m.insert(
-            kind_name(EntityKind::Crate).to_string(),
-            entry(
-                None,
-                1.0,
-                0.0,
-                TintMode::Kind,
-                None,
-                Some(SolidShape::Box(0.5, 0.5, 0.5)),
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::TossCrate).to_string(),
-            entry(
-                None,
-                1.0,
-                0.0,
-                TintMode::Kind,
-                Some(ColliderPrimitive::Box(0.4, 0.4, 0.4)),
-                Some(SolidShape::Box(0.5, 0.5, 0.5)),
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::LockGate).to_string(),
-            entry(
-                None,
-                1.0,
-                0.0,
-                TintMode::Kind,
-                None,
-                Some(SolidShape::Box(0.55, 1.2, 0.3)),
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::CrumblePlate).to_string(),
-            entry(
-                None,
-                1.0,
-                0.0,
-                TintMode::Kind,
-                None,
-                Some(SolidShape::Box(0.5, 0.12, 0.5)),
-            ),
-        );
-        m.insert(
-            kind_name(EntityKind::Wedge).to_string(),
-            entry(
-                None,
-                1.0,
-                0.0,
-                TintMode::Kind,
-                Some(ColliderPrimitive::Wedge(0.5, 0.5, 0.5)),
-                Some(SolidShape::Wedge(0.5, 0.5, 0.5)),
-            ),
-        );
         Self { entities: m }
     }
 

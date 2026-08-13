@@ -1,23 +1,29 @@
 # 3D Models
 
-All in-game models come from the **Ultimate Platformer Pack - Dec 2021**
-(<https://opengameart.org/content/16x16-platformer-pack>), governed by the
-**CC0 1.0 Universal** license (<https://creativecommons.org/publicdomain/zero/1.0/>).
+All in-game models come from **Quaternius' Cube World Kit** under the
+**CC0 1.0 Universal** license
+(<https://creativecommons.org/publicdomain/zero/1.0/>).
+
+sources:
+
+- Quaternius site: <https://quaternius.com/packs/cubeworldkit.html>
+- poly.pizza: <https://poly.pizza/bundle/Cube-World-Kit-DwDr8493Fw>
 
 ## Models used
 
-| File                        | Used for       |
-| --------------------------- | -------------- |
-| `pack/Player.gltf`          | Player         |
-| `pack/Prowler.gltf`         | Prowler        |
-| `pack/Glimmer.gltf`         | Glimmer        |
-| `pack/Seal.gltf`            | Seal           |
-| `pack/TriggerOrb.gltf`      | Trigger Orb    |
-| `pack/DriftPlate.gltf`      | Drift Plate    |
-| `pack/RelayGate.gltf`       | Relay Gate     |
-| `pack/Goal_Flag.gltf`       | Goal block     |
-| `pack/Bouncer.gltf`         | Bounce block   |
-| `pack/Hazard_SpikeTrap.gltf`| Hazard block   |
-| `pack/Spikes.gltf`          | Spikes block   |
+| File                          | Used for       |
+| ----------------------------- | -------------- |
+| `cubeworld/Character_Male_2.gltf` | Player (animated character) |
+| `cubeworld/Goblin.gltf`       | Prowler (animated enemy, clip source) |
+| `rustbox/blocks/*.glb`        | Block kinds × shapes (170 models) |
+| `rustbox/entities/*.glb`      | Entity kitbashes (22)   |
 
 Models are self-contained glTF 2.0 (embedded buffers).
+
+## Runtime wiring
+
+The active visuals come from `assets/models/rustbox/`, authored from the pack's
+CC0 primitives (via `tools/asset_build/`) so every block shape and entity
+shares the Cube World visual language. `assets/models/{blocks,entities}.ron`
+map each kind/shape to its glTF model; the `cubeworld/*.gltf` files remain as
+the built-in fallback and animation-clip source.

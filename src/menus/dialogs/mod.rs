@@ -412,7 +412,7 @@ pub(crate) fn credits_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> V
         RText("Engine: Bevy  UI: Repose")
             .size(16.0)
             .color(RColor::WHITE),
-        RText("3D models: Quaternius Cubeworld Kit (CC0)")
+        RText("3D models: Cube World by Quaternius (CC0)")
             .size(16.0)
             .color(RColor::WHITE),
         spacer(16.0),

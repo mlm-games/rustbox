@@ -30,9 +30,17 @@ pub mod win;
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::PhysicsSet;
+use std::path::PathBuf;
 
 use crate::app::{AppState, Paused};
 use game_utils_bevy::transitions::Transition;
+
+/// Bevy's asset root: `<cargo manifest dir>/assets`. The file reader defaults
+/// to this directory, so RON preview/model paths (relative to `assets/`) can
+/// be validated against the disk here.
+fn asset_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
+}
 
 pub use mode::MakerStats;
 
@@ -71,7 +79,8 @@ impl Plugin for MakerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(online::OnlinePlugin);
         app.add_plugins(crate::maker::rapier::rapier_plugin);
-        app.insert_resource(block_asset_manifest::BlockAssetManifest::defaults());
+        app.insert_resource(block_asset_manifest::BlockAssetManifest::load(&asset_root()));
+        app.insert_resource(asset_manifest::EntityModelManifest::load(&asset_root()));
         app.init_resource::<MakerMode>()
             .init_resource::<BlockBrush>()
             .init_resource::<SelectedEntityKind>()

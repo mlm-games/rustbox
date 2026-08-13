@@ -38,8 +38,8 @@ pub enum BlockColliderRef {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockAssetEntry {
     /// glTF scene path loaded via the `AssetServer` (e.g.
-    /// `models/pack/Goal_Flag.gltf#Scene0`) or `None` for the procedural chunk
-    /// mesh.
+    /// `models/cubeworld/Character_Male_2.gltf#Scene0`) or `None` for the
+    /// procedural chunk mesh.
     pub model: Option<String>,
     /// Palette preview PNG path under `assets/` (e.g.
     /// `images/previews/blocks/grass_full.png`).
@@ -95,17 +95,13 @@ pub fn block_preview_base(kind: BlockKind) -> &'static str {
     }
 }
 
-/// Pack glTF model path for a landmark block kind (mirrors the historical
+/// Cube World glTF model path for a landmark block kind (mirrors the historical
 /// sparse overlays). Returns `None` for kinds rendered by the procedural
-/// chunk mesh.
+/// chunk mesh. The Cube World pack has no goal-flag / bouncer / spike-trap
+/// models, so these stay procedural for now.
 pub fn block_overlay_model(kind: BlockKind) -> Option<&'static str> {
-    match kind {
-        BlockKind::Goal => Some("models/pack/Goal_Flag.gltf#Scene0"),
-        BlockKind::Bounce => Some("models/pack/Bouncer.gltf#Scene0"),
-        BlockKind::Hazard => Some("models/pack/Hazard_SpikeTrap.gltf#Scene0"),
-        BlockKind::Spikes => Some("models/pack/Spikes.gltf#Scene0"),
-        _ => None,
-    }
+    let _ = kind;
+    None
 }
 
 /// Default per-kind overlay placement: `(scale, y-offset from the cell floor)`.
@@ -321,3 +317,4 @@ mod tests {
         }
     }
 }
+

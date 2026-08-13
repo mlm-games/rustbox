@@ -104,6 +104,32 @@ impl EntityKind {
     }
 }
 
+/// Every entity kind, in insertion order.
+pub const ALL_ENTITY_KINDS: &[EntityKind] = &[
+    EntityKind::Glimmer,
+    EntityKind::LaunchPad,
+    EntityKind::Seal,
+    EntityKind::DriftPlate,
+    EntityKind::Prowler,
+    EntityKind::TriggerOrb,
+    EntityKind::RelayGate,
+    EntityKind::Checkpoint,
+    EntityKind::Teleporter,
+    EntityKind::Fan,
+    EntityKind::Bumper,
+    EntityKind::Crate,
+    EntityKind::Key,
+    EntityKind::LockGate,
+    EntityKind::HealOrb,
+    EntityKind::SpeedRing,
+    EntityKind::CrumblePlate,
+    EntityKind::Cannon,
+    EntityKind::OnOffSwitch,
+    EntityKind::TossCrate,
+    EntityKind::Sign,
+    EntityKind::Wedge,
+];
+
 /// What pops out of a container when it is broken (Crate) or defeated
 /// (Prowler). v6+. A contained Key uses the **container's** link channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
