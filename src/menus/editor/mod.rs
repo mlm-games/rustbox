@@ -193,17 +193,14 @@ fn part_tile(
 
     let mut inner_stack = ZStack(Modifier::new().fill_max_size());
     if let Some(handle) = icon {
-        inner_stack = inner_stack.child(
-            Image(Modifier::new().fill_max_size().padding(2.0), handle)
-                .image_fit(ImageFit::Contain),
-        );
+        inner_stack = inner_stack
+            .child(Image(Modifier::new().fill_max_size(), handle).image_fit(ImageFit::Cover));
     }
-    inner_stack = inner_stack.child(RText(hotkey.clone()).size(12.0).color(tok::text_dim()));
+    inner_stack = inner_stack.child(RText(hotkey.clone()).size(14.0).color(tok::text_dim()));
 
     let inner = FilledTonalButton(
         Modifier::new()
             .fill_max_size()
-            .padding(pad)
             .background(tok::bg_elevated())
             .clip_rounded(tok::R_MD),
         on_click,
@@ -212,8 +209,8 @@ fn part_tile(
     );
     ZStack(
         Modifier::new()
-            .width(52.0)
-            .height(52.0)
+            .width(60.0)
+            .height(60.0)
             .background(ring)
             .clip_rounded(tok::R_MD),
     )
