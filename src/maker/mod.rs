@@ -267,6 +267,7 @@ impl Plugin for MakerPlugin {
                         .after(interaction::resolve_bumpers)
                         .after(interaction::resolve_cannons)
                         .after(interaction::resolve_teleporters)
+                        .after(interaction::play_hazard_goal)
                         .after(interaction::resolve_damage),
                     entities_runtime::apply_fans
                         .in_set(InteractionSet::Resolve)

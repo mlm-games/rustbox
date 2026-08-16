@@ -1757,6 +1757,7 @@ pub fn rebuild_runtime_solids(
     crates: Query<(Entity, &Transform, &CrateProp)>,
     plates: Query<(Entity, &Transform, &CrumblePlate)>,
     wedges: Query<(Entity, &Transform), With<Wedge>>,
+    pads: Query<(Entity, &Transform), With<LaunchPad>>,
 ) {
     solids.solids = build_solids(
         seals
@@ -1783,6 +1784,9 @@ pub fn rebuild_runtime_solids(
             .iter()
             .map(|(e, t)| (e, t.translation, t.rotation))
             .collect(),
+        pads.iter()
+            .map(|(e, t)| (e, t.translation, t.rotation))
+            .collect(),
     );
 }
 
@@ -1795,6 +1799,7 @@ pub fn build_solids(
     crates: Vec<(Entity, Vec3, Quat)>,
     plates: Vec<(Entity, Vec3, Quat, bool)>,
     wedges: Vec<(Entity, Vec3, Quat)>,
+    pads: Vec<(Entity, Vec3, Quat)>,
 ) -> Vec<RuntimeSolid> {
     let mut out = Vec::new();
     for (e, center, rotation, open) in seals {
@@ -1850,6 +1855,18 @@ pub fn build_solids(
             owner: e,
             center,
             shape: SolidShape::Wedge(0.5, 0.5, 0.5),
+            rotation,
+        });
+    }
+    // Launch pads: thin standable top so TopContact footing and the custom
+    // mover agree (the Rapier collider on pads is never used by the player).
+    // Box top lands at center.y + 0.05 + 0.1 = root.y + 0.15, matching
+    // `PAD_TOP_OFFSET` in interaction.rs.
+    for (e, center, rotation) in pads {
+        out.push(RuntimeSolid {
+            owner: e,
+            center: center + Vec3::Y * 0.05,
+            shape: SolidShape::Box(0.45, 0.1, 0.45),
             rotation,
         });
     }
@@ -2160,6 +2177,7 @@ mod tests {
             vec![],
             vec![(e(), Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, false)],
             vec![],
+            vec![],
         );
         assert_eq!(solids.len(), 1);
 
@@ -2169,6 +2187,7 @@ mod tests {
             vec![],
             vec![],
             vec![(e(), Vec3::new(2.0, 0.0, 0.0), Quat::IDENTITY, true)],
+            vec![],
             vec![],
         );
         assert!(solids.is_empty());
@@ -2180,6 +2199,7 @@ mod tests {
             vec![],
             vec![],
             vec![(e(), Vec3::ZERO, Quat::IDENTITY, false)],
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -2208,9 +2228,34 @@ mod tests {
             vec![],
             vec![],
             vec![(e(), Vec3::new(4.0, 0.5, 2.0), Quat::IDENTITY)],
+            vec![],
         );
         assert_eq!(solids.len(), 1);
         assert_eq!(solids[0].shape, SolidShape::Wedge(0.5, 0.5, 0.5));
         assert_eq!(solids[0].center, Vec3::new(4.0, 0.5, 2.0));
+    }
+
+    #[test]
+    fn launch_pads_enter_the_solid_table_as_thin_boxes() {
+        // A pad root at y=0.1 becomes a thin standable box whose top sits at
+        // root.y + 0.05 + 0.1 = 0.25, matching PAD_TOP_OFFSET.
+        let solids = build_solids(
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![(e(), Vec3::new(3.0, 0.1, 5.0), Quat::IDENTITY)],
+        );
+        assert_eq!(solids.len(), 1);
+        assert_eq!(
+            solids[0].shape,
+            SolidShape::Box(0.45, 0.1, 0.45),
+            "pads must be thin solid boxes so the player can stand on them"
+        );
+        assert_eq!(solids[0].center, Vec3::new(3.0, 0.15, 5.0));
+        let top = solids[0].center.y + 0.1;
+        assert!((top - 0.25).abs() < 1e-5, "pad top at {top}");
     }
 }

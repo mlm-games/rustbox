@@ -382,7 +382,7 @@ const TELEPORT_VOLUME_HE: Vec3 = Vec3::new(1.1, 1.1, 1.1);
 const ORB_VOLUME_HE: Vec3 = Vec3::new(1.0, 1.0, 1.0);
 const CANNON_VOLUME_HE: Vec3 = Vec3::new(0.8, 1.2, 0.8);
 const LOCK_GATE_VOLUME_HE: Vec3 = Vec3::new(1.3, 1.3, 1.3);
-const PAD_TOP_OFFSET: f32 = 0.175;
+const PAD_TOP_OFFSET: f32 = 0.15;
 const PAD_HE: Vec3 = Vec3::new(0.45, 0.1, 0.45);
 const PLATE_TOP_OFFSET: f32 = 0.12;
 const PLATE_HE: Vec3 = Vec3::new(0.5, 0.12, 0.5);
@@ -499,7 +499,6 @@ pub fn gather_use_targets(
 /// touch-based interaction target.
 #[allow(clippy::too_many_arguments)]
 pub fn detect_contacts(
-    time: Res<Time>,
     mode: Res<MakerMode>,
     mut memory: ResMut<InteractionMemory>,
     player_q: Query<(&Transform, &Player)>,
@@ -522,9 +521,15 @@ pub fn detect_contacts(
     let Ok((pt, player)) = player_q.single() else {
         return;
     };
-    let dt = time.delta_secs();
     let pos = pt.translation;
-    let prev_pos = pos - player.velocity * dt;
+    // The pose from the start of this frame's collide step: reconstructing it
+    // from `pos - velocity * dt` is wrong after a landing, because collision
+    // already zeroed velocity.y.
+    let prev_pos = if player.pre_move_pos == Vec3::ZERO {
+        pos
+    } else {
+        player.pre_move_pos
+    };
     let he = player.half_extents;
 
     for (ent, tf) in &switches {
@@ -796,6 +801,8 @@ pub fn resolve_forced_motion(
     player.on_ground = false;
     player.was_on_ground = false;
     player.fall_speed = 0.0;
+    player.hang_cooldown = 0.25;
+    player.pre_move_pos = tf.translation;
     if motion.control_lock > 0.0 {
         player.launch = player.launch.max(motion.control_lock);
     }

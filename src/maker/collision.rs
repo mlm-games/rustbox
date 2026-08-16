@@ -147,13 +147,15 @@ fn face_solid_range(shape: BlockShape, rot: u8, axis: usize, side: u8) -> (f32, 
                 BlockShape::Slope => {
                     // Rises toward local +X. The tall end (+X face) is a full
                     // wall; the low end (-X face) is a zero-area edge; the
-                    // +/-Z sides span the full height.
+                    // +/-Z sides only cover the lower band of the cell so
+                    // brushing the side of a ramp doesn't create a full
+                    // ghost wall (ride-on-top handles walking the ramp).
                     if local == IVec2::X {
                         (0.0, 1.0)
                     } else if local == IVec2::NEG_X {
                         (0.0, 0.0)
                     } else {
-                        (0.0, 1.0)
+                        (0.0, 0.75)
                     }
                 }
                 BlockShape::DSlope => {
@@ -163,7 +165,7 @@ fn face_solid_range(shape: BlockShape, rot: u8, axis: usize, side: u8) -> (f32, 
                     } else if local == IVec2::X {
                         (0.0, 0.0)
                     } else {
-                        (0.0, 1.0)
+                        (0.0, 0.75)
                     }
                 }
                 BlockShape::Corner => {
@@ -184,6 +186,15 @@ fn face_solid_range(shape: BlockShape, rot: u8, axis: usize, side: u8) -> (f32, 
             }
         }
     }
+}
+
+/// Whether the block has solid material in its column under the world point
+/// `(wx, wz)` (the empty halves of partial shapes don't count as floor/wall).
+fn local_column_solid_at(block: &BlockData, wx: f32, wz: f32) -> bool {
+    let wx = (wx - block.position[0] as f32).clamp(0.0, 1.0);
+    let wz = (wz - block.position[2] as f32).clamp(0.0, 1.0);
+    let (lx, lz) = local_from_world(wx, wz, block.rot);
+    local_column_solid(block.shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
 }
 
 /// Does the vertical span `[lo, hi]` overlap `[flo, fhi]`?
@@ -333,8 +344,10 @@ fn resolve_axis(
                     if !vertical_overlap(vlo, vhi, face_lo, face_hi) {
                         continue;
                     }
-                    let rise_to_top = face_hi - vlo;
-                    if vhi > face_hi && rise_to_top >= -0.02 && rise_to_top <= STEP_HEIGHT {
+                    if let Some(b) = block.filter(|b| level.kind_is_solid(b.kind))
+                        && local_column_solid_at(b, p[0], p[2])
+                        && vlo >= surface_top_height(b, p[0], p[2]) - LANDING_RIDE
+                    {
                         continue;
                     }
                     let moved = Vec3::from_array(p);
@@ -576,6 +589,14 @@ fn try_step_axis(
         if h.is_finite() {
             best_top = best_top.max(h);
         }
+        for solid in extras {
+            if solid.shape.is_wedge() {
+                continue;
+            }
+            if let Some(t) = solid_top_height(solid, s.x, s.z) {
+                best_top = best_top.max(t);
+            }
+        }
     }
     if !best_top.is_finite() {
         return None;
@@ -590,6 +611,27 @@ fn try_step_axis(
     // Head must clear at the elevated pose before and after the step.
     if aabb_hits_material(level, elevated, he) {
         return None;
+    }
+    {
+        let min = elevated - he + Vec3::splat(0.02);
+        let max = elevated + he - Vec3::splat(0.02);
+        for solid in extras {
+            let (ec, ehe) =
+                rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
+            if min.x < ec.x + ehe.x
+                && max.x > ec.x - ehe.x
+                && min.z < ec.z + ehe.z
+                && max.z > ec.z - ehe.z
+                && min.y < ec.y + ehe.y - 0.001
+                && max.y > ec.y - ehe.y + 0.001
+            {
+                let top = solid_top_height(solid, elevated.x, elevated.z).unwrap_or(ec.y + ehe.y);
+                let feet = elevated.y - he.y;
+                if (feet - top).abs() > 0.05 && feet < top - 0.02 {
+                    return None;
+                }
+            }
+        }
     }
     let mut p = elevated;
     let hit = resolve_axis(&mut p, he, delta, axis, level, extras, None);
@@ -790,6 +832,19 @@ pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
         }
     }
     f32::NEG_INFINITY
+}
+
+/// Highest walkable top under `(wx, wz)` from blocks and runtime solids.
+/// Landing, ground glue, and step-up all sample this so entity solids
+/// (gates, crates, wedges, plates, pads) behave like block floors.
+pub fn support_height(level: &LevelDocument, extras: &[RuntimeSolid], wx: f32, wz: f32) -> f32 {
+    let mut h = ground_height(level, wx, wz);
+    for s in extras {
+        if let Some(t) = solid_top_height(s, wx, wz) {
+            h = h.max(t);
+        }
+    }
+    h
 }
 
 pub fn stand_headroom(
@@ -1479,12 +1534,13 @@ mod tests {
         assert!(stand_headroom(&level, feet, 14.7, 0.0, HE, &[]));
     }
 
-    /// A closed relay gate is a box centered at (4, 2.0, 0) with half-extents
-    /// (0.5, 1.0, 0.2): x in [3.5, 4.5], y in [1.0, 3.0], z in [-0.2, 0.2].
+    /// A closed relay gate is a box centered at (4, 2.0, 10) with half-extents
+    /// (0.5, 1.0, 0.2): x in [3.5, 4.5], y in [1.0, 3.0], z in [9.8, 10.2].
+    /// z=10 keeps it out of the default level's starter blocks near the spawn.
     fn gate_extra() -> RuntimeSolid {
         RuntimeSolid {
             owner: Entity::from_raw_u32(99).unwrap(),
-            center: Vec3::new(4.0, 2.0, 0.0),
+            center: Vec3::new(4.0, 2.0, 10.0),
             shape: SolidShape::Box(0.5, 1.0, 0.2),
             rotation: Quat::IDENTITY,
         }
@@ -1495,9 +1551,9 @@ mod tests {
         let level = wall_level();
         // Player approaching from the left; right edge at 3.4, just short of
         // the gate face at x=3.5. Body spans y [1.0, 2.8], overlapping the
-        // gate's vertical extent [1.0, 3.0]. z=0 overlaps the gate's thin z.
+        // gate's vertical extent [1.0, 3.0]. z=10 overlaps the gate's thin z.
         let r = move_and_collide(
-            Vec3::new(3.1, 1.9, 0.0),
+            Vec3::new(3.1, 1.9, 10.0),
             HE,
             Vec3::new(0.3, 0.0, 0.0),
             &level,
@@ -1518,7 +1574,7 @@ mod tests {
     fn land_on_top_of_gate_is_stable() {
         let level = wall_level();
         // Feet start just above the gate top (y=3.0) and move down 0.5.
-        let start = Vec3::new(4.0, 3.2 + HE.y, 0.0);
+        let start = Vec3::new(4.0, 3.2 + HE.y, 10.0);
         let r = move_and_collide(
             start,
             HE,
@@ -1735,6 +1791,70 @@ mod tests {
         let w = [wedge_solid(Vec3::new(0.0, 0.5, 10.0))];
         let can_stand = stand_headroom(&level, 0.5, 0.0, 10.0, HE, &w);
         assert!(can_stand, "standing on the ramp must stay allowed");
+    }
+
+    #[test]
+    fn support_height_prefers_taller_solid() {
+        let level = wall_level();
+        // Floor top at y=1.0, gate top at y=3.0: the gate wins.
+        let gate = gate_extra();
+        let h = support_height(&level, &[gate], 4.0, 10.0);
+        assert!((h - 3.0).abs() < 0.01, "h={h}");
+    }
+
+    #[test]
+    fn walk_on_slope_does_not_eject_sideways() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(0, 1, 0),
+            Some(BlockData {
+                position: [0, 1, 0],
+                kind: BlockKind::Stone,
+                shape: BlockShape::Slope,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        // Feet on mid-ramp (~1.5), move +Z along the slope side.
+        let start = Vec3::new(0.5, 1.5 + HE.y, 0.5);
+        let r = move_and_collide(start, HE, Vec3::new(0.0, -0.05, 0.1), &level, &[]);
+        assert!(
+            (r.pos.z - 0.6).abs() < 0.05,
+            "ejected/stopped on slope: {:?}",
+            r.pos
+        );
+        assert!(
+            r.on_ground,
+            "should still be grounded on the ramp: {:?}",
+            r.pos
+        );
+    }
+
+    #[test]
+    fn step_up_onto_crate_solid() {
+        let level = wall_level();
+        // Half-height crate on the floor: top at y=1.5, within STEP_HEIGHT.
+        let crate_s = RuntimeSolid {
+            owner: Entity::from_raw_u32(1).unwrap(),
+            center: Vec3::new(2.0, 1.0, 10.0),
+            shape: SolidShape::Box(0.5, 0.5, 0.5),
+            rotation: Quat::IDENTITY,
+        };
+        // Feet on floor y=1.0, walk into the crate: step height allows it.
+        let r = move_and_collide(
+            Vec3::new(1.2, HE.y + 1.0, 10.0),
+            HE,
+            Vec3::new(0.4, 0.0, 0.0),
+            &level,
+            &[crate_s],
+        );
+        assert!(r.stepped_up, "did not step onto the crate: {:?}", r.pos);
+        assert!((r.pos.x - 1.6).abs() < 0.05, "did not advance: {:?}", r.pos);
+        assert!(
+            (r.pos.y - HE.y - 1.5).abs() < 0.1,
+            "feet at {}, expected crate top 1.5",
+            r.pos.y - HE.y
+        );
     }
 }
 

@@ -8,9 +8,9 @@ use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
     floor_normal_at, ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide,
-    stand_headroom,
+    stand_headroom, support_height,
 };
-use super::entities_runtime::{DriftPlate, LaunchPad, ModelAnim, ModelMaterial, RuntimeSolids};
+use super::entities_runtime::{DriftPlate, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::entity_data::LevelEntityId;
 use super::interactive_blocks::OnOffState;
 use super::level::LevelDocument;
@@ -24,6 +24,10 @@ use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 pub const JUMP_SPEED: f32 = 9.0;
 
 const GROUND_STEP_MAX: f32 = 0.55;
+
+/// Small gap kept between the head and the underside while hanging, so the
+/// body hangs just below the slab instead of embedding into it.
+const HANG_SKIN: f32 = 0.02;
 
 /// Central movement tunables (Bevy resource). Tune here instead of scattering
 /// magic numbers.
@@ -175,6 +179,9 @@ pub struct Player {
     pub move_mode: PlayerMoveMode,
     /// Seconds until a new hang grab is allowed after releasing.
     pub hang_cooldown: f32,
+    /// Position at the start of this frame's collide step (for top-contact
+    /// contacts that need the pre-move feet height).
+    pub pre_move_pos: Vec3,
 }
 
 impl Default for Player {
@@ -205,6 +212,7 @@ impl Default for Player {
             speed_boost: 0.0,
             move_mode: PlayerMoveMode::Normal,
             hang_cooldown: 0.0,
+            pre_move_pos: Vec3::ZERO,
         }
     }
 }
@@ -302,6 +310,9 @@ pub fn respawn_player(
     player.grip_cooldown = 0.0;
     player.grip_time = 0.0;
     player.crouched = false;
+    player.move_mode = PlayerMoveMode::Normal;
+    player.hang_cooldown = 0.0;
+    player.pre_move_pos = spawn;
     *move_state = MoveState::default();
 }
 
@@ -414,7 +425,6 @@ pub fn player_controller(
     tuning: Res<MoveTuning>,
     mut commands: Commands,
     mut trauma: ResMut<Trauma>,
-    pads: Query<(&Transform, &LaunchPad), Without<Player>>,
     plates: Query<(&Transform, &DriftPlate), Without<Player>>,
     onoff: Res<OnOffState>,
     mut q: Query<(Entity, &mut Transform, &mut Player, &mut MoveState)>,
@@ -487,7 +497,7 @@ pub fn player_controller(
         let hang_key = kb && keys.pressed(KeyCode::KeyE);
         player.hang_cooldown = (player.hang_cooldown - dt).max(0.0);
         if player.move_mode == PlayerMoveMode::Hanging {
-            match find_hang_surface(&level, transform.translation, he) {
+            match find_hang_surface(&level, transform.translation, move_he) {
                 Some((_, bottom)) => {
                     if !hang_key || underwater {
                         player.move_mode = PlayerMoveMode::Normal;
@@ -510,7 +520,7 @@ pub fn player_controller(
                             dt,
                         );
                         player.velocity.y = 0.0;
-                        transform.translation.y = bottom + he.y;
+                        transform.translation.y = bottom - he.y - HANG_SKIN;
                     }
                 }
                 None => {
@@ -527,11 +537,11 @@ pub fn player_controller(
             && !player.slamming
             && player.launch <= 0.0
             && player.velocity.y <= 2.0
-            && let Some((_, bottom)) = find_hang_surface(&level, transform.translation, he)
+            && let Some((_, bottom)) = find_hang_surface(&level, transform.translation, move_he)
         {
             player.move_mode = PlayerMoveMode::Hanging;
             player.velocity = Vec3::ZERO;
-            transform.translation.y = bottom + he.y;
+            transform.translation.y = bottom - he.y - HANG_SKIN;
         }
         let hanging = player.move_mode == PlayerMoveMode::Hanging;
 
@@ -681,24 +691,6 @@ pub fn player_controller(
             player.slamming = true;
         }
 
-        // Launch pads (apply velocity but let frames tick cooldown separately)
-        for (pad_tf, pad) in &pads {
-            let flat = Vec3::new(transform.translation.x, 0.0, transform.translation.z);
-            let pad_flat = Vec3::new(pad_tf.translation.x, 0.0, pad_tf.translation.z);
-            let on_pad = flat.distance(pad_flat) < 0.7
-                && (transform.translation.y - pad_tf.translation.y).abs() < 1.2
-                && player.velocity.y <= 0.5;
-            if on_pad {
-                let dir = Quat::from_rotation_y(pad.yaw_rad) * Vec3::NEG_Z;
-                player.velocity = dir * pad.impulse + Vec3::Y * (pad.impulse * 0.35);
-                player.launch = tuning.launch_lock;
-                player.on_ground = false;
-                player.coyote = 0.0;
-                player.slamming = false;
-                ScreenEffects::add_trauma(&mut trauma, 0.2);
-            }
-        }
-
         // Conveyor: push the player along the block's facing while on top.
         if !hanging
             && let Some(kind) = ground_kind
@@ -731,19 +723,29 @@ pub fn player_controller(
             player.velocity.y = 4.5;
         }
 
-        // Stay glued to the ground.
+        // Stay glued to the ground (blocks + runtime solids, Warbell-style).
         let grounding_ok = (player.was_on_ground || player.on_ground)
             && !underwater
             && !hanging
             && player.velocity.y <= 0.0;
         if grounding_ok {
-            let top = ground_height(&level, transform.translation.x, transform.translation.z);
+            let top = support_height(
+                &level,
+                &solids.solids,
+                transform.translation.x,
+                transform.translation.z,
+            );
             let feet = transform.translation.y - move_he.y;
             // Only stick to the ground while it's actually near the feet.
             if top.is_finite() && (top - feet).abs() <= GROUND_STEP_MAX {
                 transform.translation.y = top + move_he.y;
             }
         }
+
+        // Record the pose before moving: top-contact interactions (pads,
+        // crumble plates) use it to detect a real crossing, not the
+        // post-collision pose where vertical velocity has already been zeroed.
+        player.pre_move_pos = transform.translation;
 
         let result = move_and_collide(
             transform.translation,
@@ -820,11 +822,9 @@ pub fn player_controller(
                 break;
             }
         }
-        let grounded_now = result.on_ground
-            || on_plate
-            || (!hanging && player.was_on_ground && player.velocity.y <= 0.0);
+        let grounded_now = result.on_ground || on_plate;
         if grounded_now && !on_plate && player.velocity.y <= 0.0 {
-            let top = ground_height(&level, pos.x, pos.z);
+            let top = support_height(&level, &solids.solids, pos.x, pos.z);
             if top.is_finite() {
                 let eff_he = move_he.y;
                 let feet = pos.y - eff_he;
