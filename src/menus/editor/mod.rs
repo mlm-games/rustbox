@@ -14,7 +14,7 @@ use repose_ui::{Column, Image, ImageExt, Row, Text as RText, TextStyle, ViewExt,
 use crate::app::SharedUi;
 use crate::menus::action::UiAction;
 use crate::menus::components::{Symbols, icon_text, push_ui};
-use crate::menus::style::tok;
+use crate::menus::style::{t, tok};
 
 pub use pick::part_picker;
 
@@ -71,7 +71,7 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     if !st.maker_mode_edit {
         return ZStack(Modifier::new().fill_max_size())
             .child(
-                // temp play stats
+                // Top-left: live run stats
                 Column(
                     Modifier::new()
                         .fill_max_size()
@@ -89,7 +89,8 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                         .fill_max_size()
                         .justify_content(JustifyContent::FLEX_END)
                         .align_items(AlignItems::FLEX_START)
-                        .padding(14.0),
+                        .padding(14.0)
+                        .gap(8.0),
                 )
                 .child(clapperboard(st, actions)),
             )

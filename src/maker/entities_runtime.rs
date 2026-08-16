@@ -21,7 +21,8 @@ use super::collision::{is_solid, solid_floor_normal, solid_top_height};
 use super::entity_data::{
     ALL_ENTITY_KINDS, ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId,
     link_color,
-};use super::interaction::{
+};
+use super::interaction::{
     InteractionKey, InteractionMemory, MAX_FAN_FORCE, cap_fan_force, gateway_blocked, heal_allowed,
     player_overlaps_volume, solid_blocks,
 };
@@ -354,10 +355,30 @@ pub struct EntityAssets {
 
 /// Marks a spawned glTF scene whose meshes need a material attached once they
 /// exist (the fork's glTF loader spawns meshes without `MeshMaterial3d`).
-/// Tinted kinds get a flat color (keeps the link-channel / collectible color
-/// language); everything else gets the model's albedo texture material.
-#[derive(Component)]
-pub struct ModelMaterial(pub Handle<StandardMaterial>);
+#[derive(Component, Clone)]
+pub struct ModelMaterial {
+    pub handle: Handle<StandardMaterial>,
+    pub force: bool,
+}
+
+impl ModelMaterial {
+    /// Fill-only: attach only to meshes that still lack `MeshMaterial3d`.
+    pub fn fallback(handle: Handle<StandardMaterial>) -> Self {
+        Self {
+            handle,
+            force: false,
+        }
+    }
+
+    /// Force-tint: attach to every mesh in the scene, replacing whatever the
+    /// pack shipped (keeps the kind/link color language readable).
+    pub fn force_tint(handle: Handle<StandardMaterial>) -> Self {
+        Self {
+            handle,
+            force: true,
+        }
+    }
+}
 
 /// Requests that an animated model play named clips (looped) once its
 /// `AnimationPlayer` spawns inside the async-loaded scene.
@@ -546,21 +567,23 @@ fn stack_offset(index: usize) -> Vec3 {
 /// The root transform keeps its current gameplay position; the glTF model is a
 /// child so gameplay hitboxes and transforms stay untouched. Reads the
 /// manifest, so a `model: None` kind falls back to its procedural mesh.
+/// `TintMode::Kind`/`Link` force the flat color over the pack's own kitbash
+/// materials (`force_tint`); `TintMode::Model` only fills meshes that lack one.
 fn visual_for(
     kind: EntityKind,
     link: u32,
     assets: &EntityAssets,
     manifest: &EntityModelManifest,
-) -> Option<(Handle<WorldAsset>, Handle<StandardMaterial>, f32, f32)> {
+) -> Option<(Handle<WorldAsset>, ModelMaterial, f32, f32)> {
     let entry = manifest.entry(kind)?;
     entry.model.as_deref()?;
     let scene = assets.scenes.get(&kind)?.clone();
     let material = match entry.tint {
-        TintMode::Kind => assets.mats[&kind].clone(),
-        TintMode::Link => assets.link_mats[&link.min(9)].clone(),
-        // Pack models ship their own multi-material colors (auto-attached by
-        // the fork's glTF handler); this is only an inert fallback.
-        TintMode::Model => assets.mats[&kind].clone(),
+        TintMode::Kind => ModelMaterial::force_tint(assets.mats[&kind].clone()),
+        TintMode::Link => ModelMaterial::force_tint(assets.link_mats[&link.min(9)].clone()),
+        // Pack models ship their own multi-material colors; this is only an
+        // inert fill-in for any mesh node that still lacks a material.
+        TintMode::Model => ModelMaterial::fallback(assets.mats[&kind].clone()),
     };
     Some((scene, material, entry.scale, entry.y_offset))
 }
@@ -569,6 +592,8 @@ fn visual_for(
 /// spawned). Mesh nodes get their materials from the fork's `bevy_pbr` glTF
 /// extension handler, but this runs every frame as a fallback so any mesh node
 /// that still lacks a `MeshMaterial3d` gets our model material attached.
+/// `force = true` materials (kind/link color language) replace whatever the
+/// pack attached; `force = false` only fills meshes that lack a material.
 pub fn apply_model_materials(
     mut commands: Commands,
     roots: Query<(Entity, &ModelMaterial)>,
@@ -583,8 +608,10 @@ pub fn apply_model_materials(
             .map(|c| c.iter().collect())
             .unwrap_or_default();
         while let Some(ce) = stack.pop() {
-            if mesh_nodes.contains(ce) && !matted.contains(ce) {
-                commands.entity(ce).insert(MeshMaterial3d(mat.0.clone()));
+            if mesh_nodes.contains(ce) && (mat.force || !matted.contains(ce)) {
+                commands
+                    .entity(ce)
+                    .insert(MeshMaterial3d(mat.handle.clone()));
                 found = true;
             }
             if let Ok(grand) = children.get(ce) {
@@ -862,7 +889,7 @@ pub fn reconcile_entities(
                     WorldAssetRoot(scene),
                     MakerCleanup,
                     Visibility::default(),
-                    ModelMaterial(material),
+                    material,
                     Transform::from_translation(Vec3::Y * y_off).with_scale(Vec3::splat(scale)),
                 ));
                 if let Some(anim) = anim_for(data.kind) {

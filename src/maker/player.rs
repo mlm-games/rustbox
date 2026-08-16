@@ -336,7 +336,7 @@ pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &Level
             WorldAssetRoot(assets.player_scene.clone()),
             MakerCleanup,
             Visibility::default(),
-            ModelMaterial(assets.player_material.clone()),
+            ModelMaterial::fallback(assets.player_material.clone()),
             ModelAnim {
                 source: "player",
                 idle: "Idle",

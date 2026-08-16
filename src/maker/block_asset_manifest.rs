@@ -95,24 +95,16 @@ pub fn block_preview_base(kind: BlockKind) -> &'static str {
     }
 }
 
-/// Cube World glTF model path for a landmark block kind (mirrors the historical
-/// sparse overlays). Returns `None` for kinds rendered by the procedural
-/// chunk mesh. The Cube World pack has no goal-flag / bouncer / spike-trap
-/// models, so these stay procedural for now.
-pub fn block_overlay_model(kind: BlockKind) -> Option<&'static str> {
-    let _ = kind;
-    None
-}
-
-/// Default per-kind overlay placement: `(scale, y-offset from the cell floor)`.
-fn block_overlay_placement(kind: BlockKind) -> Option<(f32, f32)> {
-    match kind {
-        BlockKind::Goal => Some((0.6, -0.5)),
-        BlockKind::Bounce => Some((0.55, -0.5)),
-        BlockKind::Hazard => Some((0.5, -0.5)),
-        BlockKind::Spikes => Some((0.5, -0.5)),
-        _ => None,
+/// Rustbox pack model path for a block kind×shape pair, cell-aligned and
+/// centered on the origin (mirrors `tools/asset_build/gen_manifests.py`).
+/// Returns `None` for Water, which stays a translucent procedural chunk mesh (but still fallback atm)
+pub fn block_overlay_model(kind: BlockKind, shape: BlockShape) -> Option<String> {
+    if kind == BlockKind::Water {
+        return None;
     }
+    Some(format!(
+        "models/rustbox/blocks/{kind:?}/{kind:?}_{shape:?}.glb#Scene0"
+    ))
 }
 
 /// Default visual bounds of a shape footprint (used for preview framing).
@@ -160,10 +152,6 @@ impl BlockAssetManifest {
         }
     }
 
-    /// Full cross product of every kind × shape (17 × 10 = 170 pairs). Landmark
-    /// kinds (Goal, Bounce, Hazard, Spikes) point at their pack model; every
-    /// other pair renders procedurally. Previews point at the existing kind
-    /// PNGs until per-shape previews are generated.
     pub fn defaults() -> Self {
         let mut blocks = HashMap::new();
         for kind in [
@@ -185,21 +173,21 @@ impl BlockAssetManifest {
             BlockKind::OneWay,
             BlockKind::TimedPulse,
         ] {
-            let model = block_overlay_model(kind);
-            let (scale, y_offset) = block_overlay_placement(kind).unwrap_or((1.0, 0.0));
             for &shape in ALL_BLOCK_SHAPES {
+                let model = block_overlay_model(kind, shape);
+                let tint = if model.is_some() {
+                    BlockTintMode::Model
+                } else {
+                    BlockTintMode::Kind
+                };
                 blocks.insert(
                     block_asset_key(kind, shape),
                     BlockAssetEntry {
-                        model: model.map(ToOwned::to_owned),
+                        model,
                         preview: format!("images/blocks/{}.png", block_preview_base(kind)),
-                        scale,
-                        y_offset,
-                        tint: if model.is_some() {
-                            BlockTintMode::Model
-                        } else {
-                            BlockTintMode::Kind
-                        },
+                        scale: 1.0,
+                        y_offset: 0.0,
+                        tint,
                         collider: BlockColliderRef::BuiltinShape,
                         visual_bounds: shape_bounds(shape),
                     },
@@ -321,5 +309,17 @@ mod tests {
             assert!(merged.overlay(kind).is_some(), "{kind:?} overlay lost");
         }
     }
-}
 
+    #[test]
+    fn every_default_block_model_path_matches_pack_layout() {
+        let m = BlockAssetManifest::defaults();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for (key, e) in &m.blocks {
+            if let Some(model) = &e.model {
+                let path = model.split('#').next().unwrap();
+                let p = root.join(path);
+                assert!(p.exists(), "{key} -> model missing at {}", p.display());
+            }
+        }
+    }
+}

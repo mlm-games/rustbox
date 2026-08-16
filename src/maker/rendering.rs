@@ -993,8 +993,7 @@ pub fn reconcile_block_overlays(
         if block.kind.is_pulse() && !level.pulse_on {
             continue;
         }
-        let Some((scale, y_off, tint)) =
-            overlay_placement(&assets.block_manifest, kind, shape)
+        let Some((scale, y_off, tint)) = overlay_placement(&assets.block_manifest, kind, shape)
         else {
             continue;
         };
@@ -1028,14 +1027,12 @@ pub fn reconcile_block_overlays(
                     .with_scale(Vec3::splat(scale)),
             ));
             // Only force a flat material when the pack is meant to be tinted.
-            // Model tint keeps the glTF albedo (apply_model_materials is a
-            // fallback that only fills meshes lacking MeshMaterial3d).
             match tint {
                 BlockTintMode::Model => {
-                    child.insert(ModelMaterial(assets.model_inert_mat.clone()));
+                    child.insert(ModelMaterial::fallback(assets.model_inert_mat.clone()));
                 }
                 BlockTintMode::Kind | BlockTintMode::Theme | BlockTintMode::Link => {
-                    child.insert(ModelMaterial(assets.ghost_mats[&kind].clone()));
+                    child.insert(ModelMaterial::force_tint(assets.ghost_mats[&kind].clone()));
                 }
             }
         });
@@ -1308,10 +1305,7 @@ pub fn setup_world(
     for kind in ALL_BLOCK_KINDS {
         for shape in ALL_BLOCK_SHAPES {
             if let Some(path) = overlay_model(&manifest, *kind, *shape) {
-                block_overlays.insert(
-                    (*kind, *shape),
-                    asset_server.load(path.to_owned()),
-                );
+                block_overlays.insert((*kind, *shape), asset_server.load(path.to_owned()));
             }
         }
     }
