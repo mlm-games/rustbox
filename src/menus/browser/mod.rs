@@ -11,7 +11,7 @@ use repose_core::prelude::{
 use repose_core::{ImeAction, KeyboardOptions, KeyboardType, TextFieldLineLimits};
 use repose_material::Icon;
 use repose_material::material3::{
-    ButtonConfig, CardConfig, ChipConfig, ClickableOutlinedCard, FilledTonalButton, InputChip,
+    ButtonConfig, CardConfig, ChipConfig, FilledTonalButton, InputChip,
 };
 use repose_ui::anim_ext::{AnimatedVisibility, AnimatedVisibilityConfig};
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
@@ -26,8 +26,8 @@ use crate::maker::level::LevelTag;
 use crate::maker::thumbnail::ThumbPreview;
 use crate::menus::action::UiAction;
 use crate::menus::components::{
-    Symbols, icon_label, icon_text, mk_chip, mk_icon_button, mk_pill_button, mk_primary_button,
-    modal_shell, push, spacer,
+    Symbols, clickable_outlined_card, icon_label, icon_text, mk_chip, mk_icon_button,
+    mk_pill_button, mk_primary_button, modal_shell, push, spacer,
 };
 use crate::menus::style::{col, tag_color};
 use rustbox_format::api::LevelMeta;
@@ -293,7 +293,7 @@ fn browse_card(s: &LevelSummary, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction
 
     let card_config = selected_card_config(selected);
 
-    ClickableOutlinedCard(
+    clickable_outlined_card(
         move || push(&b_sel, UiAction::BrowseSelect(k.clone())),
         Modifier::new().fill_max_width(),
         card_config,
@@ -1016,7 +1016,7 @@ fn online_card(m: &LevelMeta, st: &SharedUi, actions: &Arc<Mutex<Vec<UiAction>>>
 
     let card_config = selected_card_config(selected);
 
-    ClickableOutlinedCard(
+    clickable_outlined_card(
         move || push(&b_sel, UiAction::OnlineSelect(id)),
         Modifier::new().fill_max_width(),
         card_config,

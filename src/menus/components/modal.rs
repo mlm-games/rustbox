@@ -17,6 +17,8 @@ pub fn popup_anim_config(key: &str) -> AnimatedVisibilityConfig {
 }
 
 /// Full-screen dimmer + centered content. Prefer Material dialogs long-term.
+/// The scrim is a true input barrier: it creates a full-screen hit region and
+/// never passes the press through to underlays (title cards behind the modal).
 pub fn modal_shell(inner: View) -> View {
     Column(
         Modifier::new()
@@ -24,6 +26,7 @@ pub fn modal_shell(inner: View) -> View {
             .justify_content(JustifyContent::CENTER)
             .align_items(AlignItems::CENTER)
             .background(tok::scrim())
+            .input_blocker()
             .clickable()
             .focusable(false),
     )

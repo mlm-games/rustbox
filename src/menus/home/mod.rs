@@ -4,15 +4,14 @@ use repose_core::View;
 use repose_core::prelude::{AlignItems, AlignSelf, JustifyContent, Modifier};
 use repose_material::Icon;
 use repose_material::material3::{
-    ButtonConfig, CardConfig, ClickableOutlinedCard, FilledTonalButton, IconButton,
-    IconButtonColors, IconButtonConfig, Scaffold, ScaffoldConfig, TopAppBar, TopAppBarColors,
-    TopAppBarConfig,
+    ButtonConfig, CardConfig, FilledTonalButton, IconButton, IconButtonColors, IconButtonConfig,
+    Scaffold, ScaffoldConfig, TopAppBar, TopAppBarColors, TopAppBarConfig,
 };
 use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt};
 
 use crate::app::SharedUi;
 use crate::menus::action::UiAction;
-use crate::menus::components::{Symbols, push, spacer};
+use crate::menus::components::{Symbols, clickable_outlined_card, push, spacer};
 use crate::menus::style::{radius, sp, t, tok};
 
 pub fn splash_ui() -> View {
@@ -198,7 +197,7 @@ fn action_card(
     let kicker = kicker.to_string();
     let title = title.to_string();
     let subtitle = subtitle.to_string();
-    ClickableOutlinedCard(
+    clickable_outlined_card(
         on_click,
         Modifier::new()
             .fill_max_width()
@@ -234,7 +233,7 @@ fn action_card(
 
 fn half_card(title: &str, icon: repose_material::Symbol, on_click: impl Fn() + 'static) -> View {
     let title = title.to_string();
-    ClickableOutlinedCard(
+    clickable_outlined_card(
         on_click,
         Modifier::new()
             .flex_grow(1.0)
