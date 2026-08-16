@@ -905,6 +905,31 @@ pub fn support_height(level: &LevelDocument, extras: &[RuntimeSolid], wx: f32, w
     h
 }
 
+/// Best support under a capsule footprint (center + 4 inset xz corners).
+/// Multi-point so walking off a corner of a crate/ledger keeps you grounded
+/// until the whole body clears the edge.
+pub fn support_height_footprint(
+    level: &LevelDocument,
+    extras: &[RuntimeSolid],
+    center: Vec3,
+    he: Vec3,
+) -> f32 {
+    // Inset slightly so walls beside you don't count as floor.
+    let rx = (he.x - 0.04).max(0.05);
+    let rz = (he.z - 0.04).max(0.05);
+    let samples = [
+        (center.x, center.z),
+        (center.x + rx, center.z + rz),
+        (center.x + rx, center.z - rz),
+        (center.x - rx, center.z + rz),
+        (center.x - rx, center.z - rz),
+    ];
+    samples
+        .into_iter()
+        .map(|(x, z)| support_height(level, extras, x, z))
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
 pub fn stand_headroom(
     level: &LevelDocument,
     feet_y: f32,
@@ -1858,6 +1883,24 @@ mod tests {
         let gate = gate_extra();
         let h = support_height(&level, &[gate], 4.0, 10.0);
         assert!((h - 3.0).abs() < 0.01, "h={h}");
+    }
+
+    #[test]
+    fn support_height_footprint_keeps_grounded_at_corners() {
+        let level = wall_level();
+        // Small box raised above the floor (top 1.5), xz span [1.15, 1.55].
+        let extras = [RuntimeSolid {
+            owner: Entity::from_raw_u32(1).unwrap(),
+            center: Vec3::new(1.35, 1.0, 1.35),
+            shape: SolidShape::Box(0.2, 0.5, 0.2),
+            rotation: Quat::IDENTITY,
+        }];
+        // Player center (1.6, 1.6) sits off the box (floor top 1.0)...
+        let h_center = support_height(&level, &extras, 1.6, 1.6);
+        assert!((h_center - 1.0).abs() < 1e-3, "h_center={h_center}");
+        // ...but the back-right corner of the footprint hangs over it.
+        let h_fp = support_height_footprint(&level, &extras, Vec3::new(1.6, 1.9, 1.6), HE);
+        assert!((h_fp - 1.5).abs() < 1e-3, "h_fp={h_fp}");
     }
 
     #[test]

@@ -1016,7 +1016,7 @@ pub fn resolve_teleporters(
     let Ok((pt, player)) = player_q.single() else {
         return;
     };
-    let he = player.half_extents;
+    let he = contact_he(player);
 
     // Clear the exit lock once the player has left the destination volume.
     let lock = memory.teleport_exit_lock;
@@ -1410,7 +1410,7 @@ pub fn play_hazard_goal(
     let Ok((player_e, transform, player)) = player_q.single() else {
         return;
     };
-    let he = player.half_extents;
+    let he = contact_he(player);
     let hit_hazard = super::collision::overlaps_kind(
         transform.translation,
         he,

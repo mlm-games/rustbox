@@ -212,7 +212,10 @@ impl Plugin for MakerPlugin {
                         .in_set(InteractionSet::MoveWorld)
                         .after(entities_runtime::tick_drift_plates)
                         .after(entities_runtime::tick_track_followers),
-                    // 2. PlayerMotion.
+                    // 2. PlayerMotion: continuous forces first, then the controller.
+                    entities_runtime::apply_fans
+                        .in_set(InteractionSet::PlayerMotion)
+                        .before(player::player_controller),
                     player::player_controller.in_set(InteractionSet::PlayerMotion),
                     // 3. Detect: latch roll, contacts, use target, damage.
                     interaction::begin_interaction_frame.in_set(InteractionSet::Detect),
@@ -273,9 +276,6 @@ impl Plugin for MakerPlugin {
                         .after(interaction::resolve_teleporters)
                         .after(interaction::play_hazard_goal)
                         .after(interaction::resolve_damage),
-                    entities_runtime::apply_fans
-                        .in_set(InteractionSet::Resolve)
-                        .after(interaction::resolve_forced_motion),
                     // 5. SyncCollision: rebuild runtime solids from state.
                     entities_runtime::rebuild_runtime_solids.in_set(InteractionSet::SyncCollision),
                     // 6. Feedback: camera follows the (possibly teleported) player.

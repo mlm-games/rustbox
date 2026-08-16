@@ -8,7 +8,7 @@ use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
     floor_normal_at, ground_height, ledge_grip, move_and_collide_ex, overlaps_kind, slope_slide,
-    stand_headroom, support_height,
+    stand_headroom, support_height_footprint,
 };
 use super::entities_runtime::{DriftPlate, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::entity_data::LevelEntityId;
@@ -740,11 +740,11 @@ pub fn player_controller(
             && !drop_through
             && player.velocity.y <= 0.0;
         if grounding_ok {
-            let top = support_height(
+            let top = support_height_footprint(
                 &level,
                 &solids.solids,
-                transform.translation.x,
-                transform.translation.z,
+                transform.translation,
+                move_he,
             );
             let feet = transform.translation.y - move_he.y;
             // Only stick to the ground while it's actually near the feet.
@@ -843,7 +843,7 @@ pub fn player_controller(
         }
         let grounded_now = result.on_ground || on_plate;
         if grounded_now && !on_plate && player.velocity.y <= 0.0 {
-            let top = support_height(&level, &solids.solids, pos.x, pos.z);
+            let top = support_height_footprint(&level, &solids.solids, pos, move_he);
             if top.is_finite() {
                 let eff_he = move_he.y;
                 let feet = pos.y - eff_he;
