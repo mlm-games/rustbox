@@ -208,6 +208,10 @@ impl Plugin for MakerPlugin {
                     entities_runtime::tick_track_followers.in_set(InteractionSet::MoveWorld),
                     entities_runtime::move_prowlers.in_set(InteractionSet::MoveWorld),
                     interactive_blocks::sync_pulse.in_set(InteractionSet::MoveWorld),
+                    entities_runtime::rebuild_runtime_solids
+                        .in_set(InteractionSet::MoveWorld)
+                        .after(entities_runtime::tick_drift_plates)
+                        .after(entities_runtime::tick_track_followers),
                     // 2. PlayerMotion.
                     player::player_controller.in_set(InteractionSet::PlayerMotion),
                     // 3. Detect: latch roll, contacts, use target, damage.

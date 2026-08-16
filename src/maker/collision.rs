@@ -214,6 +214,7 @@ fn resolve_axis(
     level: &LevelDocument,
     extras: &[RuntimeSolid],
     probe: Option<[f32; 2]>,
+    ignore_one_way: bool,
 ) -> bool {
     if delta == 0.0 {
         return false;
@@ -253,7 +254,10 @@ fn resolve_axis(
                 }
                 // One-way platforms are solid only when approached from above:
                 // land on top, but pass through from below and from the sides.
-                if block.is_some_and(|b| b.kind.is_one_way()) && (axis != 1 || delta > 0.0) {
+                // `ignore_one_way` (crouch drop-through) waives them entirely.
+                if block.is_some_and(|b| b.kind.is_one_way())
+                    && (ignore_one_way || axis != 1 || delta > 0.0)
+                {
                     continue;
                 }
 
@@ -573,6 +577,7 @@ fn try_step_axis(
     axis: usize,
     level: &LevelDocument,
     extras: &[RuntimeSolid],
+    ignore_one_way: bool,
 ) -> Option<Vec3> {
     if delta == 0.0 {
         return None;
@@ -634,7 +639,7 @@ fn try_step_axis(
         }
     }
     let mut p = elevated;
-    let hit = resolve_axis(&mut p, he, delta, axis, level, extras, None);
+    let hit = resolve_axis(&mut p, he, delta, axis, level, extras, None, ignore_one_way);
     // Accept if we either cleared fully or at least advanced along the axis.
     let advanced = (p[axis] - pos[axis]).abs() > 0.001;
     if hit && !advanced {
@@ -661,11 +666,24 @@ pub struct MoveResult {
 }
 
 pub fn move_and_collide(
+    pos: Vec3,
+    he: Vec3,
+    delta: Vec3,
+    level: &LevelDocument,
+    extras: &[RuntimeSolid],
+) -> MoveResult {
+    move_and_collide_ex(pos, he, delta, level, extras, false)
+}
+
+/// Like [`move_and_collide`], with `ignore_one_way` waiving one-way platform
+/// solids entirely (crouch drop-through).
+pub fn move_and_collide_ex(
     mut pos: Vec3,
     he: Vec3,
     delta: Vec3,
     level: &LevelDocument,
     extras: &[RuntimeSolid],
+    ignore_one_way: bool,
 ) -> MoveResult {
     let mut wall_normal = Vec3::ZERO;
     let mut stepped_up = false;
@@ -673,9 +691,27 @@ pub fn move_and_collide(
     let probe = [pos.x + delta.x, pos.z + delta.z];
     let mut hit_y = false;
     if delta.y < 0.0 {
-        hit_y = resolve_axis(&mut pos, he, delta.y, 1, level, extras, Some(probe));
+        hit_y = resolve_axis(
+            &mut pos,
+            he,
+            delta.y,
+            1,
+            level,
+            extras,
+            Some(probe),
+            ignore_one_way,
+        );
     } else if delta.y > 0.0 {
-        hit_y = resolve_axis(&mut pos, he, delta.y, 1, level, extras, None);
+        hit_y = resolve_axis(
+            &mut pos,
+            he,
+            delta.y,
+            1,
+            level,
+            extras,
+            None,
+            ignore_one_way,
+        );
     }
 
     let can_step = delta.y <= 0.0;
@@ -694,10 +730,21 @@ pub fn move_and_collide(
     let mut hit_x = false;
     {
         let before = pos;
-        let blocked = resolve_axis(&mut pos, he, delta.x, 0, level, extras, None);
+        let blocked = resolve_axis(
+            &mut pos,
+            he,
+            delta.x,
+            0,
+            level,
+            extras,
+            None,
+            ignore_one_way,
+        );
         if blocked {
             if can_step {
-                if let Some(p) = try_step_axis(before, he, delta.x, 0, level, extras) {
+                if let Some(p) =
+                    try_step_axis(before, he, delta.x, 0, level, extras, ignore_one_way)
+                {
                     pos = p;
                     stepped_up = true;
                     hit_y = true;
@@ -713,10 +760,21 @@ pub fn move_and_collide(
     let mut hit_z = false;
     {
         let before = pos;
-        let blocked = resolve_axis(&mut pos, he, delta.z, 2, level, extras, None);
+        let blocked = resolve_axis(
+            &mut pos,
+            he,
+            delta.z,
+            2,
+            level,
+            extras,
+            None,
+            ignore_one_way,
+        );
         if blocked {
             if can_step {
-                if let Some(p) = try_step_axis(before, he, delta.z, 2, level, extras) {
+                if let Some(p) =
+                    try_step_axis(before, he, delta.z, 2, level, extras, ignore_one_way)
+                {
                     pos = p;
                     stepped_up = true;
                     hit_y = true;
@@ -1800,6 +1858,37 @@ mod tests {
         let gate = gate_extra();
         let h = support_height(&level, &[gate], 4.0, 10.0);
         assert!((h - 3.0).abs() < 0.01, "h={h}");
+    }
+
+    #[test]
+    fn one_way_lands_from_above_but_ignored_when_flag_set() {
+        let mut level = wall_level();
+        // Thin one-way slab at y=2..3 spanning the world: top at y=3.0.
+        level.set_block(
+            IVec3::new(0, 2, 0),
+            Some(BlockData {
+                position: [0, 2, 0],
+                kind: BlockKind::OneWay,
+                shape: BlockShape::Thin,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        let start = Vec3::new(0.5, 2.5 + HE.y, 0.5);
+        let expected_top =
+            surface_top_height(level.get_block(IVec3::new(0, 2, 0)).unwrap(), 0.5, 0.5);
+        let r = move_and_collide(start, HE, Vec3::new(0.0, -0.6, 0.0), &level, &[]);
+        assert!(
+            r.on_ground && (r.pos.y - HE.y - expected_top).abs() < 0.01,
+            "should land on one-way top (top={expected_top}): {:?}",
+            r.pos
+        );
+        let r2 = move_and_collide_ex(start, HE, Vec3::new(0.0, -0.6, 0.0), &level, &[], true);
+        assert!(
+            !r2.on_ground && r2.pos.y < start.y - 0.5,
+            "should fall through one-way: {:?}",
+            r2.pos
+        );
     }
 
     #[test]

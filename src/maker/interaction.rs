@@ -495,6 +495,18 @@ pub fn gather_use_targets(
     use_sel.kind = winner.map(|c| c.kind);
 }
 
+fn contact_he(player: &Player) -> Vec3 {
+    if player.crouched {
+        Vec3::new(
+            player.half_extents.x,
+            player.half_extents.y * 0.55,
+            player.half_extents.z,
+        )
+    } else {
+        player.half_extents
+    }
+}
+
 /// Compute this frame's player (and throwable) contacts against every
 /// touch-based interaction target.
 #[allow(clippy::too_many_arguments)]
@@ -530,7 +542,7 @@ pub fn detect_contacts(
     } else {
         player.pre_move_pos
     };
-    let he = player.half_extents;
+    let he = contact_he(player);
 
     for (ent, tf) in &switches {
         if player_overlaps_volume(pos, he, tf.translation + Vec3::Y * 0.1, SWITCH_VOLUME_HE) {
@@ -660,7 +672,7 @@ pub fn detect_damage(
     let Ok((player_e, pt, player)) = player_q.single() else {
         return;
     };
-    let he = player.half_extents;
+    let he = contact_he(player);
     let player_bottom = pt.translation.y - he.y;
 
     for (prow_e, prow_tf) in &prowlers {

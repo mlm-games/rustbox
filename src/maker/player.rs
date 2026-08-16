@@ -7,7 +7,7 @@ use super::MakerCleanup;
 use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
-    floor_normal_at, ground_height, ledge_grip, move_and_collide, overlaps_kind, slope_slide,
+    floor_normal_at, ground_height, ledge_grip, move_and_collide_ex, overlaps_kind, slope_slide,
     stand_headroom, support_height,
 };
 use super::entities_runtime::{DriftPlate, ModelAnim, ModelMaterial, RuntimeSolids};
@@ -723,10 +723,21 @@ pub fn player_controller(
             player.velocity.y = 4.5;
         }
 
+        // Crouch drop-through: hold crouch + S while grounded to fall through
+        // one-way platforms (waived in the collider this frame).
+        let drop_through = effectively_crouching
+            && kb
+            && keys.pressed(KeyCode::KeyS)
+            && player.on_ground
+            && !hanging
+            && !underwater
+            && player.velocity.y <= 0.0;
+
         // Stay glued to the ground (blocks + runtime solids, Warbell-style).
         let grounding_ok = (player.was_on_ground || player.on_ground)
             && !underwater
             && !hanging
+            && !drop_through
             && player.velocity.y <= 0.0;
         if grounding_ok {
             let top = support_height(
@@ -741,18 +752,26 @@ pub fn player_controller(
                 transform.translation.y = top + move_he.y;
             }
         }
+        if drop_through {
+            // Nudge down so the feet clear the one-way band this frame.
+            player.velocity.y = player.velocity.y.min(-2.0);
+            player.on_ground = false;
+            player.was_on_ground = false;
+            player.coyote = 0.0;
+        }
 
         // Record the pose before moving: top-contact interactions (pads,
         // crumble plates) use it to detect a real crossing, not the
         // post-collision pose where vertical velocity has already been zeroed.
         player.pre_move_pos = transform.translation;
 
-        let result = move_and_collide(
+        let result = move_and_collide_ex(
             transform.translation,
             move_he,
             player.velocity * dt,
             &level,
             &solids.solids,
+            drop_through,
         );
         if result.hit_x || result.hit_z {
             let n = result.wall_normal;
@@ -804,9 +823,9 @@ pub fn player_controller(
         let prev_feet = feet_y - player.velocity.y * dt;
         let mut on_plate = false;
         for (dtf, drift) in &plates {
-            let top = dtf.translation.y + 0.125;
-            let over =
-                (pos.x - dtf.translation.x).abs() < 1.0 && (pos.z - dtf.translation.z).abs() < 1.0;
+            let top = dtf.translation.y + 0.12;
+            let over = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x
+                && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z;
             if over
                 && player.velocity.y <= 0.0
                 && prev_feet >= top - 0.05

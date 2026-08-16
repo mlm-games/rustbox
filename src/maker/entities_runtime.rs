@@ -1754,12 +1754,13 @@ pub fn rebuild_runtime_solids(
     seals: Query<(Entity, &Transform, &Seal), With<SealSolid>>,
     gates: Query<(Entity, &Transform, &RelayGate), With<GateSolid>>,
     lock_gates: Query<(Entity, &Transform, &LockGate)>,
-    crates: Query<(Entity, &Transform, &CrateProp)>,
+    crates: Query<(Entity, &Transform, &CrateProp), Without<super::rapier::Held>>,
     plates: Query<(Entity, &Transform, &CrumblePlate)>,
     wedges: Query<(Entity, &Transform), With<Wedge>>,
     pads: Query<(Entity, &Transform), With<LaunchPad>>,
+    drift: Query<(Entity, &Transform), With<DriftPlate>>,
 ) {
-    solids.solids = build_solids(
+    let mut out = build_solids(
         seals
             .iter()
             .map(|(e, t, s)| (e, t.translation, t.rotation, s.open))
@@ -1788,6 +1789,18 @@ pub fn rebuild_runtime_solids(
             .map(|(e, t)| (e, t.translation, t.rotation))
             .collect(),
     );
+    // Drift plates are moving platforms: give the custom collider their real
+    // footprint so the player lands on / is stopped by them, not just the
+    // special-case ride. Matches the rapier cuboid(0.7, 0.12, 0.7).
+    for (e, t) in &drift {
+        out.push(RuntimeSolid {
+            owner: e,
+            center: t.translation,
+            shape: SolidShape::Box(0.7, 0.12, 0.7),
+            rotation: t.rotation,
+        });
+    }
+    solids.solids = out;
 }
 
 /// Pure solid-table builder (shared with tests). Collision state derives from
