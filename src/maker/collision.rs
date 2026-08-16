@@ -1874,7 +1874,7 @@ mod tests {
                 waterlogged: false,
             }),
         );
-        let start = Vec3::new(0.5, 2.5 + HE.y, 0.5);
+        let start = Vec3::new(0.5, 3.6, 0.5);
         let expected_top =
             surface_top_height(level.get_block(IVec3::new(0, 2, 0)).unwrap(), 0.5, 0.5);
         let r = move_and_collide(start, HE, Vec3::new(0.0, -0.6, 0.0), &level, &[]);
