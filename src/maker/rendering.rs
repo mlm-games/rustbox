@@ -9,7 +9,7 @@ use rustbox_format::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockShape};
 
 use super::MakerCleanup;
 use super::block::{BlockKind, BlockKindColor};
-use super::block_asset_manifest::BlockAssetManifest;
+use super::block_asset_manifest::{BlockAssetManifest, BlockTintMode};
 use super::chunk::CHUNK_SIZE;
 use super::entities_runtime::ModelMaterial;
 use super::level::{BlockData, LevelDocument, Theme};
@@ -24,6 +24,10 @@ pub struct MakerAssets {
     pub player_material: Handle<StandardMaterial>,
     pub preview_mat: Handle<StandardMaterial>,
     pub ghost_mats: HashMap<BlockKind, Handle<StandardMaterial>>,
+    /// Soft alpha-blended kind-color materials for placement juice / overlays.
+    pub ghost_alpha_mats: HashMap<BlockKind, Handle<StandardMaterial>>,
+    /// Fallback only — never force-tints pack albedo for `TintMode::Model`.
+    pub model_inert_mat: Handle<StandardMaterial>,
     /// Rot-0 mesh for each block shape (previews/ghosts rotate their Transform).
     pub shape_meshes: HashMap<BlockShape, Handle<Mesh>>,
     /// Real pack models that replace the procedural cube for block kinds with
@@ -49,22 +53,31 @@ fn overlay_model<'a>(
     manifest.entry(kind, shape).and_then(|e| e.model.as_deref())
 }
 
-/// Per-pair overlay placement: (scale, y-offset from the cell floor). The
-/// overlay root sits at the cell center, so -0.5 seats the model base on the
-/// cell floor.
+// Per-pair overlay placement ONLY when a real model exists. Returns
+// `(scale, y-offset, tint)` so a spawned overlay can keep the pack albedo
+// (`TintMode::Model`) instead of force-tinting flat.
 fn overlay_placement(
     manifest: &BlockAssetManifest,
     kind: BlockKind,
     shape: BlockShape,
-) -> Option<(f32, f32)> {
-    manifest
-        .entry(kind, shape)
-        .map(|e| (e.scale, e.y_offset))
+) -> Option<(f32, f32, BlockTintMode)> {
+    let e = manifest.entry(kind, shape)?;
+    e.model.as_ref()?; // require a real model
+    Some((e.scale, e.y_offset, e.tint))
 }
 
 /// Spawned overlay scene entity per overlaid block cell. Keyed like chunks.
 #[derive(Resource, Default)]
 pub struct BlockOverlayEntities(pub HashMap<IVec3, Entity>);
+
+/// Identity of a spawned block overlay so we can rebuild when kind/shape/rot
+/// changes (kind/shape swap must not leave a stale model in a cell).
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub struct BlockOverlayMeta {
+    pub kind: BlockKind,
+    pub shape: BlockShape,
+    pub rot: u8,
+}
 
 #[derive(Resource, Default)]
 pub struct ChunkEntities(pub HashMap<IVec3, Entity>);
@@ -936,27 +949,36 @@ pub fn rebuild_dirty_chunks(
 
 /// Spawns/despawns the real pack-model scenes that visually replace the
 /// procedural cube for block kind×shape pairs with a `BlockAssetManifest`
-/// model. Runs on the same dirty trigger as the chunk meshes; the overlay
-/// is a child of a per-cell root so the cell transform matches chunk rendering.
+/// model. The overlay is a child of a per-cell root so the cell transform
+/// matches chunk rendering. Runs every frame (cheap retain), so it never
+/// depends on the dirty set that `rebuild_dirty_chunks` drains.
 pub fn reconcile_block_overlays(
     mut commands: Commands,
     level: Res<LevelDocument>,
     assets: Option<Res<MakerAssets>>,
     mut overlays: ResMut<BlockOverlayEntities>,
+    meta_q: Query<&BlockOverlayMeta>,
 ) {
     let Some(assets) = assets else {
         return;
     };
-    if level.dirty_chunks.is_empty() && !level.is_changed() {
-        return;
-    }
 
-    // Despawn overlays whose cell no longer holds a matching kind×shape
-    // (including Timed Pulse blocks while the pulse is off).
+    // Despawn overlays that no longer match the cell: the block went away,
+    // the pulse turned off, the pack model disappeared, or the kind/shape/rot
+    // changed (stale art must not linger).
     overlays.0.retain(|cell, e| {
         let keep = level.map.get(cell).is_some_and(|b| {
-            !(b.kind.is_pulse() && !level.pulse_on)
-                && overlay_model(&assets.block_manifest, b.kind, b.shape).is_some()
+            if b.kind.is_pulse() && !level.pulse_on {
+                return false;
+            }
+            if overlay_model(&assets.block_manifest, b.kind, b.shape).is_none() {
+                return false;
+            }
+            match meta_q.get(*e) {
+                Ok(meta) => meta.kind == b.kind && meta.shape == b.shape && meta.rot == b.rot,
+                // Missing meta → rebuild.
+                Err(_) => false,
+            }
         });
         if !keep {
             commands.entity(*e).despawn();
@@ -971,7 +993,9 @@ pub fn reconcile_block_overlays(
         if block.kind.is_pulse() && !level.pulse_on {
             continue;
         }
-        let Some((scale, y_off)) = overlay_placement(&assets.block_manifest, kind, shape) else {
+        let Some((scale, y_off, tint)) =
+            overlay_placement(&assets.block_manifest, kind, shape)
+        else {
             continue;
         };
         if overlays.0.contains_key(cell) {
@@ -988,17 +1012,32 @@ pub fn reconcile_block_overlays(
                     .with_rotation(Quat::from_rotation_y(yaw)),
                 Visibility::default(),
                 MakerCleanup,
+                BlockOverlayMeta {
+                    kind,
+                    shape,
+                    rot: block.rot,
+                },
             ))
             .id();
         commands.entity(root).with_children(|p| {
-            p.spawn((
+            let mut child = p.spawn((
                 WorldAssetRoot(scene),
-                ModelMaterial(assets.ghost_mats[&kind].clone()),
                 MakerCleanup,
                 Visibility::default(),
                 Transform::from_translation(Vec3::new(0.0, y_off, 0.0))
                     .with_scale(Vec3::splat(scale)),
             ));
+            // Only force a flat material when the pack is meant to be tinted.
+            // Model tint keeps the glTF albedo (apply_model_materials is a
+            // fallback that only fills meshes lacking MeshMaterial3d).
+            match tint {
+                BlockTintMode::Model => {
+                    child.insert(ModelMaterial(assets.model_inert_mat.clone()));
+                }
+                BlockTintMode::Kind | BlockTintMode::Theme | BlockTintMode::Link => {
+                    child.insert(ModelMaterial(assets.ghost_mats[&kind].clone()));
+                }
+            }
         });
         overlays.0.insert(*cell, root);
     }
@@ -1013,10 +1052,15 @@ pub fn spawn_place_ghost(
     rot: u8,
 ) {
     let mesh = assets.shape_meshes[&shape].clone();
+    let mat = assets
+        .ghost_alpha_mats
+        .get(&kind)
+        .cloned()
+        .unwrap_or_else(|| assets.ghost_mats[&kind].clone());
     let e = commands
         .spawn((
             Mesh3d(mesh),
-            MeshMaterial3d(assets.ghost_mats[&kind].clone()),
+            MeshMaterial3d(mat),
             Transform::from_translation(cell.as_vec3() + Vec3::splat(0.5))
                 .with_rotation(Quat::from_rotation_y(
                     rot as f32 * std::f32::consts::FRAC_PI_2,
@@ -1238,6 +1282,23 @@ pub fn setup_world(
         );
     }
 
+    let mut ghost_alpha_mats = HashMap::new();
+    for kind in ALL_BLOCK_KINDS {
+        let c = kind.color().to_srgba();
+        let mut m = StandardMaterial::from_color(Color::srgba(c.red, c.green, c.blue, 0.45));
+        m.alpha_mode = AlphaMode::Blend;
+        m.perceptual_roughness = 0.85;
+        ghost_alpha_mats.insert(*kind, materials.add(m));
+    }
+
+    // Inert fallback for pack models whose scenes ship albedo textures. Only
+    // applied to meshes that truly lack a MeshMaterial3d (apply_model_materials),
+    // so `tint: Model` packs never get their albedo wiped by a flat color.
+    let model_inert_mat = materials.add(StandardMaterial {
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+
     let mut shape_meshes = HashMap::new();
     for shape in ALL_BLOCK_SHAPES {
         shape_meshes.insert(*shape, meshes.add(build_shape_mesh(*shape)));
@@ -1262,6 +1323,8 @@ pub fn setup_world(
         player_material,
         preview_mat: preview_mat.clone(),
         ghost_mats,
+        ghost_alpha_mats,
+        model_inert_mat,
         shape_meshes,
         block_overlays,
         block_manifest: manifest.clone(),

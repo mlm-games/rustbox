@@ -250,6 +250,10 @@ pub struct SharedUi {
     // Live play stats
     pub play_time_secs: f32,
     pub deaths: u32,
+    /// Extra hits before death (HealOrb), shown in the play HUD.
+    pub player_armor: u8,
+    /// Keys held per link channel 1..=9 (index 0 unused), shown in the play HUD.
+    pub player_keys: [u8; 10],
     pub level_verified: bool,
     // Share / publish
     pub export_code: String,
@@ -378,6 +382,8 @@ impl Default for SharedUi {
             glimmers_total: 0,
             play_time_secs: 0.0,
             deaths: 0,
+            player_armor: 0,
+            player_keys: [0; 10],
             level_verified: false,
             export_code: String::new(),
             import_code: String::new(),
@@ -635,6 +641,8 @@ fn sync_shared_ui(
         ui.link_channel = m.link_channel;
         ui.play_time_secs = m.play_timer;
         ui.deaths = m.deaths;
+        ui.player_armor = m.player_armor;
+        ui.player_keys = m.player_keys;
     } else {
         ui.phase = state.get().clone();
         ui.paused = paused.0;

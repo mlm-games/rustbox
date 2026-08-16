@@ -130,6 +130,10 @@ pub struct MakerUi {
     pub glimmers_total: u32,
     pub score: u32,
     pub level_verified: bool,
+    /// Extra hits before death (HealOrb), shown in the play HUD.
+    pub player_armor: u8,
+    /// Keys held per link channel 1..=9 (index 0 unused), shown in the play HUD.
+    pub player_keys: [u8; 10],
     /// True when this run's clear created the level's first record, so the clear screen can
     /// show a "first clear" instead of a "beat the author" comparison.
     pub first_clear: bool,
@@ -317,6 +321,7 @@ pub fn push_ui_state(
     mirror: Res<super::mode::MirrorMode>,
     channel: Res<ActiveLinkChannel>,
     level: Res<LevelDocument>,
+    player_q: Query<&super::player::Player>,
     mut ui: ResMut<MakerUi>,
 ) {
     ui.mode = *mode;
@@ -381,6 +386,13 @@ pub fn push_ui_state(
     ui.can_undo = !history.undo.is_empty();
     ui.can_redo = !history.redo.is_empty();
     ui.level_verified = level.data.is_verified;
+    if let Ok(p) = player_q.single() {
+        ui.player_armor = p.armor;
+        ui.player_keys = p.keys;
+    } else {
+        ui.player_armor = 0;
+        ui.player_keys = [0; 10];
+    }
     if ui.status_timer > 0.0 {
         ui.status_timer -= time.delta_secs();
         if ui.status_timer <= 0.0 {

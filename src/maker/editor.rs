@@ -924,16 +924,25 @@ pub fn update_editor_cursor(
     }
 }
 
-/// Moves the placement ghost to the cursor's target cell (Blocks/Entities tabs)
-/// and updates its mesh + rotation to match the selected block shape/rot.
+/// Moves the placement ghost to the cursor's target cell (Blocks tab) and
+/// updates its mesh, material + rotation to match the selected block shape,
+/// kind color and rot.
 pub fn update_placement_preview(
     cursor: Res<EditorCursor>,
     tab: Res<BrushTab>,
     brush: Res<BlockBrush>,
     assets: Option<Res<MakerAssets>>,
-    mut preview_q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<PlacementPreview>>,
+    mut preview_q: Query<
+        (
+            &mut Transform,
+            &mut Visibility,
+            &mut Mesh3d,
+            &mut MeshMaterial3d<StandardMaterial>,
+        ),
+        With<PlacementPreview>,
+    >,
 ) {
-    let Ok((mut tr, mut vis, mut mesh)) = preview_q.single_mut() else {
+    let Ok((mut tr, mut vis, mut mesh, mut mat)) = preview_q.single_mut() else {
         return;
     };
     if *tab == BrushTab::Tracks {
@@ -954,6 +963,9 @@ pub fn update_placement_preview(
     };
     if let Some(handle) = assets.shape_meshes.get(&brush.shape) {
         *mesh = Mesh3d(handle.clone());
+    }
+    if let Some(handle) = assets.ghost_alpha_mats.get(&brush.kind) {
+        *mat = MeshMaterial3d(handle.clone());
     }
     tr.translation = Vec3::new(
         place_cell.x as f32 + 0.5,

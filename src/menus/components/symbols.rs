@@ -14,6 +14,7 @@ material_symbols! {
     EDIT: '\u{F097}',
     EXPAND_LESS: '\u{E5CE}',
     EXPAND_MORE: '\u{E5CF}',
+    FAVORITE: '\u{E87D}',
     FLAG: '\u{E153}',
     FOLDER_OPEN: '\u{E2C8}',
     GRID_VIEW: '\u{E9B0}',

@@ -81,14 +81,14 @@ bevy = { git = "https://github.com/bevyengine/bevy", rev = "fb89a8649d9b359e53ff
     "bevy_gizmos_render",
     "debug",
 ] }
-repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", default-features = false, features = [
+repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", rev = "5678ffa", default-features = false, features = [
     "shared-device",
 ] }
 wgpu = { version = "30", features = ["webgpu", "webgl"] }
-repose-core = "0.26"
-repose-ui = "0.26"
-repose-material = "0.26"
-repose-render-wgpu = "0.26"
+repose-core = "0.27"
+repose-ui = "0.27"
+repose-material = "0.27"
+repose-render-wgpu = "0.27"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -169,6 +169,4 @@ strip = "debuginfo"
 # repose-app = { path = "../repose/crates/repose-app" }
 # repose-ui = { path = "../repose/crates/repose-ui" }
 # repose-material = { path = "../repose/crates/repose-material" }
-# repose-text = { path = "../repose/crates/repose-text" }
-# repose-tree = { path = "../repose/crates/repose-tree" }
 # repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }

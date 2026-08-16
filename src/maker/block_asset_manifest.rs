@@ -145,14 +145,19 @@ impl BlockAssetManifest {
             .unwrap_or_else(|| format!("images/blocks/{}.png", block_preview_base(kind)))
     }
 
-    /// Load the manifest from disk, falling back to the built-in defaults when
-    /// the file is missing or malformed (the game must run either way).
+    /// Load the manifest from disk, merging over the built-in defaults so a
+    /// partial pack RON never blanks the rest of the catalog. Falls back to
+    /// the defaults when the file is missing or malformed (the game must run
+    /// either way).
     pub fn load(asset_root: &Path) -> Self {
         let path = asset_root.join("models/blocks.ron");
-        std::fs::read_to_string(&path)
+        let disk = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|text| ron::from_str(&text).ok())
-            .unwrap_or_else(Self::defaults)
+            .and_then(|text| ron::from_str::<Self>(&text).ok());
+        match disk {
+            Some(other) => Self::defaults().merged_with(other),
+            None => Self::defaults(),
+        }
     }
 
     /// Full cross product of every kind × shape (17 × 10 = 170 pairs). Landmark

@@ -69,17 +69,31 @@ fn icon_of(st: &SharedUi, kind: u8, id: u8) -> Option<u64> {
 
 pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     if !st.maker_mode_edit {
-        // like maker2.
-        return ZStack(Modifier::new().fill_max_size()).child(
-            Column(
-                Modifier::new()
-                    .fill_max_size()
-                    .justify_content(JustifyContent::FLEX_END)
-                    .align_items(AlignItems::FLEX_START)
-                    .padding(14.0),
+        return ZStack(Modifier::new().fill_max_size())
+            .child(
+                // temp play stats
+                Column(
+                    Modifier::new()
+                        .fill_max_size()
+                        .justify_content(JustifyContent::FLEX_START)
+                        .align_items(AlignItems::FLEX_START)
+                        .padding(14.0)
+                        .gap(8.0),
+                )
+                .child(play_stats_bar(st)),
             )
-            .child(clapperboard(st, actions)),
-        );
+            .child(
+                // Bottom-left: BACK (return to the editor)
+                Column(
+                    Modifier::new()
+                        .fill_max_size()
+                        .justify_content(JustifyContent::FLEX_END)
+                        .align_items(AlignItems::FLEX_START)
+                        .padding(14.0),
+                )
+                .child(clapperboard(st, actions)),
+            )
+            .child(status_toast(st));
     }
 
     ZStack(Modifier::new().fill_max_size())
@@ -142,6 +156,80 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             .child(limits_gauge(st)),
         )
         .child(selection_bubble(st, actions.clone()))
+        .child(status_toast(st))
+}
+
+fn play_stats_bar(st: &SharedUi) -> View {
+    let t = format_time(st.play_time_secs);
+    let glimmer = if st.glimmers_total > 0 {
+        format!("{}/{}", st.glimmers_collected, st.glimmers_total)
+    } else {
+        format!("{}", st.glimmers_collected)
+    };
+    let armor = st.player_armor;
+    let keys: String = (1..=9)
+        .filter(|&ch| st.player_keys.get(ch).copied().unwrap_or(0) > 0)
+        .map(|ch| ch.to_string())
+        .collect::<Vec<_>>()
+        .join("");
+    let keys_label = if keys.is_empty() {
+        "—".to_string()
+    } else {
+        keys
+    };
+
+    Column(
+        Modifier::new()
+            .gap(6.0)
+            .padding(10.0)
+            .background(tok::bg_elevated())
+            .clip_rounded(tok::R_MD),
+    )
+    .child(stat_row(Symbols::TIMER, t))
+    .child(stat_row(Symbols::SKULL, format!("{}", st.deaths)))
+    .child(stat_row(Symbols::STAR, glimmer))
+    .child(stat_row(Symbols::FAVORITE, format!("Armor {armor}")))
+    .child(stat_row(Symbols::KEY, keys_label))
+    .child(
+        RText(st.level_name.clone())
+            .size(12.0)
+            .color(tok::text_dim()),
+    )
+}
+
+/// `M:SS.s` style elapsed time.
+fn format_time(secs: f32) -> String {
+    let s = secs.max(0.0);
+    let m = (s as u32) / 60;
+    let r = s - (m as f32) * 60.0;
+    format!("{m}:{:04.1}", r)
+}
+
+fn stat_row(symbol: Symbol, label: String) -> View {
+    Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
+        Icon(symbol).size(18.0).color(tok::text()),
+        RText(label).size(15.0).color(tok::text()),
+    ))
+}
+
+fn status_toast(st: &SharedUi) -> View {
+    if st.maker_status.is_empty() {
+        return Row(Modifier::new().width(1.0).height(0.0));
+    }
+    Column(
+        Modifier::new()
+            .fill_max_size()
+            .justify_content(JustifyContent::FLEX_START)
+            .align_items(AlignItems::CENTER)
+            .padding(18.0),
+    )
+    .child(
+        Row(Modifier::new()
+            .padding(12.0)
+            .background(tok::bg_status())
+            .clip_rounded(tok::R_PILL))
+        .child(RText(st.maker_status.clone()).size(14.0).color(tok::text())),
+    )
 }
 
 fn parts_strip(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
@@ -352,30 +440,43 @@ fn limits_gauge(st: &SharedUi) -> View {
     } else {
         tok::ok()
     };
-    let frac = (st.limit_blocks as f32 / 500.0).clamp(0.0, 1.0);
-    Row(Modifier::new()
-        .padding(8.0)
-        .gap(8.0)
-        .align_items(AlignItems::CENTER)
-        .background(tok::bg_elevated())
-        .clip_rounded(tok::R_PILL))
-    .child((
-        RText(format!("{}", st.limit_blocks))
-            .size(13.0)
-            .color(tok::text()),
+    const MAX_B: f32 = 20_000.0;
+    const MAX_E: f32 = 1_000.0;
+    let fb = (st.limit_blocks as f32 / MAX_B).clamp(0.0, 1.0);
+    let fe = (st.limit_entities as f32 / MAX_E).clamp(0.0, 1.0);
+
+    Column(
+        Modifier::new()
+            .padding(8.0)
+            .gap(6.0)
+            .background(tok::bg_elevated())
+            .clip_rounded(tok::R_PILL),
+    )
+    .child(mini_bar(format!("B {}", st.limit_blocks), fb, color))
+    .child(mini_bar(format!("E {}", st.limit_entities), fe, color))
+    .child(
+        RText(format!("T{} V{}", st.limit_tracks, st.limit_vertices))
+            .size(11.0)
+            .color(tok::text_dim()),
+    )
+}
+
+fn mini_bar(label: String, frac: f32, color: Color) -> View {
+    Row(Modifier::new().gap(8.0).align_items(AlignItems::CENTER)).child((
+        RText(label).size(12.0).color(tok::text()),
         Column(
             Modifier::new()
-                .width(90.0)
-                .height(8.0)
+                .width(72.0)
+                .height(6.0)
                 .background(tok::bg_panel_solid())
-                .clip_rounded(4.0),
+                .clip_rounded(3.0),
         )
         .child(Column(
             Modifier::new()
-                .width((90.0 * frac).max(2.0))
-                .height(8.0)
+                .width((72.0 * frac).max(2.0))
+                .height(6.0)
                 .background(color)
-                .clip_rounded(4.0),
+                .clip_rounded(3.0),
         )),
     ))
 }

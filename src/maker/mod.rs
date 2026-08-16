@@ -180,7 +180,8 @@ impl Plugin for MakerPlugin {
                 rendering::reconcile_block_overlays
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)
-                    .run_if(not_blocked),
+                    .run_if(not_blocked)
+                    .after(rendering::rebuild_dirty_chunks),
             )
             .configure_sets(
                 Update,
@@ -390,6 +391,7 @@ fn cleanup_maker(
     q: Query<Entity, With<MakerCleanup>>,
     mut chunks: ResMut<ChunkEntities>,
     mut water_chunks: ResMut<rendering::WaterChunkEntities>,
+    mut overlays: ResMut<rendering::BlockOverlayEntities>,
     mut entities: ResMut<EntityEntities>,
 ) {
     for e in &q {
@@ -397,6 +399,7 @@ fn cleanup_maker(
     }
     chunks.0.clear();
     water_chunks.0.clear();
+    overlays.0.clear();
     entities.0.clear();
     commands.remove_resource::<rendering::MakerAssets>();
     commands.remove_resource::<entities_runtime::EntityAssets>();
