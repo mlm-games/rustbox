@@ -148,7 +148,7 @@ pub fn edit_camera_control(
 pub fn play_camera_follow(
     capture: Res<InputCapture>,
     time: Res<Time>,
-    buttons: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<&Gamepad>,
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut rig: ResMut<CameraRig>,
@@ -165,11 +165,20 @@ pub fn play_camera_follow(
     }
 
     if !capture.ui_wants_pointer {
-        if buttons.pressed(MouseButton::Right) {
-            rig.yaw -= delta.x * 0.005;
-            rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.1, 1.3);
-        }
+        rig.yaw -= delta.x * 0.005;
+        rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.1, 1.3);
         rig.distance = (rig.distance - scroll).clamp(4.0, 30.0);
+    }
+    // Right-stick look (mirrors the mouse yaw/pitch feel).
+    let dt = time.delta_secs();
+    for pad in &gamepads {
+        let r = pad.right_stick();
+        if r.x.abs() > 0.15 {
+            rig.yaw -= r.x * 2.2 * dt;
+        }
+        if r.y.abs() > 0.15 {
+            rig.pitch = (rig.pitch + r.y * 1.6 * dt).clamp(0.1, 1.3);
+        }
     }
 
     if let Ok(player) = player_q.single() {

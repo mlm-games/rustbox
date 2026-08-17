@@ -93,6 +93,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<limits::LevelLimits>()
             .init_resource::<limits::LevelStats>()
             .init_resource::<interactive_blocks::OnOffState>()
+            .init_resource::<interactive_blocks::PulseClock>()
             .init_resource::<ActiveTrack>()
             .init_resource::<mode::SelectedEntity>()
             .init_resource::<mode::MirrorMode>()
@@ -168,6 +169,7 @@ impl Plugin for MakerPlugin {
                         .before(entities_runtime::reconcile_entities),
                     player::sync_mode,
                     interactive_blocks::reset_onoff_state,
+                    interactive_blocks::reset_pulse_clock,
                     entities_runtime::animate_kit,
                 )
                     .run_if(in_state(AppState::InGame))

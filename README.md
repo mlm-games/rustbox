@@ -9,7 +9,8 @@ A WIP Bevy 3D course maker / block-builder (Mario Maker–style) with a full Edi
 - **Block kit** - terrain, ice, conveyor (incl. on/off + thin), bounce pads, climb, one-way platforms, timed pulse, hang rails
 - **Entity kit** - pickups, launch pads, bumpers, gates + keys, fans, prowler, TossCrate, signs, wedges, drift plates, crates, cannons
 - **Player** - Bevy + Rapier3d (crates only) + a custom voxel mover: AABB + shaped-surface collision, slopes, step-up, one-ways, hang, ledge grab, wall jump, jump cut / coyote / buffer, drop-through, slam, conveyor/ice, underwater
-- **Gamepad + keyboard** - pad play and maker input via Repose
+- **Gamepad + keyboard** - pad play (left stick, buttons, right-stick camera) and maker input via Repose
+- **Timed pulse blocks** - free-running solid/empty clock in Play, independent of the On/Off switch channel
 - **Persistence** - RON save/load/export/import with versioned formats
 - **i18n** - Fluent-based localization with bundled locales
 - **Juice** - squash & stretch, trauma shake, particles, screen effects
@@ -39,13 +40,15 @@ src/
 │   ├── collision.rs     # Custom voxel mover: AABB, shaped surfaces, slopes
 │   ├── player.rs        # Player controller: movement, hang, gamepad, juice
 │   ├── interaction.rs   # Entities: pads, gates, signs, orbs, crates, respawn
+│   ├── interactive_blocks.rs # On/Off channel + timed pulse clock
 │   ├── entities_runtime.rs # Runtime entity spawn / motion / tracks
 │   ├── rapier.rs        # Rapier3d bridge: held crates, seals
-│   ├── camera.rs        # Edit orbit + play follow rig
+│   ├── camera.rs        # Edit orbit + play follow rig (free-look, right stick)
 │   ├── rendering.rs     # Chunk meshing, block assets, thumbnails
 │   ├── online.rs        # Share / download levels (wasm worker client)
 │   ├── commands.rs      # Undoable edit commands
-│   └── ...              # ui_bridge, storage, mode, win, campaign, track
+│   └── ...              # ui_bridge, storage, mode, win, campaign, track,
+│                        # cursor, chunk, limits, catalog, thumbnail, theme
 ├── menus/               # Main, pause, settings, credits (localized)
 ├── screens/             # Splash, loading, title
 └── save.rs              # RON save/load with backup
@@ -60,6 +63,7 @@ crates/
 | Action | Keyboard | Gamepad |
 |--------|----------|---------|
 | Move | WASD | Left stick |
+| Look (camera) | Mouse (cursor locked) | Right stick |
 | Jump / jump cut | Space | South (A / Cross) |
 | Crouch / slam / drop-through | Shift / Shift+S | East (B / Circle) |
 | Hang | E | West (X / Square) |

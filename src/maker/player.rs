@@ -207,7 +207,9 @@ pub struct Player {
     pub pre_move_pos: Vec3,
     /// Brief lock after wall-jump so we don't re-stick the same frame.
     pub wall_lock: f32,
-    /// True if Space is held (for jump cut). Set from input each frame.
+    /// True between jump start and the first jump cut / reaching the apex:
+    /// marks the jump as player-initiated so only it gets the variable
+    /// jump cut (bounces and launches keep full height).
     pub jump_held: bool,
     /// Cooldown so bounce pads fire once per landing, not every frame.
     pub bounce_cd: f32,
@@ -310,7 +312,7 @@ fn find_hang_surface(level: &LevelDocument, pos: Vec3, he: Vec3) -> Option<(IVec
         for y in (top - 1..=top + 1).rev() {
             let cell = IVec3::new(cx, y, cz);
             if let Some(b) = level.get_block(cell)
-                && b.kind.is_solid()
+                && level.kind_is_solid(b.kind)
                 && b.kind.has_hangable_underside()
                 && let Some(bottom) = super::collision::surface_bottom_height(b, sx, sz)
             {
@@ -553,8 +555,6 @@ pub fn player_controller(
         }
         move_state.wish_dir = horiz;
 
-        let jump_held = kb && jump_down(&keys, &gamepads);
-        player.jump_held = jump_held;
         player.wall_lock = (player.wall_lock - dt).max(0.0);
 
         let want_crouch = kb && crouch_down(&keys, &gamepads);
@@ -833,18 +833,21 @@ pub fn player_controller(
             player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
         }
 
-        // Variable jump height: releasing early cuts upward velocity.
         if !underwater
             && !hanging
             && !player.slamming
             && player.launch <= 0.0
             && player.velocity.y > 0.0
-            && !jump_held
-            && player.jump_buffer <= 0.0
+            && player.jump_held
+            && !(kb && keys.pressed(KeyCode::Space))
         {
             if player.velocity.y > tuning.jump_speed * 0.15 {
                 player.velocity.y *= tuning.jump_cut_mult;
             }
+            player.jump_held = false;
+        }
+        if player.on_ground || player.velocity.y <= 0.0 {
+            player.jump_held = false;
         }
 
         // Project velocity out of the floor on slopes (grounded, falling into
@@ -977,6 +980,7 @@ pub fn player_controller(
                 player.coyote = 0.0;
                 player.wall_lock = tuning.wall_jump_lock;
                 player.on_ground = false;
+                player.jump_held = true;
                 move_state.wall_normal = n;
             }
         }
@@ -1160,12 +1164,12 @@ pub fn player_controller(
             && player.bounce_cd <= 0.0
             && ground_kind == Some(BlockKind::Bounce)
         {
-            player.velocity.y = JUMP_SPEED * 1.35;
+            player.velocity.y = tuning.jump_speed * 1.35;
             player.on_ground = false;
             player.coyote = 0.0;
             player.was_on_ground = false;
             player.bounce_cd = 0.2;
-            player.jump_held = jump_down(&keys, &gamepads);
+            player.jump_held = false; // full bounce, not cuttable
         }
     }
 }

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 use super::entities_runtime::Seal;
-use super::mode::MakerMode;
+use super::mode::{InputCapture, MakerMode};
 use super::player::Player;
 
 pub fn rapier_plugin(app: &mut App) {
@@ -13,8 +13,30 @@ pub fn rapier_plugin(app: &mut App) {
                 sync_seal_open,
                 move_held_objects,
                 pickup_throwables.after(move_held_objects),
+                release_held_on_mode_change,
             ),
         );
+}
+
+/// Drop any held crates when leaving Play: the kinematic body would otherwise
+/// float mid-air in Edit (or be carried into the next run's spawn).
+fn release_held_on_mode_change(
+    mode: Res<MakerMode>,
+    mut commands: Commands,
+    held: Query<(Entity, Option<&Collider>), (With<Throwable>, With<Held>)>,
+) {
+    if !mode.is_changed() || *mode == MakerMode::Play {
+        return;
+    }
+    for (e, col) in &held {
+        let mut cmd = commands.entity(e);
+        cmd.insert(RigidBody::Dynamic)
+            .remove::<Held>()
+            .insert(Velocity::zero());
+        if col.is_none() {
+            cmd.insert(Collider::cuboid(0.4, 0.4, 0.4));
+        }
+    }
 }
 
 /// Remove Seal collider when opened.
@@ -68,13 +90,14 @@ fn pickup_throwables(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mode: Res<MakerMode>,
+    capture: Res<InputCapture>,
     rig: Res<super::camera::CameraRig>,
     mut commands: Commands,
     player: Query<&Transform, With<Player>>,
     crates: Query<(Entity, &Transform), (With<Throwable>, Without<Held>)>,
     held_q: Query<Entity, (With<Throwable>, With<Held>)>,
 ) {
-    if *mode != MakerMode::Play {
+    if *mode != MakerMode::Play || capture.ui_wants_keyboard {
         return;
     }
     let pad_throw = gamepads.iter().any(|g| g.just_pressed(GamepadButton::RightTrigger));

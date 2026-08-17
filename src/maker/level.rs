@@ -23,9 +23,9 @@ pub struct LevelDocument {
     pub next_entity_id: LevelEntityId,
     pub next_track_id: TrackId,
     pub entities_dirty: bool,
-    /// Runtime mirror of the global on/off channel: Timed Pulse blocks are
-    /// solid only while this is true. Kept on in Edit mode so they build/feel
-    /// like normal blocks.
+    /// Runtime solidity of Timed Pulse blocks, driven by `PulseClock` in Play
+    /// (free-running solid/empty cycle). Kept on in Edit mode so they build
+    /// and feel like normal blocks.
     pub pulse_on: bool,
 }
 
