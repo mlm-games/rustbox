@@ -69,6 +69,12 @@ pub struct MoveTuning {
     pub wall_jump_up: f32,
     /// Seconds after wall-jump before another wall grab/jump.
     pub wall_jump_lock: f32,
+    /// Wall slide + wall jump while airborne against a wall. Disabled by
+    /// default (jank-heavy).
+    pub allow_wall_kick: bool,
+    /// Ledge grab / mantle (cling to a boxy lip, pull up). Disabled by
+    /// default.
+    pub allow_ledge_grab: bool,
 }
 
 impl Default for MoveTuning {
@@ -103,6 +109,8 @@ impl Default for MoveTuning {
             wall_jump_push: 7.5,
             wall_jump_up: 8.5,
             wall_jump_lock: 0.18,
+            allow_wall_kick: false,
+            allow_ledge_grab: false,
         }
     }
 }
@@ -263,7 +271,11 @@ fn ground_surface_block(
     if (h - feet_y).abs() > GROUND_STEP_MAX + 0.05 {
         return None;
     }
-    let cell = IVec3::new(wx.floor() as i32, (h - 0.001).floor() as i32, wz.floor() as i32);
+    let cell = IVec3::new(
+        wx.floor() as i32,
+        (h - 0.001).floor() as i32,
+        wz.floor() as i32,
+    );
     let b = level.get_block(cell)?;
     if !level.kind_is_solid(b.kind) {
         return None;
@@ -659,8 +671,7 @@ pub fn player_controller(
         // this frame). Computed before ground sampling so bounce/ice/conveyor
         // surface reads also ignore one-ways during the drop.
         let drop_through = effectively_crouching
-            && ((kb && keys.pressed(KeyCode::KeyS))
-                || gamepads.iter().any(|g| g.dpad().y < -0.5))
+            && ((kb && keys.pressed(KeyCode::KeyS)) || gamepads.iter().any(|g| g.dpad().y < -0.5))
             && player.on_ground
             && !hanging
             && !underwater
@@ -943,7 +954,8 @@ pub fn player_controller(
             let h = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
             h.dot(n) < -0.1 || horiz.dot(n) < -0.2
         };
-        if !underwater
+        if tuning.allow_wall_kick
+            && !underwater
             && !hanging
             && !player.on_ground
             && !player.slamming
@@ -1008,6 +1020,12 @@ pub fn player_controller(
         transform.translation = pos;
 
         player.grip_cooldown = (player.grip_cooldown - dt).max(0.0);
+        if player.gripping && !tuning.allow_ledge_grab {
+            // Feature toggled off mid-grip: drop cleanly.
+            player.gripping = false;
+            player.grip_top = 0.0;
+            player.velocity = Vec3::ZERO;
+        }
         if player.gripping {
             if jump_pressed(&keys, &gamepads) || keys.pressed(KeyCode::KeyW) {
                 transform.translation = player.grip_mantle;
@@ -1039,7 +1057,8 @@ pub fn player_controller(
                     player.velocity = Vec3::ZERO;
                 }
             }
-        } else if player.grip_cooldown <= 0.0
+        } else if tuning.allow_ledge_grab
+            && player.grip_cooldown <= 0.0
             && player.wall_lock <= 0.0
             && !result.on_ground
             && player.velocity.y <= 0.5
@@ -1226,9 +1245,7 @@ mod tests {
     fn ground_surface_block_requires_feet_near_the_surface() {
         // Bounce pad on a tall pedestal: standing next to it (feet 1.0 on the
         // boundary floor) must not fire as if standing on the pad.
-        let level = level_with(&[
-            (IVec3::new(0, 2, 0), BlockKind::Bounce, BlockShape::Full),
-        ]);
+        let level = level_with(&[(IVec3::new(0, 2, 0), BlockKind::Bounce, BlockShape::Full)]);
         assert_eq!(ground_surface_block(&level, 0.5, 0.5, 1.0), None);
         // On top of the pad (feet at 3.0) it is the walk surface.
         assert_eq!(
