@@ -429,8 +429,8 @@ pub fn gather_use_targets(
     if *mode != MakerMode::Play || ui.sign_dialog_open {
         return;
     }
-    let pad_use = gamepads.iter().any(|g| g.just_pressed(GamepadButton::North));
-    if capture.ui_wants_keyboard || (!keys.just_pressed(KeyCode::KeyI) && !pad_use) {
+    let input = super::player::read_play_input(&keys, &gamepads, !capture.ui_wants_keyboard);
+    if !input.interact_pressed {
         return;
     }
     let Ok(pt) = player_q.single() else {
@@ -1149,6 +1149,7 @@ pub fn resolve_use(
     time: Res<Time>,
     mode: Res<MakerMode>,
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     mut ui: ResMut<MakerUi>,
     mut link: ResMut<LinkState>,
     mut trauma: ResMut<Trauma>,
@@ -1169,9 +1170,15 @@ pub fn resolve_use(
     };
 
     if ui.sign_dialog_open {
+        let pad_dismiss = gamepads.iter().any(|g| {
+            g.just_pressed(GamepadButton::North)
+                || g.just_pressed(GamepadButton::South)
+                || g.just_pressed(GamepadButton::East)
+        });
         if keys.just_pressed(KeyCode::KeyI)
             || keys.just_pressed(KeyCode::Space)
             || keys.just_pressed(KeyCode::Escape)
+            || pad_dismiss
         {
             ui.sign_dialog_open = false;
             ui.sign_dialog_lines.clear();
@@ -1432,6 +1439,7 @@ fn break_crate(
 /// bounds or manual reset request a full respawn.
 pub fn play_hazard_goal(
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     level: Res<LevelDocument>,
     mut ui: ResMut<MakerUi>,
     mut requests: ResMut<DamageRequests>,
@@ -1459,7 +1467,9 @@ pub fn play_hazard_goal(
         || transform.translation.x > bounds.1.x as f32 + 0.5
         || transform.translation.z < bounds.0.z as f32 - 0.5
         || transform.translation.z > bounds.1.z as f32 + 0.5;
-    let manual_reset = keys.just_pressed(KeyCode::KeyR);
+    // Manual reset works from both keyboard and pad, and pad stays live even
+    // when overlays want the keyboard.
+    let manual_reset = super::player::read_play_input(&keys, &gamepads, true).reset_pressed;
 
     if fell_off || out_of_bounds || manual_reset {
         if !manual_reset {

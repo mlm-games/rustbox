@@ -501,24 +501,61 @@ fn read_move_wish(keys: &ButtonInput<KeyCode>, kb_ok: bool, gamepads: &Query<&Ga
     wish
 }
 
-fn jump_pressed(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
-    keys.just_pressed(KeyCode::Space) || pad_just_pressed(gamepads, GamepadButton::South)
+/// Single source of truth for Play-mode buttons. Keyboard respects input
+/// capture (dialogs / overlays); gamepad is always live while playing.
+#[derive(Clone, Copy, Debug)]
+pub struct PlayInput {
+    /// Camera-relative move wish (2D: x = right, y = forward).
+    pub wish: Vec2,
+    pub jump_pressed: bool,
+    pub jump_down: bool,
+    pub crouch_down: bool,
+    pub crouch_tapped: bool,
+    pub hang_down: bool,
+    pub interact_pressed: bool,
+    pub throw_pressed: bool,
+    pub reset_pressed: bool,
+    /// Crouch + back (used to drop through one-way platforms).
+    pub drop_through: bool,
 }
 
-fn jump_down(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
-    keys.pressed(KeyCode::Space) || pad_pressed(gamepads, GamepadButton::South)
+fn keyboard(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
+    kb_ok && keys.pressed(key)
 }
 
-fn crouch_down(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
-    keys.pressed(KeyCode::ShiftLeft) || pad_pressed(gamepads, GamepadButton::East)
-}
-
-fn crouch_tapped(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
-    keys.just_pressed(KeyCode::ShiftLeft) || pad_just_pressed(gamepads, GamepadButton::East)
-}
-
-fn hang_down(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
-    keys.pressed(KeyCode::KeyE) || pad_pressed(gamepads, GamepadButton::West)
+/// Combine keyboard + gamepad into one Play-mode input snapshot. All systems
+/// that read Play controls must use this (or a field of it) so input can never
+/// drift between keyboard and pad paths.
+pub fn read_play_input(
+    keys: &ButtonInput<KeyCode>,
+    gamepads: &Query<&Gamepad>,
+    kb_ok: bool,
+) -> PlayInput {
+    let wish = read_move_wish(keys, kb_ok, gamepads);
+    let crouch_down =
+        keyboard(keys, kb_ok, KeyCode::ShiftLeft) || pad_pressed(gamepads, GamepadButton::East);
+    let back = wish.y < -0.5
+        || keyboard(keys, kb_ok, KeyCode::KeyS)
+        || gamepads.iter().any(|g| g.dpad().y < -0.5);
+    PlayInput {
+        wish,
+        jump_pressed: keyboard(keys, kb_ok, KeyCode::Space)
+            || pad_just_pressed(gamepads, GamepadButton::South),
+        jump_down: keyboard(keys, kb_ok, KeyCode::Space)
+            || pad_pressed(gamepads, GamepadButton::South),
+        crouch_down,
+        crouch_tapped: keyboard(keys, kb_ok, KeyCode::ShiftLeft)
+            || pad_just_pressed(gamepads, GamepadButton::East),
+        hang_down: keyboard(keys, kb_ok, KeyCode::KeyE)
+            || pad_pressed(gamepads, GamepadButton::West),
+        interact_pressed: keyboard(keys, kb_ok, KeyCode::KeyI)
+            || pad_just_pressed(gamepads, GamepadButton::North),
+        throw_pressed: keyboard(keys, kb_ok, KeyCode::KeyF)
+            || pad_just_pressed(gamepads, GamepadButton::RightTrigger),
+        reset_pressed: keyboard(keys, kb_ok, KeyCode::KeyR)
+            || pad_just_pressed(gamepads, GamepadButton::Select),
+        drop_through: crouch_down && back,
+    }
 }
 
 pub fn player_controller(
@@ -544,7 +581,8 @@ pub fn player_controller(
     let tuning = &*tuning;
 
     for (entity, mut transform, mut player, mut move_state) in &mut q {
-        let wish = read_move_wish(&keys, kb, &gamepads);
+        let input = read_play_input(&keys, &gamepads, kb);
+        let wish = input.wish;
 
         let (sin, cos) = rig.yaw.sin_cos();
         let forward = Vec3::new(-sin, 0.0, -cos);
@@ -557,8 +595,8 @@ pub fn player_controller(
 
         player.wall_lock = (player.wall_lock - dt).max(0.0);
 
-        let want_crouch = kb && crouch_down(&keys, &gamepads);
-        let crouch_pressed = kb && crouch_tapped(&keys, &gamepads);
+        let want_crouch = input.crouch_down;
+        let crouch_pressed = input.crouch_tapped;
         let he = player.half_extents;
         let underwater = level.is_underwater_point(transform.translation);
 
@@ -589,7 +627,7 @@ pub fn player_controller(
 
         // Hanging: hold E (or West) under a hangable underside (thin conveyor /
         // hang rail). Overrides gravity while active.
-        let hang_key = kb && hang_down(&keys, &gamepads);
+        let hang_key = input.hang_down;
         player.hang_cooldown = (player.hang_cooldown - dt).max(0.0);
         if player.move_mode == PlayerMoveMode::Hanging {
             match find_hang_surface(&level, transform.translation, move_he) {
@@ -598,7 +636,7 @@ pub fn player_controller(
                         player.move_mode = PlayerMoveMode::Normal;
                         player.hang_cooldown = 0.25;
                         player.velocity.y = -2.0;
-                    } else if jump_pressed(&keys, &gamepads) {
+                    } else if input.jump_pressed {
                         // Hop off.
                         player.move_mode = PlayerMoveMode::Normal;
                         player.hang_cooldown = 0.25;
@@ -671,7 +709,7 @@ pub fn player_controller(
         // this frame). Computed before ground sampling so bounce/ice/conveyor
         // surface reads also ignore one-ways during the drop.
         let drop_through = effectively_crouching
-            && ((kb && keys.pressed(KeyCode::KeyS)) || gamepads.iter().any(|g| g.dpad().y < -0.5))
+            && input.drop_through
             && player.on_ground
             && !hanging
             && !underwater
@@ -774,11 +812,11 @@ pub fn player_controller(
         player.speed_boost = (player.speed_boost - dt).max(0.0);
         player.invuln = (player.invuln - dt).max(0.0);
 
-        if jump_pressed(&keys, &gamepads) {
+        if input.jump_pressed {
             player.jump_buffer = tuning.jump_buffer;
         }
         if underwater {
-            if jump_down(&keys, &gamepads) {
+            if input.jump_down {
                 player.velocity.y = tuning.swim_speed;
             }
         } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
@@ -839,7 +877,7 @@ pub fn player_controller(
             && player.launch <= 0.0
             && player.velocity.y > 0.0
             && player.jump_held
-            && !(kb && keys.pressed(KeyCode::Space))
+            && !input.jump_down
         {
             if player.velocity.y > tuning.jump_speed * 0.15 {
                 player.velocity.y *= tuning.jump_cut_mult;
@@ -867,10 +905,17 @@ pub fn player_controller(
             }
         }
 
-        // Climb surface: hold W while overlapping a Climb block to ascend.
+        // Climb surface: forward (W / stick-up) ascends, back slides down slowly,
+        // anything else clings so you don't instantly peel off the wall like others.
         let on_climb = overlaps_kind(transform.translation, move_he, &level, BlockKind::Climb);
-        if on_climb && kb && !hanging && keys.pressed(KeyCode::KeyW) {
-            player.velocity.y = 4.5;
+        if on_climb && !hanging && !player.slamming {
+            if input.wish.y > 0.35 {
+                player.velocity.y = 4.5;
+            } else if input.wish.y < -0.35 {
+                player.velocity.y = player.velocity.y.min(-2.5).max(tuning.wall_slide_max_fall);
+            } else if !player.on_ground {
+                player.velocity.y = player.velocity.y.max(-1.5);
+            }
         }
 
         // Stay glued to the ground (blocks + runtime solids, Warbell-style).
@@ -954,8 +999,9 @@ pub fn player_controller(
 
         let into_wall = result.wall_normal.length_squared() > 1e-6 && {
             let n = result.wall_normal;
-            let h = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
-            h.dot(n) < -0.1 || horiz.dot(n) < -0.2
+            horiz.dot(n) < -0.45
+                && Vec3::new(player.velocity.x, 0.0, player.velocity.z).dot(n) < -0.05
+                && (move_state.floor_normal.y > 0.99 || !player.on_ground)
         };
         if tuning.allow_wall_kick
             && !underwater
@@ -989,7 +1035,7 @@ pub fn player_controller(
         // move and carry the player with the plate's motion.
         let mut pos = result.pos;
         let feet_y = pos.y - move_he.y;
-        let prev_feet = feet_y - player.velocity.y * dt;
+        let prev_feet = player.pre_move_pos.y - move_he.y;
         let mut on_plate = false;
         for (dtf, drift) in &plates {
             let top = dtf.translation.y + 0.12;
@@ -1031,7 +1077,7 @@ pub fn player_controller(
             player.velocity = Vec3::ZERO;
         }
         if player.gripping {
-            if jump_pressed(&keys, &gamepads) || keys.pressed(KeyCode::KeyW) {
+            if input.jump_pressed || keys.pressed(KeyCode::KeyW) {
                 transform.translation = player.grip_mantle;
                 player.gripping = false;
                 player.grip_top = 0.0;
@@ -1070,6 +1116,8 @@ pub fn player_controller(
             && !player.slamming
             && player.launch <= 0.0
             && !hanging
+            && !on_climb
+            && result.wall_normal.y.abs() < 0.1
             && (result.hit_x || result.hit_z)
         {
             // Ledge mantle: only when clearly into a wall and lip is boxy.
@@ -1162,7 +1210,13 @@ pub fn player_controller(
         if player.on_ground
             && player.velocity.y <= 0.0
             && player.bounce_cd <= 0.0
-            && ground_kind == Some(BlockKind::Bounce)
+            && !hanging
+            && let Some((BlockKind::Bounce, _)) = ground_surface_block(
+                &level,
+                transform.translation.x,
+                transform.translation.z,
+                transform.translation.y - move_he.y,
+            )
         {
             player.velocity.y = tuning.jump_speed * 1.35;
             player.on_ground = false;

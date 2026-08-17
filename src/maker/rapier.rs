@@ -97,11 +97,11 @@ fn pickup_throwables(
     crates: Query<(Entity, &Transform), (With<Throwable>, Without<Held>)>,
     held_q: Query<Entity, (With<Throwable>, With<Held>)>,
 ) {
-    if *mode != MakerMode::Play || capture.ui_wants_keyboard {
+    if *mode != MakerMode::Play {
         return;
     }
-    let pad_throw = gamepads.iter().any(|g| g.just_pressed(GamepadButton::RightTrigger));
-    if !keys.just_pressed(KeyCode::KeyF) && !pad_throw {
+    let input = super::player::read_play_input(&keys, &gamepads, !capture.ui_wants_keyboard);
+    if !input.throw_pressed {
         return;
     }
     let Ok(ptf) = player.single() else {

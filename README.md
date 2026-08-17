@@ -8,7 +8,7 @@ A WIP Bevy 3D course maker / block-builder (Mario Maker–style) with a full Edi
 - **Edit/Play modes** - edit the level, then playtest in place; win condition, clear screen, checkpoints, death counter and record time
 - **Block kit** - terrain, ice, conveyor (incl. on/off + thin), bounce pads, climb, one-way platforms, timed pulse, hang rails
 - **Entity kit** - pickups, launch pads, bumpers, gates + keys, fans, prowler, TossCrate, signs, wedges, drift plates, crates, cannons
-- **Player** - Bevy + Rapier3d (crates only) + a custom voxel mover: AABB + shaped-surface collision, slopes, step-up, one-ways, hang, ledge grab, wall jump, jump cut / coyote / buffer, drop-through, slam, conveyor/ice, underwater
+- **Player** - Bevy + Rapier3d (crates only) + a custom voxel mover: AABB + shaped-surface collision, slopes, step-up, one-ways, hang, jump cut / coyote / buffer, drop-through, slam, conveyor/ice, underwater. Ledge grab and wall kick exist as tuning flags but are **off by default** (jank-heavy)
 - **Gamepad + keyboard** - pad play (left stick, buttons, right-stick camera) and maker input via Repose
 - **Timed pulse blocks** - free-running solid/empty clock in Play, independent of the On/Off switch channel
 - **Persistence** - RON save/load/export/import with versioned formats
@@ -69,7 +69,7 @@ crates/
 | Hang | E | West (X / Square) |
 | Interact (gates, signs) | I | North (Y / Triangle) |
 | Pick up / throw crate | F | Right trigger |
-| Reset | R | - |
+| Reset | R | Select |
 
 ## Dependencies
 
