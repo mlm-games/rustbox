@@ -1,26 +1,18 @@
 # Rustbox
 
-A WIP Bevy 3D Mario Maker–style level builder built on [Repose UI](https://github.com/mlm-games/repose-bevy): place blocks, wire logic, and ship levels.
+A WIP Bevy 3D course maker / block-builder (Mario Maker–style) with a full Edit/Play loop: place blocks, wire logic, and ship levels. Built on [Repose UI](https://github.com/mlm-games/repose-bevy).
 
 ## Features
 
-- **Game Feel** - recoil, knockback, slow-motion, rumble (gamepad)
-- **Screen Effects** - trauma shake, freeze frame, flash white, chromatic aberration pulse + decay
-- **Transitions** - fade to black, circle wipe scene transitions with input blocking
-- **Audio** - channel-based SFX/Music/UI buses with independent volume control via `AudioSink`, pitch variation (uses Bevy built-in audio, no external dep)
-- **Localization** - Fluent-based i18n with 7 bundled locales (en, es, fr, de, ja, zh, pt), language switcher in settings, `LocaleResources` resource
-- **Save System** - persistent RON save + backup via `directories`
-- **Object Pooling** - generic entity pool with acquire/release
-- **Juice** - pop-in, squash & stretch, bounce scale, shake, particles with gravity/fade
-- **VFX** - damage numbers, particle bursts, trail emitters
-- **UI Effects** - hover scale, typewriter text, number counter
-- **Math Utils** - smooth_damp, approach, wave (f32, Vec2, Vec3)
-- **Center Pivot** - sprite origin centering component
-- **UI** - animated buttons, popup system, pause/settings/credits with localized text (Repose)
-- **States** - Splash -> Loading -> Title -> InGame with pause overlay
-- **Theme** - centralized color constants
-- **Dev Tools** - FPS overlay, state logging (dev feature)
-- **Demo Scene** - player with shooting, enemies, trauma, recoil, burst effects, damage numbers, gamepad rumble
+- **Maker** - place/erase blocks, shapes (ramps, slabs, corners, V-slopes), undo/redo, box fill, paste, mirror, tracks, sign inspector, on/off wiring, online share/download (Cloudflare Worker backend)
+- **Edit/Play modes** - edit the level, then playtest in place; win condition, clear screen, checkpoints, death counter and record time
+- **Block kit** - terrain, ice, conveyor (incl. on/off + thin), bounce pads, climb, one-way platforms, timed pulse, hang rails
+- **Entity kit** - pickups, launch pads, bumpers, gates + keys, fans, prowler, TossCrate, signs, wedges, drift plates, crates, cannons
+- **Player** - Bevy + Rapier3d (crates only) + a custom voxel mover: AABB + shaped-surface collision, slopes, step-up, one-ways, hang, ledge grab, wall jump, jump cut / coyote / buffer, drop-through, slam, conveyor/ice, underwater
+- **Gamepad + keyboard** - pad play and maker input via Repose
+- **Persistence** - RON save/load/export/import with versioned formats
+- **i18n** - Fluent-based localization with bundled locales
+- **Juice** - squash & stretch, trauma shake, particles, screen effects
 
 ## Quick Start
 
@@ -28,12 +20,8 @@ A WIP Bevy 3D Mario Maker–style level builder built on [Repose UI](https://git
 cargo run
 ```
 
-With physics (Avian2d, will be switched to rapier soon):
-```bash
-cargo run --features physics
-```
+Rapier3d is always on (no `physics` feature flag). Dev build with hot-reload:
 
-Dev build with hot-reload:
 ```bash
 cargo run --features dev
 ```
@@ -44,37 +32,51 @@ cargo run --features dev
 src/
 ├── main.rs              # Entry point
 ├── app.rs               # AppPlugin, states, system sets
-├── ecosystem/           # Game feel, transitions, audio, save, i18n, vfx, etc.
-│   ├── audio.rs         # Channel-based audio buses (SfxChannel/MusicChannel/UiChannel)
-│   ├── center_pivot.rs  # Sprite origin centering
-│   ├── game_feel.rs     # Recoil, knockback, slow-motion, gamepad rumble
-│   ├── i18n.rs          # Fluent-based localization (7 locales, language switcher)
-│   ├── juice.rs         # Pop-in, squash/stretch, bounce, shake, particles
-│   ├── math_utils.rs    # smooth_damp, approach, wave (f32/Vec2/Vec3)
-│   ├── pooling.rs       # Generic entity pooling
-│   ├── save.rs          # RON save/load with backup
-│   ├── screen_effects.rs# Trauma, freeze frame, flash white, chromatic aberration
-│   ├── transitions.rs   # Fade/circle wipe with input blocking
-│   ├── ui_effects.rs    # Hover scale, typewriter, number counter
-│   └── vfx.rs           # Damage numbers, particle bursts, trail emitters
-├── screens/             # Splash, loading, title
+├── maker/               # The course maker
+│   ├── editor.rs        # Cursor placement, box fill, paste, mirror, undo
+│   ├── level.rs         # LevelDocument: blocks/entities/tracks persistence
+│   ├── block.rs         # Block kinds + shapes (rustbox-format)
+│   ├── collision.rs     # Custom voxel mover: AABB, shaped surfaces, slopes
+│   ├── player.rs        # Player controller: movement, hang, gamepad, juice
+│   ├── interaction.rs   # Entities: pads, gates, signs, orbs, crates, respawn
+│   ├── entities_runtime.rs # Runtime entity spawn / motion / tracks
+│   ├── rapier.rs        # Rapier3d bridge: held crates, seals
+│   ├── camera.rs        # Edit orbit + play follow rig
+│   ├── rendering.rs     # Chunk meshing, block assets, thumbnails
+│   ├── online.rs        # Share / download levels (wasm worker client)
+│   ├── commands.rs      # Undoable edit commands
+│   └── ...              # ui_bridge, storage, mode, win, campaign, track
 ├── menus/               # Main, pause, settings, credits (localized)
-├── theme/               # Theme resource
-├── demo/                # Sample gameplay with all juice
-├── dev_tools.rs         # FPS overlay, state logging
-└── asset_tracking.rs    # Preload tracking
+├── screens/             # Splash, loading, title
+└── save.rs              # RON save/load with backup
+
+crates/
+├── rustbox-format/      # Level file format, block/entity/track data (shared)
+└── rustbox-worker/      # Cloudflare Worker for online levels (wasm32)
 ```
+
+## Controls (Play)
+
+| Action | Keyboard | Gamepad |
+|--------|----------|---------|
+| Move | WASD | Left stick |
+| Jump / jump cut | Space | South (A / Cross) |
+| Crouch / slam / drop-through | Shift / Shift+S | East (B / Circle) |
+| Hang | E | West (X / Square) |
+| Interact (gates, signs) | I | North (Y / Triangle) |
+| Pick up / throw crate | F | Right trigger |
+| Reset | R | - |
 
 ## Dependencies
 
 | Crate | Purpose |
 |-------|---------|
 | `bevy` (git rev) | Engine |
+| `bevy_rapier3d` | Physics (held crates, dynamic bodies) |
+| `rustbox-format` | Level format + worker schema |
 | `repose-bevy` / `repose-*` | UI framework |
 | `fluent-bundle` + `unic-langid` | Localization (Fluent) |
 | `serde` + `ron` + `directories` | Save system |
-| `rand` | Random variation (audio pitch, VFX) |
-| `avian2d` (optional) | Physics |
 
 ## License
 

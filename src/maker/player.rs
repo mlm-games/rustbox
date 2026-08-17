@@ -201,6 +201,8 @@ pub struct Player {
     pub wall_lock: f32,
     /// True if Space is held (for jump cut). Set from input each frame.
     pub jump_held: bool,
+    /// Cooldown so bounce pads fire once per landing, not every frame.
+    pub bounce_cd: f32,
 }
 
 impl Default for Player {
@@ -234,6 +236,7 @@ impl Default for Player {
             pre_move_pos: Vec3::ZERO,
             wall_lock: 0.0,
             jump_held: false,
+            bounce_cd: 0.0,
         }
     }
 }
@@ -243,63 +246,71 @@ pub fn spawn_center(level: &LevelDocument) -> Vec3 {
     Vec3::new(s[0] as f32 + 0.5, s[1] as f32 + 0.9, s[2] as f32 + 0.5)
 }
 
-fn ground_block(level: &LevelDocument, wx: f32, wz: f32) -> Option<BlockKind> {
-    let cx = wx.floor() as i32;
-    let cz = wz.floor() as i32;
-    let from = wx.max(wz).max(0.0) as i32 + 8;
-    for y in ((-512 + 8)..=from).rev() {
-        let cell = IVec3::new(cx, y, cz);
-        if let Some(b) = level.get_block(cell) {
-            if level.kind_is_solid(b.kind) {
-                return Some(b.kind);
-            }
-        } else if level.boundary_solid(cell) {
-            return None;
-        }
+/// The block kind + yaw of the surface the player is *actually standing on*:
+/// the topmost solid surface under `(wx, wz)` must be within one step of the
+/// feet, otherwise a tall neighbor column / thin overlayer is ignored.
+fn ground_surface_block(
+    level: &LevelDocument,
+    wx: f32,
+    wz: f32,
+    feet_y: f32,
+) -> Option<(BlockKind, u8)> {
+    let h = ground_height(level, wx, wz);
+    if !h.is_finite() {
+        return None;
     }
-    None
-}
-
-fn ground_block_rot(level: &LevelDocument, wx: f32, wz: f32) -> Option<u8> {
-    let cx = wx.floor() as i32;
-    let cz = wz.floor() as i32;
-    let from = wx.max(wz).max(0.0) as i32 + 8;
-    for y in ((-512 + 8)..=from).rev() {
-        let cell = IVec3::new(cx, y, cz);
-        if let Some(b) = level.get_block(cell) {
-            if level.kind_is_solid(b.kind) {
-                return Some(b.rot);
-            }
-        } else if level.boundary_solid(cell) {
-            return None;
-        }
+    // Must be the surface we're actually standing on.
+    if (h - feet_y).abs() > GROUND_STEP_MAX + 0.05 {
+        return None;
     }
-    None
+    let cell = IVec3::new(wx.floor() as i32, (h - 0.001).floor() as i32, wz.floor() as i32);
+    let b = level.get_block(cell)?;
+    if !level.kind_is_solid(b.kind) {
+        return None;
+    }
+    // Empty half of a V-slab / V-slope etc. is not a floor under this point.
+    if super::collision::surface_top_height_opt(b, wx, wz).is_none() {
+        return None;
+    }
+    Some((b.kind, b.rot))
 }
 
 /// A hangable underside directly above the player's head, if any. Returns the
 /// cell and the world height of the slab's bottom surface.
 fn find_hang_surface(level: &LevelDocument, pos: Vec3, he: Vec3) -> Option<(IVec3, f32)> {
     let head = pos.y + he.y;
-    let cx = pos.x.floor() as i32;
-    let cz = pos.z.floor() as i32;
-    // Check the column the head is in and one above (in case the head just
-    // crossed a cell boundary).
+    // Sample the head cell plus four inset corner columns so rails/conveyors
+    // keep the grab when the body straddles a cell corner.
+    let samples = [
+        (pos.x, pos.z),
+        (pos.x + he.x * 0.6, pos.z),
+        (pos.x - he.x * 0.6, pos.z),
+        (pos.x, pos.z + he.z * 0.6),
+        (pos.x, pos.z - he.z * 0.6),
+    ];
     let top = head.floor() as i32;
-    for y in (top - 1..=top + 1).rev() {
-        let cell = IVec3::new(cx, y, cz);
-        if let Some(b) = level.get_block(cell)
-            && b.kind.is_solid()
-            && b.kind.has_hangable_underside()
-            && let Some(bottom) = super::collision::surface_bottom_height(b, pos.x, pos.z)
-        {
-            // Only grab while the head is roughly against the underside.
-            if (bottom - head).abs() <= 0.35 {
-                return Some((cell, bottom));
+    let mut best: Option<(IVec3, f32, f32)> = None;
+    for (sx, sz) in samples {
+        let cx = sx.floor() as i32;
+        let cz = sz.floor() as i32;
+        // Check the column the head is in and one above (in case the head just
+        // crossed a cell boundary), and one below for the gap.
+        for y in (top - 1..=top + 1).rev() {
+            let cell = IVec3::new(cx, y, cz);
+            if let Some(b) = level.get_block(cell)
+                && b.kind.is_solid()
+                && b.kind.has_hangable_underside()
+                && let Some(bottom) = super::collision::surface_bottom_height(b, sx, sz)
+            {
+                // Only grab while the head is roughly against the underside.
+                let err = (bottom - head).abs();
+                if err <= 0.35 && best.map_or(true, |(_, _, e)| err < e) {
+                    best = Some((cell, bottom, err));
+                }
             }
         }
     }
-    None
+    best.map(|(c, b, _)| (c, b))
 }
 
 pub fn respawn_player(
@@ -336,6 +347,7 @@ pub fn respawn_player(
     player.pre_move_pos = spawn;
     player.wall_lock = 0.0;
     player.jump_held = false;
+    player.bounce_cd = 0.0;
     *move_state = MoveState::default();
 }
 
@@ -438,9 +450,67 @@ fn apply_accel_friction(
     vel.z = h.z;
 }
 
+fn pad_pressed(gamepads: &Query<&Gamepad>, btn: GamepadButton) -> bool {
+    gamepads.iter().any(|g| g.pressed(btn))
+}
+
+fn pad_just_pressed(gamepads: &Query<&Gamepad>, btn: GamepadButton) -> bool {
+    gamepads.iter().any(|g| g.just_pressed(btn))
+}
+
+/// Combined keyboard + gamepad move wish (camera-relative, applied by caller).
+fn read_move_wish(keys: &ButtonInput<KeyCode>, kb_ok: bool, gamepads: &Query<&Gamepad>) -> Vec2 {
+    let mut wish = Vec2::ZERO;
+    if kb_ok {
+        if keys.pressed(KeyCode::KeyW) {
+            wish.y += 1.0;
+        }
+        if keys.pressed(KeyCode::KeyS) {
+            wish.y -= 1.0;
+        }
+        if keys.pressed(KeyCode::KeyA) {
+            wish.x -= 1.0;
+        }
+        if keys.pressed(KeyCode::KeyD) {
+            wish.x += 1.0;
+        }
+    }
+    for pad in gamepads {
+        let v = pad.left_stick();
+        if v.length() > 0.2 {
+            wish += v;
+        }
+    }
+    if wish.length_squared() > 1.0 {
+        wish = wish.normalize();
+    }
+    wish
+}
+
+fn jump_pressed(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
+    keys.just_pressed(KeyCode::Space) || pad_just_pressed(gamepads, GamepadButton::South)
+}
+
+fn jump_down(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
+    keys.pressed(KeyCode::Space) || pad_pressed(gamepads, GamepadButton::South)
+}
+
+fn crouch_down(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
+    keys.pressed(KeyCode::ShiftLeft) || pad_pressed(gamepads, GamepadButton::East)
+}
+
+fn crouch_tapped(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
+    keys.just_pressed(KeyCode::ShiftLeft) || pad_just_pressed(gamepads, GamepadButton::East)
+}
+
+fn hang_down(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>) -> bool {
+    keys.pressed(KeyCode::KeyE) || pad_pressed(gamepads, GamepadButton::West)
+}
+
 pub fn player_controller(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     capture: Res<InputCapture>,
     level: Res<LevelDocument>,
     rig: Res<CameraRig>,
@@ -460,21 +530,7 @@ pub fn player_controller(
     let tuning = &*tuning;
 
     for (entity, mut transform, mut player, mut move_state) in &mut q {
-        let mut wish = Vec2::ZERO;
-        if kb {
-            if keys.pressed(KeyCode::KeyW) {
-                wish.y += 1.0;
-            }
-            if keys.pressed(KeyCode::KeyS) {
-                wish.y -= 1.0;
-            }
-            if keys.pressed(KeyCode::KeyA) {
-                wish.x -= 1.0;
-            }
-            if keys.pressed(KeyCode::KeyD) {
-                wish.x += 1.0;
-            }
-        }
+        let wish = read_move_wish(&keys, kb, &gamepads);
 
         let (sin, cos) = rig.yaw.sin_cos();
         let forward = Vec3::new(-sin, 0.0, -cos);
@@ -485,12 +541,12 @@ pub fn player_controller(
         }
         move_state.wish_dir = horiz;
 
-        let jump_held = kb && keys.pressed(KeyCode::Space);
+        let jump_held = kb && jump_down(&keys, &gamepads);
         player.jump_held = jump_held;
         player.wall_lock = (player.wall_lock - dt).max(0.0);
 
-        let want_crouch = kb && keys.pressed(KeyCode::ShiftLeft);
-        let crouch_pressed = keys.just_pressed(KeyCode::ShiftLeft);
+        let want_crouch = kb && crouch_down(&keys, &gamepads);
+        let crouch_pressed = kb && crouch_tapped(&keys, &gamepads);
         let he = player.half_extents;
         let underwater = level.is_underwater_point(transform.translation);
 
@@ -519,9 +575,9 @@ pub fn player_controller(
         };
         transform.translation.y = feet_y + move_he.y;
 
-        // Hanging: hold E under a hangable underside (thin conveyor / hang
-        // rail). Overrides gravity while active.
-        let hang_key = kb && keys.pressed(KeyCode::KeyE);
+        // Hanging: hold E (or West) under a hangable underside (thin conveyor /
+        // hang rail). Overrides gravity while active.
+        let hang_key = kb && hang_down(&keys, &gamepads);
         player.hang_cooldown = (player.hang_cooldown - dt).max(0.0);
         if player.move_mode == PlayerMoveMode::Hanging {
             match find_hang_surface(&level, transform.translation, move_he) {
@@ -530,7 +586,7 @@ pub fn player_controller(
                         player.move_mode = PlayerMoveMode::Normal;
                         player.hang_cooldown = 0.25;
                         player.velocity.y = -2.0;
-                    } else if keys.just_pressed(KeyCode::Space) {
+                    } else if jump_pressed(&keys, &gamepads) {
                         // Hop off.
                         player.move_mode = PlayerMoveMode::Normal;
                         player.hang_cooldown = 0.25;
@@ -598,12 +654,31 @@ pub fn player_controller(
 
         let launch_locked = player.launch > 0.0;
 
-        let ground_kind = if player.on_ground {
-            ground_block(&level, transform.translation.x, transform.translation.z)
+        // Crouch drop-through: hold crouch + S (or crouch + DPad-Down) while
+        // grounded to fall through one-way platforms (waived in the collider
+        // this frame). Computed before ground sampling so bounce/ice/conveyor
+        // surface reads also ignore one-ways during the drop.
+        let drop_through = effectively_crouching
+            && ((kb && keys.pressed(KeyCode::KeyS))
+                || gamepads.iter().any(|g| g.dpad().y < -0.5))
+            && player.on_ground
+            && !hanging
+            && !underwater
+            && player.velocity.y <= 0.0;
+
+        let feet_now = transform.translation.y - move_he.y;
+        let ground_surf = if player.on_ground && !drop_through {
+            ground_surface_block(
+                &level,
+                transform.translation.x,
+                transform.translation.z,
+                feet_now,
+            )
         } else {
             None
         };
-        let on_ice = ground_kind.is_some_and(|k| k == BlockKind::Ice);
+        let ground_kind = ground_surf.map(|(k, _)| k);
+        let on_ice = ground_kind == Some(BlockKind::Ice);
 
         // Horizontal control: accel/friction (not instant wish velocity).
         // While hanging, the crawl accel already ran; skip normal control.
@@ -688,11 +763,11 @@ pub fn player_controller(
         player.speed_boost = (player.speed_boost - dt).max(0.0);
         player.invuln = (player.invuln - dt).max(0.0);
 
-        if keys.just_pressed(KeyCode::Space) {
+        if jump_pressed(&keys, &gamepads) {
             player.jump_buffer = tuning.jump_buffer;
         }
         if underwater {
-            if keys.pressed(KeyCode::Space) {
+            if jump_down(&keys, &gamepads) {
                 player.velocity.y = tuning.swim_speed;
             }
         } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
@@ -704,6 +779,7 @@ pub fn player_controller(
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
             player.on_ground = false;
+            player.jump_held = true;
         }
 
         if !underwater
@@ -718,16 +794,18 @@ pub fn player_controller(
             player.slamming = true;
         }
 
-        // Conveyor: push the player along the block's facing while on top.
+        // Conveyor: push the player toward the belt velocity while on top.
+        // Blends instead of accumulating so ice/conveyor stacks don't fight.
         if !hanging
-            && let Some(kind) = ground_kind
+            && let Some((kind, rot)) = ground_surf
             && kind.is_conveyor()
             && kind.conveyor_active(onoff.on)
-            && let Some(rot) =
-                ground_block_rot(&level, transform.translation.x, transform.translation.z)
         {
             let dir = Quat::from_rotation_y(rot as f32 * std::f32::consts::FRAC_PI_2) * Vec3::X;
-            player.velocity += dir * 6.0 * dt;
+            let belt = dir * 4.0;
+            let t = 1.0 - (-8.0 * dt).exp();
+            player.velocity.x += (belt.x - player.velocity.x) * t;
+            player.velocity.z += (belt.z - player.velocity.z) * t;
         }
 
         let gravity = if underwater {
@@ -780,16 +858,6 @@ pub fn player_controller(
         if on_climb && kb && !hanging && keys.pressed(KeyCode::KeyW) {
             player.velocity.y = 4.5;
         }
-
-        // Crouch drop-through: hold crouch + S while grounded to fall through
-        // one-way platforms (waived in the collider this frame).
-        let drop_through = effectively_crouching
-            && kb
-            && keys.pressed(KeyCode::KeyS)
-            && player.on_ground
-            && !hanging
-            && !underwater
-            && player.velocity.y <= 0.0;
 
         // Stay glued to the ground (blocks + runtime solids, Warbell-style).
         let grounding_ok = (player.was_on_ground || player.on_ground)
@@ -941,7 +1009,7 @@ pub fn player_controller(
 
         player.grip_cooldown = (player.grip_cooldown - dt).max(0.0);
         if player.gripping {
-            if keys.just_pressed(KeyCode::Space) || keys.pressed(KeyCode::KeyW) {
+            if jump_pressed(&keys, &gamepads) || keys.pressed(KeyCode::KeyW) {
                 transform.translation = player.grip_mantle;
                 player.gripping = false;
                 player.grip_top = 0.0;
@@ -1067,15 +1135,18 @@ pub fn player_controller(
             ActionState::Run
         };
 
+        player.bounce_cd = (player.bounce_cd - dt).max(0.0);
         if player.on_ground
             && player.velocity.y <= 0.0
-            && ground_block(&level, transform.translation.x, transform.translation.z)
-                == Some(BlockKind::Bounce)
+            && player.bounce_cd <= 0.0
+            && ground_kind == Some(BlockKind::Bounce)
         {
             player.velocity.y = JUMP_SPEED * 1.35;
             player.on_ground = false;
             player.coyote = 0.0;
             player.was_on_ground = false;
+            player.bounce_cd = 0.2;
+            player.jump_held = jump_down(&keys, &gamepads);
         }
     }
 }
@@ -1101,5 +1172,86 @@ pub fn sync_mode(
                 *vis = Visibility::Hidden;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::maker::block::BlockShape;
+    use crate::maker::level::BlockData;
+
+    fn level_with(blocks: &[(IVec3, BlockKind, BlockShape)]) -> LevelDocument {
+        let mut level = LevelDocument::default();
+        for (pos, kind, shape) in blocks {
+            level.set_block(
+                *pos,
+                Some(BlockData {
+                    position: pos.to_array(),
+                    kind: *kind,
+                    shape: *shape,
+                    rot: 0,
+                    waterlogged: false,
+                }),
+            );
+        }
+        level
+    }
+
+    #[test]
+    fn ground_surface_block_ignores_tall_neighbor_column() {
+        // Stone pillar rising above the grass floor in the same column: the
+        // topmost surface is the pillar top, not the floor we're standing on.
+        let level = level_with(&[
+            (IVec3::new(0, 1, 0), BlockKind::Grass, BlockShape::Full),
+            (IVec3::new(0, 2, 0), BlockKind::Stone, BlockShape::Full),
+        ]);
+        // Feet on the grass floor (top 2.0): must NOT read the pillar top (3.0).
+        assert_eq!(ground_surface_block(&level, 0.5, 0.5, 2.0), None);
+        // Feet on the pillar are accepted.
+        assert_eq!(
+            ground_surface_block(&level, 0.5, 0.5, 3.0),
+            Some((BlockKind::Stone, 0))
+        );
+        // Plain grass-only level: the floor itself wins.
+        let level = level_with(&[(IVec3::new(0, 1, 0), BlockKind::Grass, BlockShape::Full)]);
+        assert_eq!(
+            ground_surface_block(&level, 0.5, 0.5, 2.0),
+            Some((BlockKind::Grass, 0))
+        );
+    }
+
+    #[test]
+    fn ground_surface_block_requires_feet_near_the_surface() {
+        // Bounce pad on a tall pedestal: standing next to it (feet 1.0 on the
+        // boundary floor) must not fire as if standing on the pad.
+        let level = level_with(&[
+            (IVec3::new(0, 2, 0), BlockKind::Bounce, BlockShape::Full),
+        ]);
+        assert_eq!(ground_surface_block(&level, 0.5, 0.5, 1.0), None);
+        // On top of the pad (feet at 3.0) it is the walk surface.
+        assert_eq!(
+            ground_surface_block(&level, 0.5, 0.5, 3.0),
+            Some((BlockKind::Bounce, 0))
+        );
+        // Too far below the surface (fell into a gap) is not "standing" either.
+        assert_eq!(ground_surface_block(&level, 0.5, 0.5, 0.3), None);
+    }
+
+    #[test]
+    fn ground_surface_block_empty_slab_half_is_not_floor() {
+        // V-slab against local -Z: the +Z half of the cell has no material, so
+        // it must not count as a walk surface at that sample point.
+        let level = level_with(&[(
+            IVec3::new(0, 1, 0),
+            BlockKind::Stone,
+            BlockShape::VerticalSlab,
+        )]);
+        assert_eq!(ground_surface_block(&level, 0.5, 0.75, 2.0), None);
+        assert_eq!(
+            ground_surface_block(&level, 0.5, 0.25, 2.0),
+            Some((BlockKind::Stone, 0))
+        );
     }
 }

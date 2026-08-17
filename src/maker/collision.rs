@@ -2098,6 +2098,78 @@ mod tests {
     }
 
     #[test]
+    fn crawl_under_thin_kind_with_full_shape_clears_the_cell() {
+        let mut level = wall_level();
+        // Homebrew slab: thin kind stored with the legacy Full shape. Floor at
+        // y=0 (top 1.0), slab at y=2 whose Thin solid starts at y=2.84.
+        level.set_block(
+            IVec3::new(0, 0, 0),
+            Some(BlockData {
+                position: [0, 0, 0],
+                kind: BlockKind::Stone,
+                shape: BlockShape::Full,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        level.set_block(
+            IVec3::new(0, 2, 0),
+            Some(BlockData {
+                position: [0, 2, 0],
+                kind: BlockKind::HangRail,
+                shape: BlockShape::Full, // legacy / paste
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        // Feet at 1.0 (head 2.8, inside the crawl gap): pushing up must stop
+        // just under the thin band, not at the cell bottom (y=2.0).
+        let r = move_and_collide(
+            Vec3::new(0.5, 1.9, 0.5),
+            HE,
+            Vec3::new(0.0, 0.3, 0.0),
+            &level,
+            &[],
+        );
+        let feet = r.pos.y - HE.y;
+        assert!(
+            feet > 0.9,
+            "full-cell head bump instead of thin crawl space (feet={feet})"
+        );
+        assert!(
+            (feet - 1.04).abs() < 0.02,
+            "should rest just under the thin underside (feet={feet})"
+        );
+        // A solid full cube above the head must still stop the same move.
+        level.set_block(
+            IVec3::new(0, 2, 0),
+            None,
+        );
+        level.set_block(
+            IVec3::new(0, 3, 0),
+            Some(BlockData {
+                position: [0, 3, 0],
+                kind: BlockKind::Stone,
+                shape: BlockShape::Full,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        let r2 = move_and_collide(
+            Vec3::new(0.5, 1.9, 0.5),
+            HE,
+            Vec3::new(0.0, 0.3, 0.0),
+            &level,
+            &[],
+        );
+        let feet2 = r2.pos.y - HE.y;
+        assert!(
+            (feet2 - 1.2).abs() < 0.02 && feet2 < 1.5,
+            "solid cube must stop the head at its underside (feet={feet2})"
+        );
+    }
+
+    #[test]
     fn step_up_onto_crate_solid() {
         let level = wall_level();
         // Half-height crate on the floor: top at y=1.5, within STEP_HEIGHT.

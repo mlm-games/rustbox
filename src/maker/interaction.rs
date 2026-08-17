@@ -15,7 +15,7 @@ use super::mode::{InputCapture, MakerMode};
 use super::player::{ActionState, JUMP_SPEED, MoveState, Player, PlayerMoveMode, respawn_player};
 use super::ui_bridge::MakerUi;
 
-use bevy_rapier3d::prelude::Velocity;
+use bevy_rapier3d::prelude::{Collider, RigidBody, Velocity};
 use game_utils_bevy::juice::Juice;
 use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
@@ -415,6 +415,7 @@ pub fn gather_use_targets(
     mode: Res<MakerMode>,
     capture: Res<InputCapture>,
     keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
     rig: Res<CameraRig>,
     ui: Res<MakerUi>,
     player_q: Query<&Transform, With<Player>>,
@@ -428,7 +429,8 @@ pub fn gather_use_targets(
     if *mode != MakerMode::Play || ui.sign_dialog_open {
         return;
     }
-    if capture.ui_wants_keyboard || !keys.just_pressed(KeyCode::KeyI) {
+    let pad_use = gamepads.iter().any(|g| g.just_pressed(GamepadButton::North));
+    if capture.ui_wants_keyboard || (!keys.just_pressed(KeyCode::KeyI) && !pad_use) {
         return;
     }
     let Ok(pt) = player_q.single() else {
@@ -786,6 +788,8 @@ pub fn resolve_forced_motion(
     level: Res<LevelDocument>,
     mut ui: ResMut<MakerUi>,
     mut requests: ResMut<ForcedMotionRequests>,
+    mut commands: Commands,
+    held_q: Query<Entity, With<super::rapier::Held>>,
     mut player_q: Query<
         (&mut Transform, &mut Player, &mut MoveState, &mut Visibility),
         With<Player>,
@@ -804,6 +808,16 @@ pub fn resolve_forced_motion(
     };
 
     if motion.respawn {
+        // A held crate is left where the player died: drop it back to a normal
+        // dynamic crate so it doesn't float mid-air or block the respawn.
+        for e in held_q.iter() {
+            commands
+                .entity(e)
+                .insert(RigidBody::Dynamic)
+                .remove::<super::rapier::Held>()
+                .insert(Collider::cuboid(0.4, 0.4, 0.4))
+                .insert(Velocity::zero());
+        }
         // The respawn source distinguishes a death (fell out / off the map)
         // from a manual R reset.
         let status = if motion.source.target == NO_TARGET {
