@@ -213,7 +213,8 @@ fn local_column_solid_at(block: &BlockData, wx: f32, wz: f32) -> bool {
     let wx = (wx - block.position[0] as f32).clamp(0.0, 1.0);
     let wz = (wz - block.position[2] as f32).clamp(0.0, 1.0);
     let (lx, lz) = local_from_world(wx, wz, block.rot);
-    local_column_solid(block.shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
+    let shape = effective_shape(block);
+    local_column_solid(shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
 }
 
 /// Does the vertical span `[lo, hi]` overlap `[flo, fhi]`?
@@ -318,7 +319,8 @@ fn resolve_axis(
                                     (v.z - cell.z as f32).clamp(0.0, 1.0),
                                     b.rot,
                                 );
-                                local_column_solid(b.shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
+                                let shape = effective_shape(b);
+                                local_column_solid(shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
                             }
                             _ => true,
                         };
@@ -581,11 +583,12 @@ fn aabb_hits_material(level: &LevelDocument, center: Vec3, he: Vec3) -> bool {
                     .clamp(0.0, 1.0);
                 let (lx, lz) = local_from_world(cx, cz, b.rot);
                 let (lx, lz) = (lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0));
-                if !local_column_solid(b.shape, lx, lz) {
+                let shape = effective_shape(b);
+                if !local_column_solid(shape, lx, lz) {
                     continue;
                 }
-                let lo = cell.y as f32 + local_bottom_height(b.shape, lx, lz);
-                let hi = cell.y as f32 + local_surface_height(b.shape, lx, lz);
+                let lo = cell.y as f32 + local_bottom_height(shape, lx, lz);
+                let hi = cell.y as f32 + local_surface_height(shape, lx, lz);
                 if min.y < hi - 0.001 && max.y > lo + 0.001 {
                     return true;
                 }
@@ -1082,7 +1085,13 @@ fn is_grabbable_lip(level: &LevelDocument, cell: IVec3) -> bool {
         return false;
     }
     match level.get_block(cell) {
-        Some(b) => is_grabbable_shape(b.shape),
+        Some(b) => {
+            // Thin kinds / hang rails are underside-grab, not ledge mantle.
+            if b.kind.is_thin() || b.kind.has_hangable_underside() {
+                return false;
+            }
+            is_grabbable_shape(effective_shape(b))
+        }
         // Boundary solids (walls/floor) are always boxy.
         None => true,
     }
@@ -1265,6 +1274,13 @@ pub fn ledge_grip(
             lip_cell.z as f32 + 0.5 - face.y * MANTLE_INSET,
         );
         if aabb_hits_solid(level, mantle, he) {
+            continue;
+        }
+
+        if aabb_hits_solid(level, hang, he * Vec3::new(0.9, 0.85, 0.9)) {
+            continue;
+        }
+        if aabb_hits_solid(level, mantle, he * Vec3::new(0.9, 0.95, 0.9)) {
             continue;
         }
 
@@ -2037,6 +2053,48 @@ mod tests {
         assert!((top - 2.0).abs() < 0.01);
         // Thin slab starts near the top, not at y=1.0
         assert!(bottom > 1.5, "bottom={bottom}");
+    }
+
+    #[test]
+    fn aabb_hits_material_respects_thin_kind_even_if_shape_full() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(0, 2, 0),
+            Some(BlockData {
+                position: [0, 2, 0],
+                kind: BlockKind::HangRail,
+                shape: BlockShape::Full, // legacy / paste
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        // Standing body under the thin band: center ~1.9, he.y=0.9 → head ~2.8
+        // Thin solid is only near y=3.0; lower body must NOT count as hit.
+        let center = Vec3::new(0.5, 1.9, 0.5);
+        let he = Vec3::new(0.3, 0.9, 0.3);
+        assert!(
+            !aabb_hits_material(&level, center, he),
+            "thin hang rail must not fill the whole cell for headroom"
+        );
+        // Head up into the thin band should hit.
+        let center_hi = Vec3::new(0.5, 2.55, 0.5);
+        assert!(
+            aabb_hits_material(&level, center_hi, he * Vec3::new(1.0, 0.4, 1.0)),
+            "must still collide with the thin band itself"
+        );
+    }
+
+    #[test]
+    fn local_column_solid_at_uses_effective_thin() {
+        let b = BlockData {
+            position: [0, 0, 0],
+            kind: BlockKind::HangRail,
+            shape: BlockShape::Full,
+            rot: 0,
+            waterlogged: false,
+        };
+        // Thin is always column-solid; this mainly guards the helper path.
+        assert!(local_column_solid_at(&b, 0.5, 0.5));
     }
 
     #[test]

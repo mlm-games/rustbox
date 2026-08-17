@@ -59,6 +59,16 @@ pub struct MoveTuning {
     pub walkable_normal_y: f32,
     pub half_extents: Vec3,
     pub launch_lock: f32,
+    /// Release jump while rising: multiply upward vel (variable height).
+    pub jump_cut_mult: f32,
+    /// Max fall speed while sliding down a wall (airborne + into wall).
+    pub wall_slide_max_fall: f32,
+    /// Horizontal impulse away from wall on wall-jump.
+    pub wall_jump_push: f32,
+    /// Upward speed on wall-jump.
+    pub wall_jump_up: f32,
+    /// Seconds after wall-jump before another wall grab/jump.
+    pub wall_jump_lock: f32,
 }
 
 impl Default for MoveTuning {
@@ -88,6 +98,11 @@ impl Default for MoveTuning {
             walkable_normal_y: 0.7,
             half_extents: Vec3::new(0.3, 0.9, 0.3),
             launch_lock: 0.9,
+            jump_cut_mult: 0.45,
+            wall_slide_max_fall: -6.5,
+            wall_jump_push: 7.5,
+            wall_jump_up: 8.5,
+            wall_jump_lock: 0.18,
         }
     }
 }
@@ -182,6 +197,10 @@ pub struct Player {
     /// Position at the start of this frame's collide step (for top-contact
     /// contacts that need the pre-move feet height).
     pub pre_move_pos: Vec3,
+    /// Brief lock after wall-jump so we don't re-stick the same frame.
+    pub wall_lock: f32,
+    /// True if Space is held (for jump cut). Set from input each frame.
+    pub jump_held: bool,
 }
 
 impl Default for Player {
@@ -213,6 +232,8 @@ impl Default for Player {
             move_mode: PlayerMoveMode::Normal,
             hang_cooldown: 0.0,
             pre_move_pos: Vec3::ZERO,
+            wall_lock: 0.0,
+            jump_held: false,
         }
     }
 }
@@ -313,6 +334,8 @@ pub fn respawn_player(
     player.move_mode = PlayerMoveMode::Normal;
     player.hang_cooldown = 0.0;
     player.pre_move_pos = spawn;
+    player.wall_lock = 0.0;
+    player.jump_held = false;
     *move_state = MoveState::default();
 }
 
@@ -461,6 +484,10 @@ pub fn player_controller(
             horiz = horiz.normalize();
         }
         move_state.wish_dir = horiz;
+
+        let jump_held = kb && keys.pressed(KeyCode::Space);
+        player.jump_held = jump_held;
+        player.wall_lock = (player.wall_lock - dt).max(0.0);
 
         let want_crouch = kb && keys.pressed(KeyCode::ShiftLeft);
         let crouch_pressed = keys.just_pressed(KeyCode::ShiftLeft);
@@ -717,6 +744,20 @@ pub fn player_controller(
             player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
         }
 
+        // Variable jump height: releasing early cuts upward velocity.
+        if !underwater
+            && !hanging
+            && !player.slamming
+            && player.launch <= 0.0
+            && player.velocity.y > 0.0
+            && !jump_held
+            && player.jump_buffer <= 0.0
+        {
+            if player.velocity.y > tuning.jump_speed * 0.15 {
+                player.velocity.y *= tuning.jump_cut_mult;
+            }
+        }
+
         // Project velocity out of the floor on slopes (grounded, falling into
         // the ramp): stable walking without the slope "kick".
         if player.on_ground
@@ -757,12 +798,8 @@ pub fn player_controller(
             && !drop_through
             && player.velocity.y <= 0.0;
         if grounding_ok {
-            let top = support_height_footprint(
-                &level,
-                &solids.solids,
-                transform.translation,
-                move_he,
-            );
+            let top =
+                support_height_footprint(&level, &solids.solids, transform.translation, move_he);
             let feet = transform.translation.y - move_he.y;
             // Only stick to the ground while it's actually near the feet.
             if top.is_finite() && (top - feet).abs() <= GROUND_STEP_MAX {
@@ -833,6 +870,37 @@ pub fn player_controller(
             move_state.floor_normal = result.floor_normal;
         }
 
+        let into_wall = result.wall_normal.length_squared() > 1e-6 && {
+            let n = result.wall_normal;
+            let h = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
+            h.dot(n) < -0.1 || horiz.dot(n) < -0.2
+        };
+        if !underwater
+            && !hanging
+            && !player.on_ground
+            && !player.slamming
+            && player.launch <= 0.0
+            && player.wall_lock <= 0.0
+            && player.velocity.y < 0.0
+            && into_wall
+            && (result.hit_x || result.hit_z)
+        {
+            if player.velocity.y < tuning.wall_slide_max_fall {
+                player.velocity.y = tuning.wall_slide_max_fall;
+            }
+            if player.jump_buffer > 0.0 {
+                let n = result.wall_normal.normalize_or_zero();
+                player.velocity.x = n.x * tuning.wall_jump_push;
+                player.velocity.z = n.z * tuning.wall_jump_push;
+                player.velocity.y = tuning.wall_jump_up;
+                player.jump_buffer = 0.0;
+                player.coyote = 0.0;
+                player.wall_lock = tuning.wall_jump_lock;
+                player.on_ground = false;
+                move_state.wall_normal = n;
+            }
+        }
+
         // One-way plate riding: probe the plate top under our feet after the
         // move and carry the player with the plate's motion.
         let mut pos = result.pos;
@@ -884,7 +952,6 @@ pub fn player_controller(
                 player.gripping = false;
                 player.grip_top = 0.0;
                 player.velocity = Vec3::ZERO;
-                player.grip_top = 0.0;
                 player.grip_cooldown = 0.35;
             } else {
                 let wt = ground_height(&level, player.grip_anchor.x, player.grip_anchor.z);
@@ -904,31 +971,40 @@ pub fn player_controller(
                     player.velocity = Vec3::ZERO;
                 }
             }
-        } else if false
-            && player.grip_cooldown <= 0.0
+        } else if player.grip_cooldown <= 0.0
+            && player.wall_lock <= 0.0
             && !result.on_ground
             && player.velocity.y <= 0.5
             && !underwater
             && !player.slamming
             && player.launch <= 0.0
+            && !hanging
+            && (result.hit_x || result.hit_z)
         {
-            // Ledge grab is disabled: leads to buggy interactions with most
-            // blocks. The rally is left in so it can be re-enabled cleanly (far-future).
+            // Ledge mantle: only when clearly into a wall and lip is boxy.
+            // Skips slopes/thin/hang-rails via is_grabbable_lip.
             if let Some(g) = ledge_grip(
                 &level,
                 transform.translation,
-                he,
+                he, // standing half-extents for mantle clearance
                 player.velocity,
                 result.hit_x,
                 result.hit_z,
             ) {
-                transform.translation = g.hang_pos;
-                player.gripping = true;
-                player.grip_top = g.wall_top;
-                player.grip_mantle = g.mantle_pos;
-                player.grip_anchor = Vec3::new(g.hang_pos.x, g.wall_top, g.hang_pos.z);
-                player.grip_time = 0.0;
-                player.velocity = Vec3::ZERO;
+                // Extra: require approach mostly into the face.
+                let face3 = Vec3::new(g.face.x, 0.0, g.face.y);
+                let approach = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
+                let into = approach.dot(face3);
+                if into > 0.4 || horiz.dot(face3) > 0.35 {
+                    transform.translation = g.hang_pos;
+                    player.gripping = true;
+                    player.grip_top = g.wall_top;
+                    player.grip_mantle = g.mantle_pos;
+                    player.grip_anchor = Vec3::new(g.hang_pos.x, g.wall_top, g.hang_pos.z);
+                    player.grip_time = 0.0;
+                    player.velocity = Vec3::ZERO;
+                    player.slamming = false;
+                }
             }
         }
 
@@ -960,6 +1036,22 @@ pub fn player_controller(
             player.launch = 0.0;
         } else {
             player.on_ground = false;
+        }
+
+        if player.on_ground
+            && !sliding
+            && !underwater
+            && !hanging
+            && move_state.floor_normal.y > 0.2
+            && move_state.floor_normal.y < 0.999
+        {
+            let n = move_state.floor_normal.normalize_or_zero();
+            let v = player.velocity;
+            // Keep only the component tangent to the floor.
+            let into = v.dot(n);
+            if into < 0.0 {
+                player.velocity = v - n * into;
+            }
         }
 
         move_state.grounded = player.on_ground;
