@@ -23,7 +23,7 @@ use super::entity_data::{
     link_color,
 };
 use super::interaction::{
-    InteractionKey, InteractionMemory, MAX_FAN_FORCE, cap_fan_force, gateway_blocked, heal_allowed,
+    InteractionMemory, MAX_FAN_FORCE, cap_fan_force, contact_he, gateway_blocked, heal_allowed,
     player_overlaps_volume, solid_blocks,
 };
 use super::level::LevelDocument;
@@ -1262,7 +1262,8 @@ pub fn reconcile_entities(
             }
             EntityKind::Fan => {
                 let yaw = data.yaw_deg.to_radians();
-                let dir = Vec3::new(yaw.sin(), 0.0, yaw.cos()).normalize_or_zero();
+                // Match prowler / camera forward: local -Z after yaw.
+                let dir = (Quat::from_rotation_y(yaw) * Vec3::NEG_Z).normalize_or_zero();
                 ecmds.insert(Fan {
                     dir,
                     strength: data.param.max(0.0),
@@ -1583,7 +1584,7 @@ pub fn update_relay_gates(
     }
     let mut bodies: Vec<(Vec3, Vec3)> = Vec::new();
     if let Ok((pt, p)) = player_q.single() {
-        bodies.push((pt.translation, p.half_extents));
+        bodies.push((pt.translation, contact_he(p)));
     }
     for t in &prowlers {
         bodies.push((t.translation, Vec3::splat(0.35)));
@@ -1849,7 +1850,7 @@ pub fn build_solids(
         out.push(RuntimeSolid {
             owner: e,
             center,
-            shape: SolidShape::Box(0.5, 0.5, 0.5),
+            shape: SolidShape::Box(0.4, 0.4, 0.4),
             rotation,
         });
     }
@@ -1886,19 +1887,16 @@ pub fn build_solids(
     out
 }
 
-/// Fans accumulate a capped force. Continuous fans apply after forced motion
-/// unless a position override (teleport / respawn) won this frame.
+/// Fans accumulate a capped force. Continuous fans apply at the start of
+/// PlayerMotion (before the controller), independent of forced-motion state
+/// (which `begin_interaction_frame` clears each frame).
 pub fn apply_fans(
     time: Res<Time>,
     mode: Res<MakerMode>,
-    forced: Res<super::interaction::ForcedMotionRequests>,
     mut player_q: Query<(&Transform, &mut Player)>,
     fans: Query<(&Transform, &Fan), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
-        return;
-    }
-    if forced.position_applied {
         return;
     }
     let Ok((pt, mut player)) = player_q.single_mut() else {
@@ -1908,19 +1906,20 @@ pub fn apply_fans(
 
     let mut force = Vec3::ZERO;
     for (tf, fan) in &fans {
-        // Simple axis-aligned volume in front of the fan.
         let to_p = pt.translation - tf.translation;
         let ahead = to_p.dot(fan.dir);
-        if ahead < 0.0 || ahead > 4.0 {
+        if !(0.0..=4.0).contains(&ahead) {
             continue;
         }
         let lateral = (to_p - fan.dir * ahead).length();
         if lateral > 1.4 {
             continue;
         }
-        force += fan.dir * fan.strength * dt;
-        // slight lift so fans feel useful in 3D platforming
-        force.y += fan.strength * 0.15 * dt;
+        // Falloff so standing at the rim isn't full blast.
+        let falloff = (1.0 - ahead / 4.0).clamp(0.0, 1.0);
+        force += fan.dir * fan.strength * falloff * dt;
+        // Slight lift so fans feel useful in 3D platforming.
+        force.y += fan.strength * 0.15 * falloff * dt;
     }
     player.velocity += cap_fan_force(force, MAX_FAN_FORCE);
 }
@@ -2035,7 +2034,7 @@ pub fn update_lock_gates(
 
     let mut bodies: Vec<(Vec3, Vec3)> = Vec::new();
     if let Ok((pt, p)) = player_q.single() {
-        bodies.push((pt.translation, p.half_extents));
+        bodies.push((pt.translation, contact_he(p)));
     }
     for t in &prowlers {
         bodies.push((t.translation, Vec3::splat(0.35)));
@@ -2156,7 +2155,7 @@ pub fn update_crumble_plates(
             continue;
         }
 
-        if !plate.triggered && memory.entered(InteractionKey::player(ent.id)) {
+        if !plate.triggered && memory.any_entered_target(ent.id) {
             plate.triggered = true;
             plate.timer = plate.delay;
         }

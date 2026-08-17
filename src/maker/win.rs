@@ -7,6 +7,7 @@ use super::block::BlockKind;
 use super::campaign::{CampaignProgress, LevelSource};
 use super::collision::overlaps_kind;
 use super::entities_runtime::Prowler;
+use super::interaction::contact_he;
 use super::level::{ClearCondition, LevelDocument};
 use super::mode::MakerMode;
 use super::player::Player;
@@ -79,7 +80,7 @@ pub fn detect_goal(
     }
 
     for (tf, player) in &q {
-        if !overlaps_kind(tf.translation, player.half_extents, &level, BlockKind::Goal) {
+        if !overlaps_kind(tf.translation, contact_he(player), &level, BlockKind::Goal) {
             continue;
         }
 

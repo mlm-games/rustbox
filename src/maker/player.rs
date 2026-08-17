@@ -520,7 +520,7 @@ pub fn player_controller(
                             dt,
                         );
                         player.velocity.y = 0.0;
-                        transform.translation.y = bottom - he.y - HANG_SKIN;
+                        transform.translation.y = bottom - move_he.y - HANG_SKIN;
                     }
                 }
                 None => {
@@ -541,7 +541,7 @@ pub fn player_controller(
         {
             player.move_mode = PlayerMoveMode::Hanging;
             player.velocity = Vec3::ZERO;
-            transform.translation.y = bottom - he.y - HANG_SKIN;
+            transform.translation.y = bottom - move_he.y - HANG_SKIN;
         }
         let hanging = player.move_mode == PlayerMoveMode::Hanging;
 
@@ -717,8 +717,25 @@ pub fn player_controller(
             player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
         }
 
+        // Project velocity out of the floor on slopes (grounded, falling into
+        // the ramp): stable walking without the slope "kick".
+        if player.on_ground
+            && !hanging
+            && !player.slamming
+            && !underwater
+            && player.velocity.y <= 0.0
+        {
+            let n = move_state.floor_normal;
+            if n.y > 0.05 && n.y < 0.999 {
+                let into = player.velocity.dot(n);
+                if into < 0.0 {
+                    player.velocity -= n * into;
+                }
+            }
+        }
+
         // Climb surface: hold W while overlapping a Climb block to ascend.
-        let on_climb = overlaps_kind(transform.translation, he, &level, BlockKind::Climb);
+        let on_climb = overlaps_kind(transform.translation, move_he, &level, BlockKind::Climb);
         if on_climb && kb && !hanging && keys.pressed(KeyCode::KeyW) {
             player.velocity.y = 4.5;
         }

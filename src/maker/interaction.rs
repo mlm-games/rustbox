@@ -316,7 +316,10 @@ pub fn crossed_platform_top(
     }
     let feet = pos.y - he.y;
     let prev_feet = prev_pos.y - he.y;
-    vel_y <= 0.0 && prev_feet >= top - tolerance && feet <= top + tolerance
+    vel_y <= 0.05
+        && prev_feet + 1e-4 >= top - tolerance
+        && feet <= top + tolerance
+        && prev_feet >= feet - 1e-4
 }
 
 /// Whether an AABB body overlaps the doorway volume a gate closes through.
@@ -396,11 +399,13 @@ pub fn begin_interaction_frame(
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
     mut memory: ResMut<InteractionMemory>,
+    mut forced: ResMut<ForcedMotionRequests>,
 ) {
     if mode.is_changed() || level.entities_dirty {
         memory.reset();
     }
     memory.begin_frame();
+    forced.clear();
 }
 
 /// Collect the single explicit-use target for this frame's `I` press: lock
@@ -495,7 +500,7 @@ pub fn gather_use_targets(
     use_sel.kind = winner.map(|c| c.kind);
 }
 
-fn contact_he(player: &Player) -> Vec3 {
+pub fn contact_he(player: &Player) -> Vec3 {
     if player.crouched {
         Vec3::new(
             player.half_extents.x,
@@ -543,6 +548,9 @@ pub fn detect_contacts(
         player.pre_move_pos
     };
     let he = contact_he(player);
+    // Vertical motion this collide step (survives y-velocity zeroing on
+    // landing, which the controller does before Detect runs).
+    let step_vy = pos.y - prev_pos.y;
 
     for (ent, tf) in &switches {
         if player_overlaps_volume(pos, he, tf.translation + Vec3::Y * 0.1, SWITCH_VOLUME_HE) {
@@ -584,7 +592,7 @@ pub fn detect_contacts(
             PAD_HE,
             top,
             TOP_TOLERANCE,
-            player.velocity.y,
+            step_vy,
         ) {
             memory.touch(InteractionKey::player(ent.id));
         }
@@ -599,7 +607,7 @@ pub fn detect_contacts(
             PLATE_HE,
             top,
             TOP_TOLERANCE,
-            player.velocity.y,
+            step_vy,
         ) {
             memory.touch(InteractionKey::player(ent.id));
         }
@@ -643,6 +651,15 @@ pub fn detect_contacts(
             for (ent, b_tf) in &bumpers {
                 if player_overlaps_volume(ctf.translation, c_he, b_tf.translation, BUMPER_VOLUME_HE)
                 {
+                    memory.touch(InteractionKey {
+                        actor: crate_e.index_u32(),
+                        target: ent.id,
+                    });
+                }
+            }
+            for (ent, p_tf) in &plates {
+                // Simple AABB for thrown crates is fine.
+                if player_overlaps_volume(ctf.translation, c_he, p_tf.translation, PLATE_HE) {
                     memory.touch(InteractionKey {
                         actor: crate_e.index_u32(),
                         target: ent.id,

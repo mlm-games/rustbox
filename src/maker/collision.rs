@@ -62,6 +62,14 @@ fn local_bottom_height(shape: BlockShape, _lx: f32, _lz: f32) -> f32 {
     }
 }
 
+fn effective_shape(block: &BlockData) -> BlockShape {
+    if block.kind.is_thin() {
+        BlockShape::Thin
+    } else {
+        block.shape
+    }
+}
+
 /// World-space bottom-surface height of a block at world position (wx, wz).
 /// Returns `None` when the column is empty (no material to hit).
 pub fn surface_bottom_height(block: &BlockData, wx: f32, wz: f32) -> Option<f32> {
@@ -69,10 +77,11 @@ pub fn surface_bottom_height(block: &BlockData, wx: f32, wz: f32) -> Option<f32>
     let wz = (wz - block.position[2] as f32).clamp(0.0, 1.0);
     let (lx, lz) = local_from_world(wx, wz, block.rot);
     let (lx, lz) = (lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0));
-    if !local_column_solid(block.shape, lx, lz) {
+    let shape = effective_shape(block);
+    if !local_column_solid(shape, lx, lz) {
         return None;
     }
-    Some(block.position[1] as f32 + local_bottom_height(block.shape, lx, lz))
+    Some(block.position[1] as f32 + local_bottom_height(shape, lx, lz))
 }
 
 /// Rotate a point inside a cell (world-local, [0,1]) into the shape's
@@ -85,13 +94,23 @@ fn local_from_world(wx: f32, wz: f32, rot: u8) -> (f32, f32) {
     (c * sx - s * sz + 0.5, s * sx + c * sz + 0.5)
 }
 
-/// World-space top-surface height of a block at world position (wx, wz).
-pub fn surface_top_height(block: &BlockData, wx: f32, wz: f32) -> f32 {
+/// World-space top-surface height, or `None` if this column has no material
+/// (empty half of a V-slab / V-slope, etc.).
+pub fn surface_top_height_opt(block: &BlockData, wx: f32, wz: f32) -> Option<f32> {
     let wx = (wx - block.position[0] as f32).clamp(0.0, 1.0);
     let wz = (wz - block.position[2] as f32).clamp(0.0, 1.0);
     let (lx, lz) = local_from_world(wx, wz, block.rot);
-    block.position[1] as f32
-        + local_surface_height(block.shape, lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0))
+    let (lx, lz) = (lx.clamp(0.0, 1.0), lz.clamp(0.0, 1.0));
+    let shape = effective_shape(block);
+    if !local_column_solid(shape, lx, lz) {
+        return None;
+    }
+    Some(block.position[1] as f32 + local_surface_height(shape, lx, lz))
+}
+
+/// World-space top-surface height of a block at world position (wx, wz).
+pub fn surface_top_height(block: &BlockData, wx: f32, wz: f32) -> f32 {
+    surface_top_height_opt(block, wx, wz).unwrap_or(block.position[1] as f32 + 1.0)
 }
 
 /// A horizontal direction expressed in the world frame, converted into the
@@ -281,7 +300,10 @@ fn resolve_axis(
                     if delta < 0.0 {
                         let top = match block {
                             Some(b) if level.kind_is_solid(b.kind) => {
-                                surface_top_height(b, v.x, v.z)
+                                match surface_top_height_opt(b, v.x, v.z) {
+                                    Some(top) => top,
+                                    None => continue,
+                                }
                             }
                             _ => cell.y as f32 + 1.0,
                         };
@@ -336,9 +358,12 @@ fn resolve_axis(
                     // overlaps the solid material on that face (slabs and
                     // slopes leave gaps a small player can slip under).
                     let (flo, fhi) = match block {
-                        Some(b) if level.kind_is_solid(b.kind) => {
-                            face_solid_range(b.shape, b.rot, axis, if delta > 0.0 { 0 } else { 1 })
-                        }
+                        Some(b) if level.kind_is_solid(b.kind) => face_solid_range(
+                            effective_shape(b),
+                            b.rot,
+                            axis,
+                            if delta > 0.0 { 0 } else { 1 },
+                        ),
                         _ => (0.0, 1.0),
                     };
                     let vlo = p[1] - he[1];
@@ -856,7 +881,7 @@ pub fn floor_normal_at(level: &LevelDocument, wx: f32, wz: f32) -> Vec3 {
     );
     if let Some(b) = level.get_block(cell)
         && level.kind_is_solid(b.kind)
-        && let Some(n) = shape_floor_normal(b.shape, b.rot)
+        && let Some(n) = shape_floor_normal(effective_shape(b), b.rot)
         && n.length_squared() > 1e-6
     {
         return n;
@@ -882,11 +907,17 @@ pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
         let block = level.get_block(cell);
         let solid =
             block.is_some_and(|b| level.kind_is_solid(b.kind)) || level.boundary_solid(cell);
-        if solid {
-            return match block {
-                Some(b) if level.kind_is_solid(b.kind) => surface_top_height(b, wx, wz),
-                _ => y as f32 + 1.0,
-            };
+        if !solid {
+            continue;
+        }
+        match block {
+            Some(b) if level.kind_is_solid(b.kind) => {
+                if let Some(h) = surface_top_height_opt(b, wx, wz) {
+                    return h;
+                }
+                // Empty column of a partial shape — keep looking below.
+            }
+            _ => return y as f32 + 1.0, // boundary
         }
     }
     f32::NEG_INFINITY
@@ -980,7 +1011,7 @@ pub fn slope_slide(level: &LevelDocument, center: Vec3, he: Vec3) -> Option<Vec2
         if let Some(b) = level.get_block(cell)
             && level.kind_is_solid(b.kind)
         {
-            if let Some(n) = shape_floor_normal(b.shape, b.rot) {
+            if let Some(n) = shape_floor_normal(effective_shape(b), b.rot) {
                 let d = Vec2::new(n.x, n.z);
                 if d.length_squared() > 1e-6 {
                     return Some(d.normalize());
@@ -1960,6 +1991,52 @@ mod tests {
             "should still be grounded on the ramp: {:?}",
             r.pos
         );
+    }
+
+    #[test]
+    fn ground_height_skips_empty_half_of_vertical_slab() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(0, 2, 0),
+            Some(BlockData {
+                position: [0, 2, 0],
+                kind: BlockKind::Stone,
+                shape: BlockShape::VerticalSlab,
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        // Solid half: top of the slab itself.
+        let h_solid = ground_height(&level, 0.5, 0.25);
+        assert!((h_solid - 3.0).abs() < 0.01, "solid half h={h_solid}");
+        // Empty half: must fall through to the grass floor (y=0 -> top 1.0),
+        // not float at the slab's "empty top".
+        let h_empty = ground_height(&level, 0.5, 0.75);
+        assert!(
+            (h_empty - 1.0).abs() < 0.01,
+            "empty half must not float, h={h_empty}"
+        );
+    }
+
+    #[test]
+    fn thin_kind_forces_thin_collision_even_if_shape_full() {
+        let mut level = wall_level();
+        level.set_block(
+            IVec3::new(0, 1, 0),
+            Some(BlockData {
+                position: [0, 1, 0],
+                kind: BlockKind::HangRail,
+                shape: BlockShape::Full, // bad legacy / paste
+                rot: 0,
+                waterlogged: false,
+            }),
+        );
+        let b = level.get_block(IVec3::new(0, 1, 0)).unwrap();
+        let top = surface_top_height(b, 0.5, 0.5);
+        let bottom = surface_bottom_height(b, 0.5, 0.5).unwrap();
+        assert!((top - 2.0).abs() < 0.01);
+        // Thin slab starts near the top, not at y=1.0
+        assert!(bottom > 1.5, "bottom={bottom}");
     }
 
     #[test]
