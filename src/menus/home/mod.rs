@@ -22,7 +22,7 @@ pub fn splash_ui() -> View {
             .align_items(AlignItems::CENTER)
             .background(tok::bg_deep()),
     )
-    .child(RText("RUSTBOX").size(52.0).color(tok::text()))
+    .child(RText("Rustbox (pre-alpha)").size(52.0).color(tok::text()))
     .child(spacer(8.0))
     .child(
         RText("Build. Play. Share.")
@@ -136,7 +136,7 @@ pub fn title_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         },
         ScaffoldConfig {
             top_bar: Some(TopAppBar(
-                RText("RUSTBOX").size(20.0).color(tok::text()),
+                RText("").size(20.0).color(tok::text()), // Not needed / for future
                 None,
                 None,
                 vec![
