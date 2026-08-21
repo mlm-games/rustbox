@@ -1,6 +1,7 @@
 pub mod asset_manifest;
 pub mod block;
 pub mod block_asset_manifest;
+pub mod palette;
 pub mod camera;
 pub mod campaign;
 pub mod catalog;
@@ -338,6 +339,7 @@ impl Plugin for MakerPlugin {
                         .run_if(in_edit)
                         .after(ui_bridge::update_input_capture),
                     win::tick_play_timer,
+                    win::retry_hotkey,
                     win::on_mode_changed,
                     win::detect_goal.run_if(in_play),
                     entities_runtime::apply_model_materials,

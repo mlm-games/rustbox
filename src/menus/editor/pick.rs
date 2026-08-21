@@ -71,6 +71,7 @@ fn catalog(cat: Mm2Cat) -> Vec<PItem> {
             it(1, 16, "Crumble"),
             it(1, 19, "Toss Crate"),
             it(1, 20, "Sign"),
+            it(1, 21, "Wedge"),
             it(2, 0, "Track"),
         ],
     }

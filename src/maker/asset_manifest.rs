@@ -155,7 +155,7 @@ impl EntityModelManifest {
         // (kind, scale, y_offset, tint, collider, solid) — matches the RON.
         let rows: [(&str, f32, f32, TintMode, Option<ColliderPrimitive>, Option<SolidShape>); 22] = [
             ("Glimmer", 1.0, 0.0, TintMode::Kind, Some(ColliderPrimitive::Sensor), None),
-            ("LaunchPad", 1.0, -0.1, TintMode::Link, Some(ColliderPrimitive::Cylinder(0.15, 0.45)), None),
+            ("LaunchPad", 1.0, -0.1, TintMode::Kind, Some(ColliderPrimitive::Cylinder(0.15, 0.45)), None),
             ("Seal", 1.0, -1.0, TintMode::Model, Some(ColliderPrimitive::Box(0.35, 0.35, 0.35)), Some(SolidShape::Box(0.5, 1.0, 0.15))),
             ("DriftPlate", 1.0, -0.15, TintMode::Model, Some(ColliderPrimitive::Box(0.7, 0.12, 0.7)), None),
             ("Prowler", 1.0, -0.4, TintMode::Model, Some(ColliderPrimitive::Sensor), None),

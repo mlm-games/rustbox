@@ -14,7 +14,7 @@ use repose_ui::{Column, Image, ImageExt, Row, Text as RText, TextStyle, ViewExt,
 use crate::app::SharedUi;
 use crate::menus::action::UiAction;
 use crate::menus::components::{Symbols, icon_text, push_ui};
-use crate::menus::style::{t, tok};
+use crate::menus::style::tok;
 
 pub use pick::part_picker;
 
@@ -56,6 +56,7 @@ pub(crate) fn prepend_recents(kind: u8, id: u8) {
 fn selected_of(st: &SharedUi, kind: u8, id: u8) -> bool {
     match kind {
         1 => st.brush_tab == 1 && st.selected_entity == id,
+        2 => st.brush_tab == 2,
         _ => st.brush_tab == 0 && st.selected_block == id,
     }
 }
@@ -63,6 +64,7 @@ fn selected_of(st: &SharedUi, kind: u8, id: u8) -> bool {
 fn icon_of(st: &SharedUi, kind: u8, id: u8) -> Option<u64> {
     match kind {
         1 => st.entity_icon_handles.get(id as usize).copied(),
+        2 => None,
         _ => st.block_icon_handles.get(id as usize).copied(),
     }
 }
@@ -83,7 +85,10 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 .child(play_stats_bar(st)),
             )
             .child(
-                // Bottom-left: BACK (return to the editor)
+                // Bottom-left: BACK (return to the editor) — mouse is locked in
+                // Play, so this is keyboard-driven (Tab) but kept for gamepad
+                // / touch. Retry is `R` (see `win::retry_hotkey`) because a
+                // second mouse button would be unreachable while locked.
                 Column(
                     Modifier::new()
                         .fill_max_size()
@@ -93,6 +98,24 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                         .gap(8.0),
                 )
                 .child(clapperboard(st, actions)),
+            )
+            .child(
+                // Bottom-right: keyboard hint — retry is `R`, not a mouse button,
+                // because `cursor_policy` locks/hides the cursor in Play.
+                Column(
+                    Modifier::new()
+                        .fill_max_size()
+                        .justify_content(JustifyContent::FLEX_END)
+                        .align_items(AlignItems::FLEX_END)
+                        .padding(14.0),
+                )
+                .child(
+                    Row(Modifier::new()
+                        .padding(10.0)
+                        .background(tok::bg_elevated())
+                        .clip_rounded(tok::R_PILL))
+                    .child(RText("R — Retry".to_string()).size(13.0).color(tok::text_dim())),
+                ),
             )
             .child(status_toast(st));
     }
@@ -242,14 +265,11 @@ fn parts_strip(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let a = actions.clone();
         tiles.push(part_tile(format!("{}", i + 1), icon, selected, move || {
             push_ui(&a, UiAction::MakerSetBrushTab(kind));
-            push_ui(
-                &a,
-                if kind == 1 {
-                    UiAction::MakerSelectEntity(id)
-                } else {
-                    UiAction::MakerSelectBlock(id)
-                },
-            );
+            match kind {
+                1 => push_ui(&a, UiAction::MakerSelectEntity(id)),
+                2 => {}
+                _ => push_ui(&a, UiAction::MakerSelectBlock(id)),
+            }
         }));
     }
 
@@ -356,7 +376,7 @@ fn held_options(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
 }
 
 fn link_channelled(entity: u8) -> bool {
-    matches!(entity, 5 | 6 | 8 | 12 | 13)
+    crate::maker::palette::entity_from_index(entity).uses_link()
 }
 
 fn option_chip(label: String, on_click: impl Fn() + 'static) -> View {

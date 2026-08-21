@@ -206,17 +206,53 @@ pub(crate) fn pause_overlay(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -
     let a1 = actions.clone();
     let a2 = actions.clone();
     let a3 = actions.clone();
+    let a_retry = actions.clone();
     let tr = &st.translations;
 
-    modal_shell(pause_panel(tr, a1, a2, a3))
+    modal_shell(pause_panel(tr, st, a1, a2, a3, a_retry))
 }
 
 fn pause_panel(
     tr: &std::collections::HashMap<String, String>,
+    st: &SharedUi,
     a1: Arc<Mutex<Vec<UiAction>>>,
     a2: Arc<Mutex<Vec<UiAction>>>,
     a3: Arc<Mutex<Vec<UiAction>>>,
+    a_retry: Arc<Mutex<Vec<UiAction>>>,
 ) -> View {
+    let mut children: Vec<View> = vec![
+        RText(t(tr, "paused", "Paused"))
+            .size(36.0)
+            .color(RColor::WHITE),
+        spacer(16.0),
+        mk_button(&t(tr, "resume", "Resume"), col(60, 140, 90), move || {
+            push(&a1, UiAction::Resume)
+        }),
+    ];
+    // Retry is only meaningful in Play; in Edit there is nothing to reset.
+    // It lives here (not on the locked Play HUD) because `cursor_policy`
+    // unlocks the mouse while paused, so it is actually clickable. During
+    // unpaused Play use `R` — see `win::retry_hotkey`.
+    if !st.maker_mode_edit {
+        children.push(mk_button(
+            &t(tr, "maker-retry", "Retry"),
+            col(90, 140, 200),
+            move || push(&a_retry, UiAction::MakerRetry),
+        ));
+    }
+    children.push(mk_button(
+        &t(tr, "settings", "Settings"),
+        col(70, 70, 90),
+        move || {
+            push(&a2, UiAction::OpenSettings)
+        },
+    ));
+    children.push(mk_button(
+        &t(tr, "quit-to-title", "Quit to Title"),
+        col(180, 60, 60),
+        move || push(&a3, UiAction::QuitToTitle),
+    ));
+
     Column(
         Modifier::new()
             .width(320.0)
@@ -225,23 +261,7 @@ fn pause_panel(
             .clip_rounded(12.0)
             .align_items(AlignItems::CENTER),
     )
-    .child((
-        RText(t(tr, "paused", "Paused"))
-            .size(36.0)
-            .color(RColor::WHITE),
-        spacer(16.0),
-        mk_button(&t(tr, "resume", "Resume"), col(60, 140, 90), move || {
-            push(&a1, UiAction::Resume)
-        }),
-        mk_button(&t(tr, "settings", "Settings"), col(70, 70, 90), move || {
-            push(&a2, UiAction::OpenSettings)
-        }),
-        mk_button(
-            &t(tr, "quit-to-title", "Quit to Title"),
-            col(180, 60, 60),
-            move || push(&a3, UiAction::QuitToTitle),
-        ),
-    ))
+    .children(children)
 }
 
 pub(crate) fn settings_ui(

@@ -404,35 +404,17 @@ pub fn setup_entity_assets(
     manifest: Res<EntityModelManifest>,
 ) {
     let mut mats = HashMap::new();
-    for kind in [
-        EntityKind::Glimmer,
-        EntityKind::Seal,
-        EntityKind::DriftPlate,
-        EntityKind::Prowler,
-        EntityKind::LaunchPad,
-        EntityKind::Checkpoint,
-        EntityKind::Teleporter,
-        EntityKind::Fan,
-        EntityKind::Bumper,
-        EntityKind::Crate,
-        EntityKind::Key,
-        EntityKind::LockGate,
-        EntityKind::HealOrb,
-        EntityKind::SpeedRing,
-        EntityKind::CrumblePlate,
-        EntityKind::Cannon,
-        EntityKind::OnOffSwitch,
-        EntityKind::TossCrate,
-        EntityKind::Wedge,
-        EntityKind::Sign,
-    ] {
+    for kind in ALL_ENTITY_KINDS {
         let mut m = StandardMaterial::from_color(kind.color());
         m.perceptual_roughness = 0.6;
         m.metallic = 0.2;
-        if kind == EntityKind::Glimmer {
+        if *kind == EntityKind::Glimmer || *kind == EntityKind::HealOrb {
             m.emissive = LinearRgba::from(kind.color()) * 4.0;
         }
-        mats.insert(kind, materials.add(m));
+        if *kind == EntityKind::Key || *kind == EntityKind::TriggerOrb {
+            m.emissive = LinearRgba::from(kind.color()) * 2.0;
+        }
+        mats.insert(*kind, materials.add(m));
     }
 
     let mut link_mats = HashMap::new();
@@ -563,6 +545,114 @@ fn stack_offset(index: usize) -> Vec3 {
     ring[index.min(ring.len() - 1)]
 }
 
+fn spawn_sign_procedural(
+    commands: &mut Commands,
+    tf: Transform,
+    id: u32,
+    assets: &EntityAssets,
+) -> Entity {
+    let root = commands
+        .spawn((
+            tf,
+            LevelEnt {
+                id,
+                kind: EntityKind::Sign,
+            },
+            MakerCleanup,
+        ))
+        .id();
+    commands.entity(root).with_children(|p| {
+        p.spawn((
+            Transform::from_xyz(0.0, 0.25, 0.0).with_scale(Vec3::new(0.18, 0.5, 0.18)),
+            Mesh3d(assets.pad_mesh.clone()),
+            MeshMaterial3d(
+                assets
+                    .mats
+                    .get(&EntityKind::Sign)
+                    .cloned()
+                    .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
+            ),
+            MakerCleanup,
+        ));
+        p.spawn((
+            Transform::from_xyz(0.0, 0.55, 0.0),
+            Mesh3d(assets.sign_board_mesh.clone()),
+            MeshMaterial3d(
+                assets
+                    .mats
+                    .get(&EntityKind::Sign)
+                    .cloned()
+                    .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
+            ),
+            MakerCleanup,
+        ));
+    });
+    root
+}
+
+fn spawn_procedural_visual(
+    commands: &mut Commands,
+    kind: EntityKind,
+    tf: Transform,
+    id: u32,
+    assets: &EntityAssets,
+) -> Entity {
+    // Safe fallback for missing material
+    let mat = assets
+        .mats
+        .get(&kind)
+        .cloned()
+        .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone());
+    if kind == EntityKind::Sign {
+        return spawn_sign_procedural(commands, tf, id, assets);
+    }
+    let (mesh, scale) = match kind {
+        EntityKind::LaunchPad
+        | EntityKind::Teleporter
+        | EntityKind::CrumblePlate
+        | EntityKind::OnOffSwitch
+        | EntityKind::DriftPlate => (
+            assets.pad_mesh.clone(),
+            match kind {
+                EntityKind::Teleporter => Vec3::new(0.9, 0.15, 0.9),
+                EntityKind::CrumblePlate => Vec3::new(1.0, 0.12, 1.0),
+                EntityKind::OnOffSwitch => Vec3::new(0.6, 0.18, 0.6),
+                EntityKind::DriftPlate => Vec3::new(1.0, 0.15, 1.0),
+                _ => Vec3::ONE,
+            },
+        ),
+        EntityKind::Wedge => (assets.wedge_mesh.clone(), Vec3::ONE),
+        EntityKind::Seal | EntityKind::RelayGate | EntityKind::LockGate => (
+            assets.marker_mesh.clone(),
+            match kind {
+                EntityKind::LockGate => Vec3::new(1.0, 1.2, 0.25),
+                EntityKind::RelayGate => Vec3::new(1.0, 1.6, 0.25),
+                _ => Vec3::new(0.7, 1.4, 0.35),
+            },
+        ),
+        _ => {
+            let s = match kind {
+                EntityKind::Glimmer | EntityKind::Key | EntityKind::HealOrb => 0.35,
+                EntityKind::SpeedRing => 0.7,
+                EntityKind::Crate | EntityKind::TossCrate => 0.85,
+                EntityKind::Prowler => 0.8,
+                EntityKind::TriggerOrb => 0.4,
+                _ => 0.5,
+            };
+            (assets.marker_mesh.clone(), Vec3::splat(s))
+        }
+    };
+    commands
+        .spawn((
+            tf.with_scale(scale),
+            Mesh3d(mesh),
+            MeshMaterial3d(mat),
+            LevelEnt { id, kind },
+            MakerCleanup,
+        ))
+        .id()
+}
+
 /// Per-kind visual config: (scene, material, scene scale, child y-offset).
 /// The root transform keeps its current gameplay position; the glTF model is a
 /// child so gameplay hitboxes and transforms stay untouched. Reads the
@@ -579,11 +669,23 @@ fn visual_for(
     entry.model.as_deref()?;
     let scene = assets.scenes.get(&kind)?.clone();
     let material = match entry.tint {
-        TintMode::Kind => ModelMaterial::force_tint(assets.mats[&kind].clone()),
+        TintMode::Kind => ModelMaterial::force_tint(
+            assets
+                .mats
+                .get(&kind)
+                .cloned()
+                .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
+        ),
         TintMode::Link => ModelMaterial::force_tint(assets.link_mats[&link.min(9)].clone()),
         // Pack models ship their own multi-material colors; this is only an
         // inert fill-in for any mesh node that still lacks a material.
-        TintMode::Model => ModelMaterial::fallback(assets.mats[&kind].clone()),
+        TintMode::Model => ModelMaterial::fallback(
+            assets
+                .mats
+                .get(&kind)
+                .cloned()
+                .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
+        ),
     };
     Some((scene, material, entry.scale, entry.y_offset))
 }
@@ -898,259 +1000,7 @@ pub fn reconcile_entities(
             });
             root
         } else {
-            match data.kind {
-                EntityKind::LaunchPad => commands
-                    .spawn((
-                        tf,
-                        Mesh3d(assets.pad_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::LaunchPad].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Checkpoint => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.55)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Checkpoint].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Teleporter => commands
-                    .spawn((
-                        tf.with_scale(Vec3::new(0.9, 0.15, 0.9)),
-                        Mesh3d(assets.pad_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Teleporter].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Fan => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.5)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Fan].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Bumper => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.55)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Bumper].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Crate => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.9)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Crate].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Key => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.35)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Key].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::LockGate => commands
-                    .spawn((
-                        tf.with_scale(Vec3::new(1.0, 1.2, 0.25)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::LockGate].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::HealOrb => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.35)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::HealOrb].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::SpeedRing => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.7)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::SpeedRing].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::CrumblePlate => commands
-                    .spawn((
-                        tf.with_scale(Vec3::new(1.0, 0.12, 1.0)),
-                        Mesh3d(assets.pad_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::CrumblePlate].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Cannon => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.5)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Cannon].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::OnOffSwitch => commands
-                    .spawn((
-                        tf.with_scale(Vec3::new(0.6, 0.18, 0.6)),
-                        Mesh3d(assets.pad_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::OnOffSwitch].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::TossCrate => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.8)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::TossCrate].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Wedge => commands
-                    .spawn((
-                        tf,
-                        Mesh3d(assets.wedge_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Wedge].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Sign => {
-                    let root = commands
-                        .spawn((
-                            tf,
-                            LevelEnt {
-                                id: data.id,
-                                kind: data.kind,
-                            },
-                            MakerCleanup,
-                        ))
-                        .id();
-                    commands.entity(root).with_children(|p| {
-                        p.spawn((
-                            Transform::from_xyz(0.0, 0.25, 0.0)
-                                .with_scale(Vec3::new(0.18, 0.5, 0.18)),
-                            Mesh3d(assets.pad_mesh.clone()),
-                            MeshMaterial3d(assets.mats[&EntityKind::Sign].clone()),
-                            MakerCleanup,
-                        ));
-                        p.spawn((
-                            Transform::from_xyz(0.0, 0.55, 0.0),
-                            Mesh3d(assets.sign_board_mesh.clone()),
-                            MeshMaterial3d(assets.mats[&EntityKind::Sign].clone()),
-                            MakerCleanup,
-                        ));
-                    });
-                    root
-                }
-
-                EntityKind::Glimmer => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.5)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Glimmer].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                EntityKind::Prowler => commands
-                    .spawn((
-                        tf.with_scale(Vec3::splat(0.8)),
-                        Mesh3d(assets.marker_mesh.clone()),
-                        MeshMaterial3d(assets.mats[&EntityKind::Prowler].clone()),
-                        LevelEnt {
-                            id: data.id,
-                            kind: data.kind,
-                        },
-                        MakerCleanup,
-                    ))
-                    .id(),
-
-                _ => unreachable!("non-visual entity kind without primitive fallback"),
-            }
+            spawn_procedural_visual(&mut commands, data.kind, tf, data.id, &assets)
         };
 
         let ecmds = &mut commands.entity(eid);

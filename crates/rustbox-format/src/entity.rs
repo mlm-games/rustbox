@@ -75,7 +75,10 @@ impl EntityKind {
 
     /// Hide meaningless param steppers in the inspector.
     pub fn has_param(self) -> bool {
-        !matches!(self, Self::Checkpoint | Self::Key | Self::Sign)
+        !matches!(
+            self,
+            Self::Checkpoint | Self::Key | Self::Sign | Self::Wedge
+        )
     }
 
     /// Kinds that can hold a `ContainedItem` (v6+).

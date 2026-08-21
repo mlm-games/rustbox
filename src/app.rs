@@ -565,7 +565,7 @@ fn sync_shared_ui(
         ui.limit_over = m.limit_over;
         ui.score = m.blocks_placed;
         ui.maker_mode_edit = m.mode == crate::maker::mode::MakerMode::Edit;
-        ui.selected_block = m.selected as u8;
+        ui.selected_block = crate::maker::palette::block_index(m.selected);
         ui.brush_shape = m.brush_shape;
         ui.brush_rot = m.brush_rot;
         ui.waterlogged = m.waterlogged;
@@ -745,8 +745,6 @@ fn process_ui_actions(
     mut maker_ui: Option<ResMut<crate::maker::ui_bridge::MakerUi>>,
     storage: Res<crate::maker::storage::LevelStorage>,
 ) {
-    use crate::maker::block::BlockKind;
-    use crate::maker::entity_data::EntityKind;
     use crate::maker::mode::{BrushTab, MakerMode};
     use crate::maker::online::OnlineRequest;
     use crate::maker::ui_bridge::UiCommand;
@@ -1311,26 +1309,9 @@ fn process_ui_actions(
             }
             UiAction::MakerSelectBlock(i) => {
                 if let Some(ref mut m) = maker_ui {
-                    let kind = match i {
-                        1 => BlockKind::Stone,
-                        2 => BlockKind::Hazard,
-                        3 => BlockKind::Goal,
-                        4 => BlockKind::Spawn,
-                        5 => BlockKind::Water,
-                        6 => BlockKind::Ice,
-                        7 => BlockKind::Spikes,
-                        8 => BlockKind::Conveyor,
-                        9 => BlockKind::Bounce,
-                        10 => BlockKind::Climb,
-                        11 => BlockKind::ThinConveyor,
-                        12 => BlockKind::OnOffConveyorA,
-                        13 => BlockKind::OnOffConveyorB,
-                        14 => BlockKind::HangRail,
-                        15 => BlockKind::OneWay,
-                        16 => BlockKind::TimedPulse,
-                        _ => BlockKind::Grass,
-                    };
-                    m.commands.push(UiCommand::SelectBlock(kind));
+                    m.commands.push(UiCommand::SelectBlock(
+                        crate::maker::palette::block_from_index(i),
+                    ));
                 }
             }
             UiAction::MakerToggleBrushTab => {
@@ -1359,31 +1340,9 @@ fn process_ui_actions(
             }
             UiAction::MakerSelectEntity(i) => {
                 if let Some(ref mut m) = maker_ui {
-                    let kind = match i {
-                        1 => EntityKind::LaunchPad,
-                        2 => EntityKind::Seal,
-                        3 => EntityKind::DriftPlate,
-                        4 => EntityKind::Prowler,
-                        5 => EntityKind::TriggerOrb,
-                        6 => EntityKind::RelayGate,
-                        7 => EntityKind::Checkpoint,
-                        8 => EntityKind::Teleporter,
-                        9 => EntityKind::Fan,
-                        10 => EntityKind::Bumper,
-                        11 => EntityKind::Crate,
-                        12 => EntityKind::Key,
-                        13 => EntityKind::LockGate,
-                        14 => EntityKind::HealOrb,
-                        15 => EntityKind::SpeedRing,
-                        16 => EntityKind::CrumblePlate,
-                        17 => EntityKind::Cannon,
-                        18 => EntityKind::OnOffSwitch,
-                        19 => EntityKind::TossCrate,
-                        20 => EntityKind::Sign,
-                        21 => EntityKind::Wedge,
-                        _ => EntityKind::Glimmer,
-                    };
-                    m.commands.push(UiCommand::SelectEntity(kind));
+                    m.commands.push(UiCommand::SelectEntity(
+                        crate::maker::palette::entity_from_index(i),
+                    ));
                 }
             }
             UiAction::MakerCycleLinkChannel => {

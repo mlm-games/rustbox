@@ -1,5 +1,7 @@
 use repose_core::{ImageHandle, RenderContext};
 
+// MUST stay in lockstep with rustbox_format::{ALL_BLOCK_KINDS, ALL_ENTITY_KINDS}
+// and maker::palette::*_from_index.
 const BLOCK_ICONS: [&[u8]; 17] = [
     include_bytes!("../../assets/images/blocks/grass.png"),
     include_bytes!("../../assets/images/blocks/stone.png"),
@@ -20,6 +22,8 @@ const BLOCK_ICONS: [&[u8]; 17] = [
     include_bytes!("../../assets/images/blocks/timed_pulse.png"),
 ];
 
+// MUST stay in lockstep with rustbox_format::{ALL_BLOCK_KINDS, ALL_ENTITY_KINDS}
+// and maker::palette::*_from_index.
 const ENTITY_ICONS: [&[u8]; 22] = [
     include_bytes!("../../assets/images/entities/glimmer.png"),
     include_bytes!("../../assets/images/entities/launch_pad.png"),
@@ -65,3 +69,6 @@ pub fn register_block_icons(rc: &RenderContext) -> Vec<ImageHandle> {
 pub fn register_entity_icons(rc: &RenderContext) -> Vec<ImageHandle> {
     register(rc, &ENTITY_ICONS)
 }
+
+const _: () = assert!(BLOCK_ICONS.len() == 17);
+const _: () = assert!(ENTITY_ICONS.len() == 22);

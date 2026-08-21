@@ -330,30 +330,7 @@ pub fn push_ui_state(
     ui.brush_rot = brush.rot;
     ui.waterlogged = brush.waterlogged;
     ui.brush_entities = *tab == BrushTab::Entities;
-    ui.selected_entity = match sel_e.0 {
-        EntityKind::Glimmer => 0,
-        EntityKind::LaunchPad => 1,
-        EntityKind::Seal => 2,
-        EntityKind::DriftPlate => 3,
-        EntityKind::Prowler => 4,
-        EntityKind::TriggerOrb => 5,
-        EntityKind::RelayGate => 6,
-        EntityKind::Checkpoint => 7,
-        EntityKind::Teleporter => 8,
-        EntityKind::Fan => 9,
-        EntityKind::Bumper => 10,
-        EntityKind::Crate => 11,
-        EntityKind::Key => 12,
-        EntityKind::LockGate => 13,
-        EntityKind::HealOrb => 14,
-        EntityKind::SpeedRing => 15,
-        EntityKind::CrumblePlate => 16,
-        EntityKind::Cannon => 17,
-        EntityKind::OnOffSwitch => 18,
-        EntityKind::TossCrate => 19,
-        EntityKind::Sign => 20,
-        EntityKind::Wedge => 21,
-    };
+    ui.selected_entity = super::palette::entity_index(sel_e.0);
     ui.brush_tab = match *tab {
         BrushTab::Blocks => 0,
         BrushTab::Entities => 1,
@@ -512,6 +489,12 @@ pub fn drain_ui_commands(
                 ui.deaths = 0;
                 ui.glimmers_collected = 0;
                 ui.score = 0;
+                ui.clear_time_secs = 0.0;
+                ui.clear_deaths = 0;
+                ui.first_clear = false;
+                ui.new_record = false;
+                ui.sign_dialog_open = false;
+                ui.sign_dialog_lines.clear();
                 *mode = MakerMode::Play;
                 level.entities_dirty = true;
                 for (mut tf, mut player, mut move_state, mut vis) in &mut players {

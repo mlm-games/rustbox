@@ -169,13 +169,19 @@ pub fn on_mode_changed(
     }
 
     if *mode == MakerMode::Play {
+        // Full run reset (must match UiCommand::RetryPlay semantics).
         ui.play_timer = 0.0;
+        ui.deaths = 0;
         ui.goal_latched = false;
+        ui.clear_time_secs = 0.0;
+        ui.clear_deaths = 0;
         ui.first_clear = false;
         ui.new_record = false;
         ui.player_is_author = false;
         ui.glimmers_collected = 0;
         ui.score = 0;
+        ui.sign_dialog_open = false;
+        ui.sign_dialog_lines.clear();
         level.entities_dirty = true;
         link.pulses.clear();
         link.clock = 0.0;
@@ -193,5 +199,31 @@ pub fn on_mode_changed(
                 }
             })
             .sum();
+    }
+}
+
+/// Play-mode quick retry: `R` resets the run without needing a mouse click.
+///
+/// A mouse-driven `RETRY` button on the locked Play HUD would be unreachable:
+/// `cursor_policy` sets `CursorGrabMode::Locked` + hidden cursor while
+/// `MakerMode::Play && !paused && !ui_open`, so Repose never gets a hover.
+/// This hotkey mirrors `UiAction::MakerRetry` (see `app::process_ui_actions`)
+/// and is intentionally keyboard-only.
+pub fn retry_hotkey(
+    keys: Res<ButtonInput<KeyCode>>,
+    capture: Res<super::mode::InputCapture>,
+    mode: Res<MakerMode>,
+    bridge: Res<crate::menus::UiBridge>,
+) {
+    if capture.ui_wants_keyboard {
+        return;
+    }
+    if *mode != MakerMode::Play {
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        if let Ok(mut q) = bridge.actions.lock() {
+            q.push(crate::menus::UiAction::MakerRetry);
+        }
     }
 }
