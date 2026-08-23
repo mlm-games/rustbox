@@ -95,16 +95,60 @@ pub fn block_preview_base(kind: BlockKind) -> &'static str {
     }
 }
 
+/// Cube World pack block model for a kind (self-contained `.gltf`, atlas
+/// embedded). Models span -1..1 (2 units), so overlays use scale 0.5 to fill
+/// a 1-unit cell. `None` = procedural chunk mesh (Water only).
+fn cubeworld_block_model(kind: BlockKind) -> Option<&'static str> {
+    match kind {
+        BlockKind::Grass => Some("models/cubeworld/blocks/Block_Grass.gltf"),
+        BlockKind::Stone => Some("models/cubeworld/blocks/Block_Stone.gltf"),
+        BlockKind::Hazard => Some("models/cubeworld/blocks/Block_Brick.gltf"),
+        BlockKind::Goal => Some("models/cubeworld/blocks/Block_Diamond.gltf"),
+        BlockKind::Spawn => Some("models/cubeworld/blocks/Block_Snow.gltf"),
+        BlockKind::Water => None,
+        BlockKind::Ice => Some("models/cubeworld/blocks/Block_Ice.gltf"),
+        BlockKind::Spikes => Some("models/cubeworld/blocks/Block_Metal.gltf"),
+        BlockKind::Conveyor => Some("models/cubeworld/blocks/Block_WoodPlanks.gltf"),
+        BlockKind::Bounce => Some("models/cubeworld/blocks/Block_Crate.gltf"),
+        BlockKind::Climb => Some("models/cubeworld/blocks/Block_GreyBricks.gltf"),
+        BlockKind::ThinConveyor => Some("models/cubeworld/blocks/Block_Coal.gltf"),
+        BlockKind::OnOffConveyorA => Some("models/cubeworld/blocks/Block_Metal.gltf"),
+        BlockKind::OnOffConveyorB => Some("models/cubeworld/blocks/Block_Coal.gltf"),
+        BlockKind::HangRail => Some("models/cubeworld/blocks/Block_Metal.gltf"),
+        BlockKind::OneWay => Some("models/cubeworld/blocks/Block_WoodPlanks.gltf"),
+        BlockKind::TimedPulse => Some("models/cubeworld/blocks/Block_Cheese.gltf"),
+    }
+}
+
+/// Overlay scale that fits a Cube World block model (2 units wide) into one
+/// cell.
+pub const CUBEWORLD_BLOCK_SCALE: f32 = 0.5;
+
 /// Rustbox pack model path for a block kind×shape pair, cell-aligned and
 /// centered on the origin (mirrors `tools/asset_build/gen_manifests.py`).
-/// Returns `None` for Water, which stays a translucent procedural chunk mesh (but still fallback atm)
+/// Full cubes render the real Cube World art; every other shape keeps its
+/// authored kitbash so the silhouette matches collision. Returns `None` for
+/// Water, which stays a translucent procedural chunk mesh.
 pub fn block_overlay_model(kind: BlockKind, shape: BlockShape) -> Option<String> {
     if kind == BlockKind::Water {
         return None;
     }
+    if shape == BlockShape::Full {
+        let file = cubeworld_block_model(kind)?;
+        return Some(format!("{file}#Scene0"));
+    }
     Some(format!(
         "models/rustbox/blocks/{kind:?}/{kind:?}_{shape:?}.glb#Scene0"
     ))
+}
+
+/// Scale for a pair's overlay: CW models are 2 units wide, kitbashes are
+/// authored at cell scale.
+pub fn block_overlay_scale(model: Option<&str>) -> f32 {
+    match model {
+        Some(path) if path.starts_with("models/cubeworld/") => CUBEWORLD_BLOCK_SCALE,
+        _ => 1.0,
+    }
 }
 
 /// Default visual bounds of a shape footprint (used for preview framing).
@@ -180,12 +224,13 @@ impl BlockAssetManifest {
                 } else {
                     BlockTintMode::Kind
                 };
+                let scale = block_overlay_scale(model.as_deref());
                 blocks.insert(
                     block_asset_key(kind, shape),
                     BlockAssetEntry {
                         model,
                         preview: format!("images/blocks/{}.png", block_preview_base(kind)),
-                        scale: 1.0,
+                        scale,
                         y_offset: 0.0,
                         tint,
                         collider: BlockColliderRef::BuiltinShape,

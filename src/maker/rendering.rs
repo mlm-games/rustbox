@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
+use bevy::gltf::GltfAssetLabel;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use bevy::world_serialization::WorldAsset;
+use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 
-use rustbox_format::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockShape};
+use rustbox_format::{ALL_BLOCK_KINDS, ALL_BLOCK_SHAPES, BlockKind, BlockShape};
 
 use super::MakerCleanup;
-use super::block::{BlockKind, BlockKindColor};
+use super::block::BlockKindColor;
 use super::block_asset_manifest::{BlockAssetManifest, BlockTintMode};
 use super::chunk::CHUNK_SIZE;
 use super::entities_runtime::ModelMaterial;
@@ -19,6 +20,8 @@ use super::theme;
 #[derive(Resource)]
 pub struct MakerAssets {
     pub chunk_material: Handle<StandardMaterial>,
+    /// Per-kind textured materials for chunk meshing (from images/blocks/*.png).
+    pub kind_mats: HashMap<BlockKind, Handle<StandardMaterial>>,
     pub water_material: Handle<StandardMaterial>,
     pub player_scene: Handle<WorldAsset>,
     pub player_material: Handle<StandardMaterial>,
@@ -80,7 +83,7 @@ pub struct BlockOverlayMeta {
 }
 
 #[derive(Resource, Default)]
-pub struct ChunkEntities(pub HashMap<IVec3, Entity>);
+pub struct ChunkEntities(pub HashMap<IVec3, Vec<Entity>>);
 
 /// Translucent meshes for placed Water blocks (kept separate from the solid
 /// chunk meshes so they can use a blended material).
@@ -679,16 +682,20 @@ struct MeshOut {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
+    uvs: Vec<[f32; 2]>,
     indices: Vec<u32>,
 }
 
 fn push_quad(out: &mut MeshOut, v: [Vec3; 4], color: [f32; 4]) {
     let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
     let base = out.positions.len() as u32;
-    for p in v {
+    // Simple planar UVs (0..1 per face) — good enough for tileable preview PNGs.
+    let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    for (i, p) in v.into_iter().enumerate() {
         out.positions.push(p.to_array());
         out.normals.push(n.to_array());
         out.colors.push(color);
+        out.uvs.push(uvs[i]);
     }
     out.indices
         .extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
@@ -699,6 +706,7 @@ fn build_shape_mesh(shape: BlockShape) -> Mesh {
         positions: Vec::new(),
         normals: Vec::new(),
         colors: Vec::new(),
+        uvs: Vec::new(),
         indices: Vec::new(),
     };
     let color = [1.0, 1.0, 1.0, 1.0];
@@ -716,6 +724,7 @@ fn finish_mesh(out: MeshOut) -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, out.positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, out.normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, out.colors);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, out.uvs);
     mesh.insert_indices(Indices::U32(out.indices));
     mesh
 }
@@ -740,12 +749,11 @@ fn append_block(
     if block.kind.is_pulse() && !level.pulse_on {
         return;
     }
-    let color = block.kind.color().to_linear().to_f32_array();
-    let color = if level.cell_water(cell) {
-        [color[0] * 0.55, color[1] * 0.62, color[2] * 0.78, color[3]]
-    } else {
-        color
-    };
+    // White vertex color — albedo comes from the textured kind material.
+    let mut color = [1.0, 1.0, 1.0, 1.0];
+    if level.cell_water(cell) {
+        color = [0.55, 0.62, 0.78, 1.0];
+    }
     let origin = cell.as_vec3();
     for f in shape_faces(block.shape) {
         if f.dir != IVec3::ZERO {
@@ -761,6 +769,50 @@ fn append_block(
     }
 }
 
+/// One mesh per (chunk, kind) so we can bind textured materials.
+fn build_chunk_meshes_by_kind(
+    level: &LevelDocument,
+    cpos: IVec3,
+    manifest: &BlockAssetManifest,
+) -> HashMap<BlockKind, Mesh> {
+    let mut buckets: HashMap<BlockKind, MeshOut> = HashMap::new();
+    let origin = cpos * CHUNK_SIZE;
+
+    for lx in 0..CHUNK_SIZE {
+        for ly in 0..CHUNK_SIZE {
+            for lz in 0..CHUNK_SIZE {
+                let cell = origin + IVec3::new(lx, ly, lz);
+                let Some(block) = level.get_block(cell) else {
+                    continue;
+                };
+                if overlay_model(manifest, block.kind, block.shape).is_some() {
+                    continue;
+                }
+                if block.kind == BlockKind::Water {
+                    continue;
+                }
+                if block.kind.is_pulse() && !level.pulse_on {
+                    continue;
+                }
+                let out = buckets.entry(block.kind).or_insert_with(|| MeshOut {
+                    positions: Vec::new(),
+                    normals: Vec::new(),
+                    colors: Vec::new(),
+                    uvs: Vec::new(),
+                    indices: Vec::new(),
+                });
+                append_block(out, level, cell, block, manifest);
+            }
+        }
+    }
+
+    buckets
+        .into_iter()
+        .filter(|(_, o)| !o.indices.is_empty())
+        .map(|(k, o)| (k, finish_mesh(o)))
+        .collect()
+}
+
 fn build_chunk_mesh(
     level: &LevelDocument,
     cpos: IVec3,
@@ -770,6 +822,7 @@ fn build_chunk_mesh(
         positions: Vec::new(),
         normals: Vec::new(),
         colors: Vec::new(),
+        uvs: Vec::new(),
         indices: Vec::new(),
     };
 
@@ -800,6 +853,7 @@ fn build_water_mesh(level: &LevelDocument, cpos: IVec3) -> Option<Mesh> {
         positions: Vec::new(),
         normals: Vec::new(),
         colors: Vec::new(),
+        uvs: Vec::new(),
         indices: Vec::new(),
     };
 
@@ -858,31 +912,33 @@ pub fn rebuild_dirty_chunks(
     let dirty: Vec<IVec3> = level.dirty_chunks.drain().collect();
 
     for cpos in dirty {
-        match build_chunk_mesh(&level, cpos, &assets.block_manifest) {
-            Some(mesh) => {
-                let handle = meshes.add(mesh);
-                match chunks.0.get(&cpos) {
-                    Some(&e) => {
-                        commands.entity(e).insert(Mesh3d(handle));
-                    }
-                    None => {
-                        let e = commands
-                            .spawn((
-                                Mesh3d(handle),
-                                MeshMaterial3d(assets.chunk_material.clone()),
-                                Transform::IDENTITY,
-                                MakerCleanup,
-                            ))
-                            .id();
-                        chunks.0.insert(cpos, e);
-                    }
-                }
+        // Despawn old solid chunk parts
+        if let Some(ents) = chunks.0.remove(&cpos) {
+            for e in ents {
+                commands.entity(e).despawn();
             }
-            None => {
-                if let Some(e) = chunks.0.remove(&cpos) {
-                    commands.entity(e).despawn();
-                }
-            }
+        }
+
+        let built = build_chunk_meshes_by_kind(&level, cpos, &assets.block_manifest);
+        let mut spawned = Vec::new();
+        for (kind, mesh) in built {
+            let mat = assets
+                .kind_mats
+                .get(&kind)
+                .cloned()
+                .unwrap_or_else(|| assets.chunk_material.clone());
+            let e = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(mat),
+                    Transform::IDENTITY,
+                    MakerCleanup,
+                ))
+                .id();
+            spawned.push(e);
+        }
+        if !spawned.is_empty() {
+            chunks.0.insert(cpos, spawned);
         }
         match build_water_mesh(&level, cpos) {
             Some(mesh) => {
@@ -933,9 +989,11 @@ pub fn rebuild_dirty_chunks(
         })
     };
 
-    chunks.0.retain(|cpos, e| {
+    chunks.0.retain(|cpos, ents| {
         if !has_content(&level, *cpos) {
-            commands.entity(*e).despawn();
+            for e in ents.iter() {
+                commands.entity(*e).despawn();
+            }
         }
         has_content(&level, *cpos)
     });
@@ -1010,6 +1068,8 @@ pub fn reconcile_block_overlays(
                 Transform::from_translation(cell.as_vec3() + Vec3::splat(0.5))
                     .with_rotation(Quat::from_rotation_y(yaw)),
                 Visibility::default(),
+                InheritedVisibility::default(),
+                ViewVisibility::default(),
                 MakerCleanup,
                 BlockOverlayMeta {
                     kind,
@@ -1023,6 +1083,8 @@ pub fn reconcile_block_overlays(
                 WorldAssetRoot(scene),
                 MakerCleanup,
                 Visibility::default(),
+                InheritedVisibility::default(),
+                ViewVisibility::default(),
                 Transform::from_translation(Vec3::new(0.0, y_off, 0.0))
                     .with_scale(Vec3::splat(scale)),
             ));
@@ -1254,7 +1316,26 @@ pub fn setup_world(
     chunk_mat.perceptual_roughness = 0.9;
     let chunk_material = materials.add(chunk_mat);
 
-    let player_scene = asset_server.load("models/cubeworld/Character_Male_2.gltf#Scene0");
+    // Textured per-kind materials for chunk meshing (Cube World–style look from pack PNGs).
+    let mut kind_mats = HashMap::new();
+    for kind in ALL_BLOCK_KINDS {
+        let path = format!(
+            "images/blocks/{}.png",
+            super::block_asset_manifest::block_preview_base(*kind)
+        );
+        let image: Handle<Image> = asset_server.load(path);
+        let m = StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(image),
+            perceptual_roughness: 0.85,
+            metallic: 0.0,
+            ..default()
+        };
+        kind_mats.insert(*kind, materials.add(m));
+    }
+
+    let player_scene = asset_server
+        .load(GltfAssetLabel::Scene(0).from_asset("models/cubeworld/Character_Male_2.gltf"));
 
     // Pack model ships its own materials; this is only an inert fallback.
     let player_material = materials.add(StandardMaterial {
@@ -1305,13 +1386,17 @@ pub fn setup_world(
     for kind in ALL_BLOCK_KINDS {
         for shape in ALL_BLOCK_SHAPES {
             if let Some(path) = overlay_model(&manifest, *kind, *shape) {
-                block_overlays.insert((*kind, *shape), asset_server.load(path.to_owned()));
+                let file = path.split('#').next().unwrap_or(path);
+                let handle = asset_server
+                    .load(GltfAssetLabel::Scene(0).from_asset(file.to_owned()));
+                block_overlays.insert((*kind, *shape), handle);
             }
         }
     }
 
     let assets = MakerAssets {
         chunk_material,
+        kind_mats,
         water_material,
         player_scene,
         player_material,

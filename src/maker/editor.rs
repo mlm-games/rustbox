@@ -966,6 +966,8 @@ pub fn update_placement_preview(
     }
     if let Some(handle) = assets.ghost_alpha_mats.get(&brush.kind) {
         *mat = MeshMaterial3d(handle.clone());
+    } else if let Some(handle) = assets.kind_mats.get(&brush.kind) {
+        *mat = MeshMaterial3d(handle.clone());
     }
     tr.translation = Vec3::new(
         place_cell.x as f32 + 0.5,

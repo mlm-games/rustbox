@@ -9,7 +9,7 @@ use bevy::{
     animation::prelude::{
         AnimationClip, AnimationGraph, AnimationGraphHandle, AnimationNodeIndex, AnimationPlayer,
     },
-    gltf::Gltf,
+    gltf::{Gltf, GltfAssetLabel},
 };
 
 use game_utils_bevy::juice::Juice;
@@ -431,7 +431,11 @@ pub fn setup_entity_assets(
     let mut scenes = HashMap::new();
     for kind in ALL_ENTITY_KINDS {
         if let Some(path) = manifest.entry(*kind).and_then(|e| e.model.as_deref()) {
-            scenes.insert(*kind, asset_server.load(path.to_owned()));
+            let file = path.split('#').next().unwrap_or(path);
+            scenes.insert(
+                *kind,
+                asset_server.load(GltfAssetLabel::Scene(0).from_asset(file.to_owned())),
+            );
         }
     }
 
@@ -669,7 +673,7 @@ fn visual_for(
     entry.model.as_deref()?;
     let scene = assets.scenes.get(&kind)?.clone();
     let material = match entry.tint {
-        TintMode::Kind => ModelMaterial::force_tint(
+        TintMode::Kind => ModelMaterial::fallback(
             assets
                 .mats
                 .get(&kind)
