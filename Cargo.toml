@@ -141,6 +141,7 @@ name = "android.permission.ACCESS_NETWORK_STATE"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
+target_sdk_version = 37
 
 [lints.clippy]
 too_many_arguments = "allow"
