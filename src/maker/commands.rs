@@ -6,6 +6,7 @@ use super::track::{TrackData, TrackId, TrackMode};
 
 #[derive(Clone, Debug)]
 pub enum EditCommand {
+    Batch(Vec<EditCommand>),
     Place {
         position: IVec3,
         data: BlockData,
@@ -116,6 +117,20 @@ impl CommandHistory {
         self.redo.clear();
     }
 
+    pub fn apply_many(&mut self, level: &mut LevelDocument, cmds: Vec<EditCommand>) {
+        if cmds.is_empty() {
+            return;
+        }
+        let cmd = if cmds.len() == 1 {
+            cmds.into_iter().next().unwrap()
+        } else {
+            EditCommand::Batch(cmds)
+        };
+        apply_command(level, &cmd);
+        self.undo.push(cmd);
+        self.redo.clear();
+    }
+
     pub fn undo(&mut self, level: &mut LevelDocument) {
         let Some(cmd) = self.undo.pop() else {
             return;
@@ -133,8 +148,13 @@ impl CommandHistory {
     }
 }
 
-pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
+fn apply_command_inner(level: &mut LevelDocument, cmd: &EditCommand) {
     match cmd {
+        EditCommand::Batch(cmds) => {
+            for c in cmds {
+                apply_command_inner(level, c);
+            }
+        }
         EditCommand::Place { position, data, .. } => level.set_block(*position, Some(data.clone())),
         EditCommand::Remove { position, .. } => level.set_block(*position, None),
         EditCommand::PlaceEntity { entity } => {
@@ -254,12 +274,15 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
             }
         }
     }
-    level.rebuild_blocks_vec();
-    invalidate_verification(level);
 }
 
-pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
+fn revert_command_inner(level: &mut LevelDocument, cmd: &EditCommand) {
     match cmd {
+        EditCommand::Batch(cmds) => {
+            for c in cmds.iter().rev() {
+                revert_command_inner(level, c);
+            }
+        }
         EditCommand::Place {
             position, previous, ..
         } => level.set_block(*position, previous.clone()),
@@ -381,6 +404,16 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
             }
         }
     }
+}
+
+pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
+    apply_command_inner(level, cmd);
+    level.rebuild_blocks_vec();
+    invalidate_verification(level);
+}
+
+pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
+    revert_command_inner(level, cmd);
     level.rebuild_blocks_vec();
     invalidate_verification(level);
 }

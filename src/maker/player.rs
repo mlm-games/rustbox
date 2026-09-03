@@ -510,17 +510,23 @@ pub struct PlayInput {
     pub jump_pressed: bool,
     pub jump_down: bool,
     pub crouch_down: bool,
-    pub crouch_tapped: bool,
+    pub crouch_pressed: bool,
     pub hang_down: bool,
     pub interact_pressed: bool,
     pub throw_pressed: bool,
     pub reset_pressed: bool,
+    pub up_down: bool,
+    pub down_down: bool,
     /// Crouch + back (used to drop through one-way platforms).
     pub drop_through: bool,
 }
 
-fn keyboard(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
+fn keyboard_down(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
     kb_ok && keys.pressed(key)
+}
+
+fn keyboard_pressed(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
+    kb_ok && keys.just_pressed(key)
 }
 
 /// Combine keyboard + gamepad into one Play-mode input snapshot. All systems
@@ -532,29 +538,41 @@ pub fn read_play_input(
     kb_ok: bool,
 ) -> PlayInput {
     let wish = read_move_wish(keys, kb_ok, gamepads);
-    let crouch_down =
-        keyboard(keys, kb_ok, KeyCode::ShiftLeft) || pad_pressed(gamepads, GamepadButton::East);
-    let back = wish.y < -0.5
-        || keyboard(keys, kb_ok, KeyCode::KeyS)
+
+    let shift_down = keyboard_down(keys, kb_ok, KeyCode::ShiftLeft)
+        || keyboard_down(keys, kb_ok, KeyCode::ShiftRight);
+    let shift_pressed = keyboard_pressed(keys, kb_ok, KeyCode::ShiftLeft)
+        || keyboard_pressed(keys, kb_ok, KeyCode::ShiftRight);
+
+    let up_down = wish.y > 0.5
+        || keyboard_down(keys, kb_ok, KeyCode::KeyW)
+        || gamepads.iter().any(|g| g.dpad().y > 0.5);
+
+    let down_down = wish.y < -0.5
+        || keyboard_down(keys, kb_ok, KeyCode::KeyS)
         || gamepads.iter().any(|g| g.dpad().y < -0.5);
+
+    let crouch_down = shift_down || pad_pressed(gamepads, GamepadButton::East);
+
     PlayInput {
         wish,
-        jump_pressed: keyboard(keys, kb_ok, KeyCode::Space)
+        jump_pressed: keyboard_pressed(keys, kb_ok, KeyCode::Space)
             || pad_just_pressed(gamepads, GamepadButton::South),
-        jump_down: keyboard(keys, kb_ok, KeyCode::Space)
+        jump_down: keyboard_down(keys, kb_ok, KeyCode::Space)
             || pad_pressed(gamepads, GamepadButton::South),
         crouch_down,
-        crouch_tapped: keyboard(keys, kb_ok, KeyCode::ShiftLeft)
-            || pad_just_pressed(gamepads, GamepadButton::East),
-        hang_down: keyboard(keys, kb_ok, KeyCode::KeyE)
+        crouch_pressed: shift_pressed || pad_just_pressed(gamepads, GamepadButton::East),
+        hang_down: keyboard_down(keys, kb_ok, KeyCode::KeyE)
             || pad_pressed(gamepads, GamepadButton::West),
-        interact_pressed: keyboard(keys, kb_ok, KeyCode::KeyI)
+        interact_pressed: keyboard_pressed(keys, kb_ok, KeyCode::KeyI)
             || pad_just_pressed(gamepads, GamepadButton::North),
-        throw_pressed: keyboard(keys, kb_ok, KeyCode::KeyF)
+        throw_pressed: keyboard_pressed(keys, kb_ok, KeyCode::KeyF)
             || pad_just_pressed(gamepads, GamepadButton::RightTrigger),
-        reset_pressed: keyboard(keys, kb_ok, KeyCode::KeyR)
+        reset_pressed: keyboard_pressed(keys, kb_ok, KeyCode::KeyR)
             || pad_just_pressed(gamepads, GamepadButton::Select),
-        drop_through: crouch_down && back,
+        up_down,
+        down_down,
+        drop_through: crouch_down && down_down,
     }
 }
 
@@ -596,7 +614,7 @@ pub fn player_controller(
         player.wall_lock = (player.wall_lock - dt).max(0.0);
 
         let want_crouch = input.crouch_down;
-        let crouch_pressed = input.crouch_tapped;
+        let crouch_pressed = input.crouch_pressed;
         let he = player.half_extents;
         let underwater = level.is_underwater_point(transform.translation);
 
@@ -1077,14 +1095,14 @@ pub fn player_controller(
             player.velocity = Vec3::ZERO;
         }
         if player.gripping {
-            if input.jump_pressed || keys.pressed(KeyCode::KeyW) {
+            if input.jump_pressed || input.up_down {
                 transform.translation = player.grip_mantle;
                 player.gripping = false;
                 player.grip_top = 0.0;
                 player.velocity = Vec3::ZERO;
                 player.coyote = tuning.coyote_time;
                 player.grip_cooldown = 0.15;
-            } else if keys.pressed(KeyCode::KeyS) {
+            } else if input.down_down {
                 player.gripping = false;
                 player.grip_top = 0.0;
                 player.velocity = Vec3::ZERO;

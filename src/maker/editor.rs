@@ -318,6 +318,36 @@ fn build_block_data(
     }
 }
 
+fn same_block(a: &BlockData, b: &BlockData) -> bool {
+    (a.kind, a.shape, a.rot, a.waterlogged) == (b.kind, b.shape, b.rot, b.waterlogged)
+}
+
+fn place_cmd_for_cell(level: &LevelDocument, brush: &BlockBrush, cell: IVec3) -> Option<EditCommand> {
+    if level.boundary_solid(cell) {
+        return None;
+    }
+
+    let data = build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell);
+    let previous = level.get_block(cell).cloned();
+
+    if previous.as_ref().is_some_and(|prev| same_block(prev, &data)) {
+        return None;
+    }
+
+    Some(EditCommand::Place {
+        position: cell,
+        data,
+        previous,
+    })
+}
+
+fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {
+    level.get_block(cell).cloned().map(|previous| EditCommand::Remove {
+        position: cell,
+        previous,
+    })
+}
+
 fn ctrl_pressed(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight)
 }
@@ -997,6 +1027,19 @@ pub fn update_preview_and_edit(
     channel: Res<ActiveLinkChannel>,
     mut placed: MessageWriter<BlockPlaced>,
 ) {
+    // End stroke when the button is released so the next click is a fresh
+    // single place. Must run before early returns so drag state doesn't latch
+    // when cursor leaves valid area while dragging.
+    if !buttons.pressed(MouseButton::Left) {
+        box_start.last_paint = None;
+    }
+    if !buttons.pressed(MouseButton::Right) {
+        box_start.last_erase = None;
+    }
+    if !buttons.pressed(MouseButton::Left) && !buttons.pressed(MouseButton::Right) {
+        box_start.last_pointer = None;
+    }
+
     let Some(hit_cell) = cursor.hit else {
         return;
     };
@@ -1009,18 +1052,6 @@ pub fn update_preview_and_edit(
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     if ctrl {
         return;
-    }
-
-    // End stroke when the button is released so the next click is a fresh
-    // single place.
-    if !buttons.pressed(MouseButton::Left) {
-        box_start.last_paint = None;
-    }
-    if !buttons.pressed(MouseButton::Right) {
-        box_start.last_erase = None;
-    }
-    if !buttons.pressed(MouseButton::Left) && !buttons.pressed(MouseButton::Right) {
-        box_start.last_pointer = None;
     }
 
     // Eyedropper: middle-click picks the block/entity under the cursor.
@@ -1068,7 +1099,13 @@ pub fn update_preview_and_edit(
                                     }
                                 }
                             }
-                            if !cells.is_empty() && (level.map.len() as u32) < limits.max_blocks {
+                            let net_new = cells
+                                .iter()
+                                .filter(|(_, prev)| prev.is_none())
+                                .count() as u32;
+                            if !cells.is_empty()
+                                && (level.map.len() as u32) + net_new <= limits.max_blocks
+                            {
                                 history.apply(
                                     &mut level,
                                     EditCommand::BoxFill {
@@ -1086,40 +1123,28 @@ pub fn update_preview_and_edit(
                         }
                     }
                 } else {
-                    for cell in mirror_cells(place_cell, mirror.0) {
-                        if level.get_block(cell).is_none()
-                            && !level.boundary_solid(cell)
-                            && (level.map.len() as u32) < limits.max_blocks
-                        {
-                            history.apply(
-                                &mut level,
-                                EditCommand::Place {
-                                    position: cell,
-                                    data: build_block_data(
-                                        brush.kind,
-                                        brush.shape,
-                                        brush.rot,
-                                        brush.waterlogged,
-                                        cell,
-                                    ),
-                                    previous: None,
-                                },
-                            );
-                            placed.write(BlockPlaced {
-                                cell,
-                                kind: brush.kind,
-                                shape: if brush.kind == BlockKind::Water {
-                                    BlockShape::Full
-                                } else {
-                                    brush.shape
-                                },
-                                rot: if brush.kind == BlockKind::Water {
-                                    0
-                                } else {
-                                    brush.rot
-                                },
-                            });
+                    let cmds: Vec<EditCommand> = mirror_cells(place_cell, mirror.0)
+                        .into_iter()
+                        .filter_map(|cell| place_cmd_for_cell(&level, &brush, cell))
+                        .collect();
+
+                    let net_new = cmds
+                        .iter()
+                        .filter(|cmd| matches!(cmd, EditCommand::Place { previous: None, .. }))
+                        .count() as u32;
+
+                    if (level.map.len() as u32) + net_new <= limits.max_blocks {
+                        for cmd in &cmds {
+                            if let EditCommand::Place { position, data, .. } = cmd {
+                                placed.write(BlockPlaced {
+                                    cell: *position,
+                                    kind: data.kind,
+                                    shape: data.shape,
+                                    rot: data.rot,
+                                });
+                            }
                         }
+                        history.apply_many(&mut level, cmds);
                     }
                     // Anchor stroke: one block this click; drag needs pointer motion.
                     box_start.last_paint = Some(place_cell);
@@ -1221,17 +1246,12 @@ pub fn update_preview_and_edit(
                 active.0 = Some(id);
             }
         } else if level.get_block(hit_cell).is_some() {
-            for cell in mirror_cells(hit_cell, mirror.0) {
-                if let Some(k) = level.get_block(cell).cloned() {
-                    history.apply(
-                        &mut level,
-                        EditCommand::Remove {
-                            position: cell,
-                            previous: k,
-                        },
-                    );
-                }
-            }
+            let cmds: Vec<EditCommand> = mirror_cells(hit_cell, mirror.0)
+                .into_iter()
+                .filter_map(|cell| remove_cmd_for_cell(&level, cell))
+                .collect();
+
+            history.apply_many(&mut level, cmds);
             // Anchor erase stroke (prevents tunneling while held still).
             box_start.last_erase = Some(hit_cell);
             box_start.last_pointer = pointer;
@@ -1253,40 +1273,28 @@ pub fn update_preview_and_edit(
             && drag_ok
             && box_start.last_paint != Some(place_cell)
         {
-            for cell in mirror_cells(place_cell, mirror.0) {
-                if level.get_block(cell).is_none()
-                    && !level.boundary_solid(cell)
-                    && (level.map.len() as u32) < limits.max_blocks
-                {
-                    history.apply(
-                        &mut level,
-                        EditCommand::Place {
-                            position: cell,
-                            data: build_block_data(
-                                brush.kind,
-                                brush.shape,
-                                brush.rot,
-                                brush.waterlogged,
-                                cell,
-                            ),
-                            previous: None,
-                        },
-                    );
-                    placed.write(BlockPlaced {
-                        cell,
-                        kind: brush.kind,
-                        shape: if brush.kind == BlockKind::Water {
-                            BlockShape::Full
-                        } else {
-                            brush.shape
-                        },
-                        rot: if brush.kind == BlockKind::Water {
-                            0
-                        } else {
-                            brush.rot
-                        },
-                    });
+            let cmds: Vec<EditCommand> = mirror_cells(place_cell, mirror.0)
+                .into_iter()
+                .filter_map(|cell| place_cmd_for_cell(&level, &brush, cell))
+                .collect();
+
+            let net_new = cmds
+                .iter()
+                .filter(|cmd| matches!(cmd, EditCommand::Place { previous: None, .. }))
+                .count() as u32;
+
+            if (level.map.len() as u32) + net_new <= limits.max_blocks {
+                for cmd in &cmds {
+                    if let EditCommand::Place { position, data, .. } = cmd {
+                        placed.write(BlockPlaced {
+                            cell: *position,
+                            kind: data.kind,
+                            shape: data.shape,
+                            rot: data.rot,
+                        });
+                    }
                 }
+                history.apply_many(&mut level, cmds);
             }
             box_start.last_paint = Some(place_cell);
             box_start.last_pointer = pointer;
@@ -1295,17 +1303,12 @@ pub fn update_preview_and_edit(
             && drag_ok
             && box_start.last_erase != Some(hit_cell)
         {
-            for cell in mirror_cells(hit_cell, mirror.0) {
-                if let Some(k) = level.get_block(cell).cloned() {
-                    history.apply(
-                        &mut level,
-                        EditCommand::Remove {
-                            position: cell,
-                            previous: k,
-                        },
-                    );
-                }
-            }
+            let cmds: Vec<EditCommand> = mirror_cells(hit_cell, mirror.0)
+                .into_iter()
+                .filter_map(|cell| remove_cmd_for_cell(&level, cell))
+                .collect();
+
+            history.apply_many(&mut level, cmds);
             box_start.last_erase = Some(hit_cell);
             box_start.last_pointer = pointer;
         }

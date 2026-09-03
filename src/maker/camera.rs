@@ -3,6 +3,7 @@ use bevy::prelude::*;
 
 use super::MakerCleanup;
 use super::collision::collide_camera_eye;
+use super::entities_runtime::RuntimeSolids;
 use super::entity_data::EntityDataExt;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, SelectionSet};
@@ -124,16 +125,8 @@ pub fn edit_camera_control(
         if let Some((min, max)) = level.content_bounds() {
             const PAD: f32 = 4.0;
             let (min, max) = (min.as_vec3(), max.as_vec3() + Vec3::ONE);
-            if rig.focus.x > max.x + PAD {
-                rig.focus.x = min.x - PAD;
-            } else if rig.focus.x < min.x - PAD {
-                rig.focus.x = max.x + PAD;
-            }
-            if rig.focus.z > max.z + PAD {
-                rig.focus.z = min.z - PAD;
-            } else if rig.focus.z < min.z - PAD {
-                rig.focus.z = max.z + PAD;
-            }
+            rig.focus.x = rig.focus.x.clamp(min.x - PAD, max.x + PAD);
+            rig.focus.z = rig.focus.z.clamp(min.z - PAD, max.z + PAD);
         }
     }
 
@@ -152,7 +145,9 @@ pub fn play_camera_follow(
     mut motion: MessageReader<MouseMotion>,
     mut wheel: MessageReader<MouseWheel>,
     mut rig: ResMut<CameraRig>,
-    player_q: Query<&Transform, (With<Player>, Without<WorldCamera>)>,
+    level: Res<LevelDocument>,
+    solids: Res<RuntimeSolids>,
+    player_q: Query<(&Transform, &Player), Without<WorldCamera>>,
     mut cam: Query<(&mut Transform, &mut CameraBase3d), With<WorldCamera>>,
 ) {
     let mut delta = Vec2::ZERO;
@@ -181,19 +176,28 @@ pub fn play_camera_follow(
         }
     }
 
-    if let Ok(player) = player_q.single() {
-        let target = player.translation + Vec3::Y;
-        let k = (1.0 - (-12.0 * time.delta_secs()).exp()).clamp(0.0, 1.0);
-        rig.focus = rig.focus.lerp(target, k);
+
+    if let Ok((player_tf, player)) = player_q.single() {
+        let flat_vel = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
+        let look_ahead = flat_vel.clamp_length_max(6.0) * 0.22;
+        let vertical_bias = Vec3::Y * (player.velocity.y * 0.05).clamp(-0.35, 0.55);
+        let target = player_tf.translation + Vec3::new(0.0, 1.15, 0.0) + look_ahead + vertical_bias;
+
+        let follow_k = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
+        rig.focus = rig.focus.lerp(target, follow_k);
     }
 
     if let Ok((mut t, mut base)) = cam.single_mut() {
         let desired = rig_transform(&rig);
-        let eye = collide_camera_eye(desired.translation);
+        let eye = collide_camera_eye(rig.focus, desired.translation, &level, &solids.solids);
         let collided = Transform::from_translation(eye).looking_at(rig.focus, Vec3::Y);
-        *t = collided;
-        base.translation = collided.translation;
-        base.rotation = collided.rotation;
+
+        let cam_k = (1.0 - (-18.0 * dt).exp()).clamp(0.0, 1.0);
+        t.translation = t.translation.lerp(collided.translation, cam_k);
+        t.rotation = t.rotation.slerp(collided.rotation, cam_k);
+
+        base.translation = t.translation;
+        base.rotation = t.rotation;
     }
 }
 

@@ -893,9 +893,57 @@ pub fn floor_normal_at(level: &LevelDocument, wx: f32, wz: f32) -> Vec3 {
     Vec3::Y
 }
 
-/// Camera eye collision intentionally disabled: pulling the eye in when a wall
-/// is behind the player zooms into their back and pops in/out. Hold full zoom.
-pub fn collide_camera_eye(desired_eye: Vec3) -> Vec3 {
+fn camera_probe_hits(level: &LevelDocument, extras: &[RuntimeSolid], center: Vec3, radius: f32) -> bool {
+    let he = Vec3::splat(radius);
+    if aabb_hits_material(level, center, he) {
+        return true;
+    }
+
+    for solid in extras {
+        let (solid_center, solid_he) =
+            rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
+
+        if (center.x - solid_center.x).abs() <= he.x + solid_he.x
+            && (center.y - solid_center.y).abs() <= he.y + solid_he.y
+            && (center.z - solid_center.z).abs() <= he.z + solid_he.z
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn collide_camera_eye(
+    focus: Vec3,
+    desired_eye: Vec3,
+    level: &LevelDocument,
+    extras: &[RuntimeSolid],
+) -> Vec3 {
+    const RADIUS: f32 = 0.24;
+    const STEP: f32 = 0.12;
+    const SKIN: f32 = 0.08;
+
+    let ray = desired_eye - focus;
+    let dist = ray.length();
+    if dist <= 0.001 {
+        return desired_eye;
+    }
+
+    let dir = ray / dist;
+    let steps = ((dist / STEP).ceil() as i32).max(1);
+
+    let mut last_free = focus;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let p = focus + ray * t;
+        if camera_probe_hits(level, extras, p, RADIUS) {
+            let safe_dist = ((last_free - focus).length() - SKIN).max(0.0);
+            return focus + dir * safe_dist;
+        }
+        last_free = p;
+    }
+
     desired_eye
 }
 
