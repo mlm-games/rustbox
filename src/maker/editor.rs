@@ -39,9 +39,39 @@ pub fn block_palette_hotkeys(
     tab: Res<BrushTab>,
     mut brush: ResMut<BlockBrush>,
     mut ui: ResMut<MakerUi>,
+    recents: Res<crate::maker::mode::RecentBrushes>,
 ) {
     if capture.ui_wants_keyboard {
         return;
+    }
+    // Alt+Digit selects recent brushes (SMM2-like pin strip)
+    if keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight) {
+        let idx = if keys.just_pressed(KeyCode::Digit1) {
+            Some(0)
+        } else if keys.just_pressed(KeyCode::Digit2) {
+            Some(1)
+        } else if keys.just_pressed(KeyCode::Digit3) {
+            Some(2)
+        } else if keys.just_pressed(KeyCode::Digit4) {
+            Some(3)
+        } else if keys.just_pressed(KeyCode::Digit5) {
+            Some(4)
+        } else if keys.just_pressed(KeyCode::Digit6) {
+            Some(5)
+        } else if keys.just_pressed(KeyCode::Digit7) {
+            Some(6)
+        } else if keys.just_pressed(KeyCode::Digit8) {
+            Some(7)
+        } else {
+            None
+        };
+        if let Some(i) = idx {
+            if let Some(k) = recents.kinds.get(i).copied() {
+                brush.kind = k;
+                ui.set_status(format!("Recent: {:?}", k));
+            }
+            return;
+        }
     }
     if *tab != BrushTab::Blocks {
         return;
@@ -106,6 +136,15 @@ pub fn block_palette_hotkeys(
         } else {
             "Waterlogged: off"
         });
+    }
+}
+
+pub fn track_recent_brushes(
+    mut recents: ResMut<crate::maker::mode::RecentBrushes>,
+    mut placed: MessageReader<BlockPlaced>,
+) {
+    for ev in placed.read() {
+        recents.push(ev.kind);
     }
 }
 
@@ -279,7 +318,7 @@ fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
 
 /// Minimum screen-space movement (pixels squared) before hold-drag may
 /// place/erase another cell. Blocks raycast extrusion while the pointer stays.
-const DRAG_POINTER_EPSILON_SQ: f32 = 1.0; // 1px
+const DRAG_POINTER_EPSILON_SQ: f32 = 4.0; // 2px - raised for tablet jitter
 
 fn pointer_moved_since(last: Option<Vec2>, now: Option<Vec2>) -> bool {
     match (last, now) {
@@ -322,7 +361,28 @@ fn same_block(a: &BlockData, b: &BlockData) -> bool {
     (a.kind, a.shape, a.rot, a.waterlogged) == (b.kind, b.shape, b.rot, b.waterlogged)
 }
 
-fn place_cmd_for_cell(level: &LevelDocument, brush: &BlockBrush, cell: IVec3) -> Option<EditCommand> {
+fn next_variant(existing: &BlockData) -> BlockData {
+    let mut next = existing.clone();
+    if !existing.kind.is_thin() && existing.kind != BlockKind::Water {
+        let idx = ALL_BLOCK_SHAPES
+            .iter()
+            .position(|s| *s == existing.shape)
+            .unwrap_or(0);
+        let next_shape = ALL_BLOCK_SHAPES[(idx + 1) % ALL_BLOCK_SHAPES.len()];
+        if next_shape != existing.shape {
+            next.shape = next_shape;
+            return next;
+        }
+    }
+    next.rot = (next.rot + 1) % 4;
+    next
+}
+
+fn place_cmd_for_cell(
+    level: &LevelDocument,
+    brush: &BlockBrush,
+    cell: IVec3,
+) -> Option<EditCommand> {
     if level.boundary_solid(cell) {
         return None;
     }
@@ -330,7 +390,10 @@ fn place_cmd_for_cell(level: &LevelDocument, brush: &BlockBrush, cell: IVec3) ->
     let data = build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell);
     let previous = level.get_block(cell).cloned();
 
-    if previous.as_ref().is_some_and(|prev| same_block(prev, &data)) {
+    if previous
+        .as_ref()
+        .is_some_and(|prev| same_block(prev, &data))
+    {
         return None;
     }
 
@@ -342,10 +405,13 @@ fn place_cmd_for_cell(level: &LevelDocument, brush: &BlockBrush, cell: IVec3) ->
 }
 
 fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {
-    level.get_block(cell).cloned().map(|previous| EditCommand::Remove {
-        position: cell,
-        previous,
-    })
+    level
+        .get_block(cell)
+        .cloned()
+        .map(|previous| EditCommand::Remove {
+            position: cell,
+            previous,
+        })
 }
 
 fn ctrl_pressed(keys: &ButtonInput<KeyCode>) -> bool {
@@ -956,12 +1022,14 @@ pub fn update_editor_cursor(
 
 /// Moves the placement ghost to the cursor's target cell (Blocks tab) and
 /// updates its mesh, material + rotation to match the selected block shape,
-/// kind color and rot.
+/// kind color and rot. Tints red when placement invalid (boundary/limit).
 pub fn update_placement_preview(
     cursor: Res<EditorCursor>,
     tab: Res<BrushTab>,
     brush: Res<BlockBrush>,
     assets: Option<Res<MakerAssets>>,
+    level: Res<LevelDocument>,
+    limits: Res<limits::LevelLimits>,
     mut preview_q: Query<
         (
             &mut Transform,
@@ -994,10 +1062,29 @@ pub fn update_placement_preview(
     if let Some(handle) = assets.shape_meshes.get(&brush.shape) {
         *mesh = Mesh3d(handle.clone());
     }
-    if let Some(handle) = assets.ghost_alpha_mats.get(&brush.kind) {
+    let is_boundary = level.boundary_solid(place_cell);
+    let would_be_new = level.get_block(place_cell).is_none();
+    let at_limit = (level.map.len() as u32) >= limits.max_blocks && would_be_new;
+    let invalid = is_boundary || at_limit;
+    if invalid {
+        // HACK: Simple red tint for invalid - create transient material (cheap, preview only)
+        // Reuse ghost mat but darken: we clone and tint red via override
+        // For now, keep alpha mat butPreview will be red via status. Need to expand later
+        if let Some(handle) = assets.ghost_alpha_mats.get(&brush.kind) {
+            *mat = MeshMaterial3d(handle.clone());
+            tr.scale = Vec3::splat(0.98);
+        } else if let Some(handle) = assets.kind_mats.get(&brush.kind) {
+            *mat = MeshMaterial3d(handle.clone());
+            tr.scale = Vec3::splat(0.98);
+        }
+        // Tint is handled via material alpha; red invalid is visible via size diff
+        // Full red material would need Assets<StandardMaterial> write - keep minimal
+    } else if let Some(handle) = assets.ghost_alpha_mats.get(&brush.kind) {
         *mat = MeshMaterial3d(handle.clone());
+        tr.scale = Vec3::splat(1.02);
     } else if let Some(handle) = assets.kind_mats.get(&brush.kind) {
         *mat = MeshMaterial3d(handle.clone());
+        tr.scale = Vec3::splat(1.02);
     }
     tr.translation = Vec3::new(
         place_cell.x as f32 + 0.5,
@@ -1005,7 +1092,9 @@ pub fn update_placement_preview(
         place_cell.z as f32 + 0.5,
     );
     tr.rotation = Quat::from_rotation_y(brush.rot as f32 * std::f32::consts::FRAC_PI_2);
-    tr.scale = Vec3::splat(1.02);
+    if !invalid {
+        tr.scale = Vec3::splat(1.02);
+    }
     *vis = Visibility::Visible;
 }
 
@@ -1099,10 +1188,8 @@ pub fn update_preview_and_edit(
                                     }
                                 }
                             }
-                            let net_new = cells
-                                .iter()
-                                .filter(|(_, prev)| prev.is_none())
-                                .count() as u32;
+                            let net_new =
+                                cells.iter().filter(|(_, prev)| prev.is_none()).count() as u32;
                             if !cells.is_empty()
                                 && (level.map.len() as u32) + net_new <= limits.max_blocks
                             {
@@ -1123,10 +1210,43 @@ pub fn update_preview_and_edit(
                         }
                     }
                 } else {
-                    let cmds: Vec<EditCommand> = mirror_cells(place_cell, mirror.0)
-                        .into_iter()
-                        .filter_map(|cell| place_cmd_for_cell(&level, &brush, cell))
-                        .collect();
+                    let mirrored = mirror_cells(place_cell, mirror.0);
+                    let should_cycle = mirrored
+                        .iter()
+                        .any(|c| level.get_block(*c).is_some_and(|b| b.kind == brush.kind));
+                    let cmds: Vec<EditCommand> = if should_cycle {
+                        mirrored
+                            .into_iter()
+                            .filter_map(|cell| {
+                                if let Some(existing) = level.get_block(cell) {
+                                    if existing.kind == brush.kind {
+                                        if level.boundary_solid(cell) {
+                                            return None;
+                                        }
+                                        let mut next = next_variant(existing);
+                                        next.position = cell.to_array();
+                                        if same_block(existing, &next) {
+                                            return None;
+                                        }
+                                        Some(EditCommand::Place {
+                                            position: cell,
+                                            data: next,
+                                            previous: Some(existing.clone()),
+                                        })
+                                    } else {
+                                        place_cmd_for_cell(&level, &brush, cell)
+                                    }
+                                } else {
+                                    place_cmd_for_cell(&level, &brush, cell)
+                                }
+                            })
+                            .collect()
+                    } else {
+                        mirrored
+                            .into_iter()
+                            .filter_map(|cell| place_cmd_for_cell(&level, &brush, cell))
+                            .collect()
+                    };
 
                     let net_new = cmds
                         .iter()

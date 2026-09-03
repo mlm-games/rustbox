@@ -1124,7 +1124,7 @@ pub fn spawn_place_ghost(
                 .with_rotation(Quat::from_rotation_y(
                     rot as f32 * std::f32::consts::FRAC_PI_2,
                 ))
-                .with_scale(Vec3::splat(1.04)),
+                .with_scale(Vec3::splat(1.02)),
             GhostTimer(0.25),
             MakerCleanup,
         ))

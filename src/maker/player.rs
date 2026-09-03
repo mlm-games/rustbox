@@ -7,8 +7,9 @@ use super::MakerCleanup;
 use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
-    floor_normal_at, ground_height, ledge_grip, move_and_collide_ex, overlaps_kind, slope_slide,
-    stand_headroom, support_height_footprint,
+    ceiling_corner_correct, floor_normal_at, ground_height, ledge_grip,
+    move_and_collide_substepped, overlaps_kind, slope_slide, stand_headroom,
+    support_height_footprint,
 };
 use super::entities_runtime::{DriftPlate, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::entity_data::LevelEntityId;
@@ -75,42 +76,58 @@ pub struct MoveTuning {
     /// Ledge grab / mantle (cling to a boxy lip, pull up). Disabled by
     /// default.
     pub allow_ledge_grab: bool,
+    /// While rising and jump held, gravity is multiplied near the apex
+    /// (Celeste / modern Mario hang). 1.0 = off.
+    pub jump_apex_gravity_mult: f32,
+    /// |vy| band around 0 where apex mult applies (units/s).
+    pub jump_apex_threshold: f32,
+    /// Extra air accel while rising with jump held (steering mid-jump).
+    pub air_accel_rising: f32,
+    /// Horizontal speed retention on jump takeoff (1.0 = full).
+    pub jump_speed_retain: f32,
+    /// Min |impact| for light landing squash.
+    pub land_squash_min_impact: f32,
 }
 
 impl Default for MoveTuning {
     fn default() -> Self {
         Self {
-            gravity: -25.0,
+            gravity: -28.0,
             water_gravity: -4.5,
-            move_speed: 6.0,
+            move_speed: 6.5,
             crouch_speed: 3.25,
             slide_speed: 4.0,
-            jump_speed: JUMP_SPEED,
+            jump_speed: 9.6,
             slide_jump_speed: 11.5,
-            coyote_time: 0.10,
-            jump_buffer: 0.12,
-            max_fall: -40.0,
+            coyote_time: 0.12,
+            jump_buffer: 0.14,
+            max_fall: -36.0,
             max_fall_water: -8.0,
             swim_speed: 4.5,
             slam_speed: -34.0,
             // ~full speed in a few frames on ground; softer in air.
-            ground_accel: 32.0,
-            ground_friction: 14.0,
-            air_accel: 6.0,
-            air_friction: 0.2,
+            ground_accel: 48.0,
+            ground_friction: 18.0,
+            air_accel: 9.0,
+            air_friction: 0.15,
             swim_accel: 8.0,
             swim_friction: 4.0,
-            stop_speed: 1.5,
-            walkable_normal_y: 0.7,
+            stop_speed: 1.25,
+            walkable_normal_y: 0.65,
             half_extents: Vec3::new(0.3, 0.9, 0.3),
             launch_lock: 0.9,
-            jump_cut_mult: 0.45,
+            jump_cut_mult: 0.42,
             wall_slide_max_fall: -6.5,
             wall_jump_push: 7.5,
             wall_jump_up: 8.5,
             wall_jump_lock: 0.18,
             allow_wall_kick: false,
-            allow_ledge_grab: false,
+            allow_ledge_grab: true,
+            jump_apex_gravity_mult: 0.45,
+            jump_apex_threshold: 2.5,
+            air_accel_rising: 12.0,
+            jump_speed_retain: 1.0,
+            land_squash_min_impact: 2.0,
         }
     }
 }
@@ -213,6 +230,7 @@ pub struct Player {
     pub jump_held: bool,
     /// Cooldown so bounce pads fire once per landing, not every frame.
     pub bounce_cd: f32,
+    pub spawn_lock: f32,
 }
 
 impl Default for Player {
@@ -247,6 +265,7 @@ impl Default for Player {
             wall_lock: 0.0,
             jump_held: false,
             bounce_cd: 0.0,
+            spawn_lock: 0.0,
         }
     }
 }
@@ -362,6 +381,7 @@ pub fn respawn_player(
     player.wall_lock = 0.0;
     player.jump_held = false;
     player.bounce_cd = 0.0;
+    player.spawn_lock = 0.35;
     *move_state = MoveState::default();
 }
 
@@ -577,7 +597,7 @@ pub fn read_play_input(
 }
 
 pub fn player_controller(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     capture: Res<InputCapture>,
@@ -599,7 +619,15 @@ pub fn player_controller(
     let tuning = &*tuning;
 
     for (entity, mut transform, mut player, mut move_state) in &mut q {
-        let input = read_play_input(&keys, &gamepads, kb);
+        let mut input = read_play_input(&keys, &gamepads, kb);
+        // Spawn lock: briefly ignore horizontal wishes and jump so you settle.
+        player.spawn_lock = (player.spawn_lock - dt).max(0.0);
+        if player.spawn_lock > 0.0 {
+            input.wish = Vec2::ZERO;
+            input.jump_pressed = false;
+            input.jump_down = false;
+            input.drop_through = false;
+        }
         let wish = input.wish;
 
         let (sin, cos) = rig.yaw.sin_cos();
@@ -782,7 +810,16 @@ pub fn player_controller(
                     },
                 )
             } else {
-                (tuning.air_accel, tuning.air_friction, tuning.move_speed)
+                let rising = player.velocity.y > 0.0 && player.jump_held && input.jump_down;
+                (
+                    if rising {
+                        tuning.air_accel_rising
+                    } else {
+                        tuning.air_accel
+                    },
+                    tuning.air_friction,
+                    tuning.move_speed,
+                )
             };
             let (accel, friction) = if on_ice {
                 // Ice: keep momentum, weak control.
@@ -838,15 +875,22 @@ pub fn player_controller(
                 player.velocity.y = tuning.swim_speed;
             }
         } else if player.jump_buffer > 0.0 && player.coyote > 0.0 {
-            player.velocity.y = if sliding {
+            let jump_v = if sliding {
                 tuning.slide_jump_speed
             } else {
                 tuning.jump_speed
             };
+            // Keep horizontal momentum (Mario 64: jump doesn't dump run speed).
+            player.velocity.x *= tuning.jump_speed_retain;
+            player.velocity.z *= tuning.jump_speed_retain;
+            player.velocity.y = jump_v;
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
             player.on_ground = false;
+            player.was_on_ground = false;
             player.jump_held = true;
+            Juice::squash_stretch(&mut commands, entity, Vec2::new(0.72, 1.35), 0.10);
+            ScreenEffects::add_trauma(&mut trauma, 0.04);
         }
 
         if !underwater
@@ -886,7 +930,19 @@ pub fn player_controller(
             tuning.max_fall
         };
         if !hanging {
-            player.velocity.y = (player.velocity.y + gravity * dt).max(max_fall);
+            let mut g = gravity;
+            // Apex hang: while holding jump and near peak, cut gravity.
+            if !underwater
+                && !player.slamming
+                && player.launch <= 0.0
+                && player.jump_held
+                && input.jump_down
+                && player.velocity.y > 0.0
+                && player.velocity.y < tuning.jump_apex_threshold
+            {
+                g *= tuning.jump_apex_gravity_mult;
+            }
+            player.velocity.y = (player.velocity.y + g * dt).max(max_fall);
         }
 
         if !underwater
@@ -964,7 +1020,7 @@ pub fn player_controller(
         // post-collision pose where vertical velocity has already been zeroed.
         player.pre_move_pos = transform.translation;
 
-        let result = move_and_collide_ex(
+        let result = move_and_collide_substepped(
             transform.translation,
             move_he,
             player.velocity * dt,
@@ -972,6 +1028,16 @@ pub fn player_controller(
             &solids.solids,
             drop_through,
         );
+        // Ceiling corner correction state
+        let mut corrected_pos = result.pos;
+        let mut hit_y_for_vel = result.hit_y;
+        if result.hit_y && player.velocity.y > 0.0 {
+            let c = ceiling_corner_correct(&level, &solids.solids, result.pos, move_he, player.velocity.y);
+            if (c - corrected_pos).length_squared() > 1e-8 {
+                corrected_pos = c;
+                hit_y_for_vel = false;
+            }
+        }
         if result.hit_x || result.hit_z {
             let n = result.wall_normal;
             if n.length_squared() > 1e-6 {
@@ -1001,10 +1067,10 @@ pub fn player_controller(
                 }
             }
         }
-        if result.hit_y || result.stepped_up {
+        if hit_y_for_vel || result.stepped_up {
             if player.velocity.y < 0.0 || result.stepped_up {
                 player.velocity.y = 0.0;
-            } else if result.hit_y && player.velocity.y > 0.0 {
+            } else if hit_y_for_vel && player.velocity.y > 0.0 {
                 player.velocity.y = 0.0; // ceiling
             }
         }
@@ -1051,7 +1117,7 @@ pub fn player_controller(
 
         // One-way plate riding: probe the plate top under our feet after the
         // move and carry the player with the plate's motion.
-        let mut pos = result.pos;
+        let mut pos = corrected_pos;
         let feet_y = pos.y - move_he.y;
         let prev_feet = player.pre_move_pos.y - move_he.y;
         let mut on_plate = false;
@@ -1169,14 +1235,19 @@ pub fn player_controller(
         if was_grounded && !player.was_on_ground {
             let impact = (-player.fall_speed).max(0.0);
             if player.slamming {
-                let amount = (impact / 40.0).clamp(0.15, 0.4);
-                Juice::squash_stretch(&mut commands, entity, Vec2::new(1.4, 0.6), 0.15);
+                let amount = (impact / 40.0).clamp(0.15, 0.45);
+                Juice::squash_stretch(&mut commands, entity, Vec2::new(1.45, 0.55), 0.16);
                 ScreenEffects::add_trauma(&mut trauma, amount);
-            } else if impact > 4.0 {
-                Juice::squash_stretch(&mut commands, entity, Vec2::new(1.25, 0.7), 0.12);
-                if impact > 10.0 {
-                    let amount = ((impact - 10.0) / 40.0).clamp(0.05, 0.35);
-                    ScreenEffects::add_trauma(&mut trauma, amount);
+            } else if impact > tuning.land_squash_min_impact {
+                let t = ((impact - tuning.land_squash_min_impact) / 18.0).clamp(0.0, 1.0);
+                let sx = 1.0 + 0.28 * t;
+                let sy = 1.0 - 0.32 * t;
+                Juice::squash_stretch(&mut commands, entity, Vec2::new(sx, sy), 0.08 + 0.06 * t);
+                if impact > 8.0 {
+                    ScreenEffects::add_trauma(
+                        &mut trauma,
+                        ((impact - 8.0) / 40.0).clamp(0.04, 0.30),
+                    );
                 }
             }
             player.slamming = false;
@@ -1236,7 +1307,9 @@ pub fn player_controller(
                 transform.translation.y - move_he.y,
             )
         {
-            player.velocity.y = tuning.jump_speed * 1.35;
+            player.velocity.y = tuning.jump_speed * 1.55;
+            Juice::squash_stretch(&mut commands, entity, Vec2::new(0.65, 1.45), 0.12);
+            ScreenEffects::add_trauma(&mut trauma, 0.08);
             player.on_ground = false;
             player.coyote = 0.0;
             player.was_on_ground = false;
@@ -1345,6 +1418,61 @@ mod tests {
         assert_eq!(
             ground_surface_block(&level, 0.5, 0.25, 2.0),
             Some((BlockKind::Stone, 0))
+        );
+    }
+
+    #[test]
+    fn jump_peak_height_in_band() {
+        // Simulate jump arc at fixed dt 1/60 with current MoveTuning - full hold
+        let tuning = MoveTuning::default();
+        let dt = 1.0 / 60.0;
+        let mut vy = tuning.jump_speed;
+        let mut y = 0.0;
+        let mut peak_full: f32 = 0.0;
+        for _ in 0..180 {
+            let mut g = tuning.gravity;
+            if vy > 0.0 && vy < tuning.jump_apex_threshold {
+                g *= tuning.jump_apex_gravity_mult;
+            }
+            vy = (vy + g * dt).max(tuning.max_fall);
+            y += vy * dt;
+            peak_full = peak_full.max(y);
+            if vy <= 0.0 && y < peak_full - 0.01 {
+                break;
+            }
+        }
+        // With gravity -28 and jump 9.6, theoretical peak ~1.64, apex hang nudges to ~1.66
+        assert!(
+            (1.5..=2.2).contains(&peak_full),
+            "full hold peak {peak_full:.2} out of band for jump_speed {} gravity {}",
+            tuning.jump_speed,
+            tuning.gravity
+        );
+        // Short hop (cut after 12 frames) must be lower than full hold but still >1.0
+        let mut vy = tuning.jump_speed;
+        let mut y = 0.0;
+        let mut peak_cut: f32 = 0.0;
+        let mut jump_held = true;
+        for frame in 0..180 {
+            let held = frame < 12;
+            let mut g = tuning.gravity;
+            if jump_held && held && vy > 0.0 && vy < tuning.jump_apex_threshold {
+                g *= tuning.jump_apex_gravity_mult;
+            }
+            vy = (vy + g * dt).max(tuning.max_fall);
+            y += vy * dt;
+            peak_cut = peak_cut.max(y);
+            if jump_held && !held && vy > 0.0 {
+                vy *= tuning.jump_cut_mult;
+                jump_held = false;
+            }
+            if vy <= 0.0 && y < peak_cut - 0.01 {
+                break;
+            }
+        }
+        assert!(
+            peak_cut < peak_full && peak_cut > 1.0,
+            "cut peak {peak_cut:.2} should be < full {peak_full:.2} and >1.0"
         );
     }
 }

@@ -7,7 +7,7 @@ use super::entities_runtime::RuntimeSolids;
 use super::entity_data::EntityDataExt;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, SelectionSet};
-use super::player::Player;
+use super::player::{MoveState, Player};
 
 use game_utils_bevy::screen_effects::CameraBase3d;
 
@@ -20,6 +20,9 @@ pub struct CameraRig {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    /// 0 = full manual, 1 = strong auto-follow behind run direction.
+    pub auto_yaw_strength: f32,
+    pub look_sensitivity: f32,
 }
 
 impl Default for CameraRig {
@@ -27,8 +30,10 @@ impl Default for CameraRig {
         Self {
             focus: Vec3::new(0.0, 1.0, 0.0),
             yaw: 0.0,
-            pitch: 0.6,
-            distance: 18.0,
+            pitch: 0.42,
+            distance: 12.0,
+            auto_yaw_strength: 0.35,
+            look_sensitivity: 0.0045,
         }
     }
 }
@@ -147,9 +152,13 @@ pub fn play_camera_follow(
     mut rig: ResMut<CameraRig>,
     level: Res<LevelDocument>,
     solids: Res<RuntimeSolids>,
-    player_q: Query<(&Transform, &Player), Without<WorldCamera>>,
+    player_q: Query<
+        (&Transform, &Player, Option<&MoveState>),
+        (With<Player>, Without<WorldCamera>),
+    >,
     mut cam: Query<(&mut Transform, &mut CameraBase3d), With<WorldCamera>>,
 ) {
+    let dt = time.delta_secs();
     let mut delta = Vec2::ZERO;
     for e in motion.read() {
         delta += e.delta;
@@ -159,43 +168,61 @@ pub fn play_camera_follow(
         scroll += e.y;
     }
 
+    let mut looking = false;
     if !capture.ui_wants_pointer {
-        rig.yaw -= delta.x * 0.005;
-        rig.pitch = (rig.pitch + delta.y * 0.005).clamp(0.1, 1.3);
-        rig.distance = (rig.distance - scroll).clamp(4.0, 30.0);
+        if delta.length_squared() > 0.01 {
+            looking = true;
+            rig.yaw -= delta.x * rig.look_sensitivity;
+            rig.pitch = (rig.pitch + delta.y * rig.look_sensitivity).clamp(0.08, 1.25);
+        }
+        rig.distance = (rig.distance - scroll * 0.9).clamp(5.0, 22.0);
     }
-    // Right-stick look (mirrors the mouse yaw/pitch feel).
-    let dt = time.delta_secs();
     for pad in &gamepads {
         let r = pad.right_stick();
-        if r.x.abs() > 0.15 {
-            rig.yaw -= r.x * 2.2 * dt;
-        }
-        if r.y.abs() > 0.15 {
-            rig.pitch = (rig.pitch + r.y * 1.6 * dt).clamp(0.1, 1.3);
+        if r.length() > 0.18 {
+            looking = true;
+            rig.yaw -= r.x * 2.4 * dt;
+            rig.pitch = (rig.pitch + r.y * 1.7 * dt).clamp(0.08, 1.25);
         }
     }
 
-
-    if let Ok((player_tf, player)) = player_q.single() {
+    if let Ok((player_tf, player, move_state)) = player_q.single() {
         let flat_vel = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
         let look_ahead = flat_vel.clamp_length_max(6.0) * 0.22;
         let vertical_bias = Vec3::Y * (player.velocity.y * 0.05).clamp(-0.35, 0.55);
         let target = player_tf.translation + Vec3::new(0.0, 1.15, 0.0) + look_ahead + vertical_bias;
+        let k = (1.0 - (-16.0 * dt).exp()).clamp(0.0, 1.0);
+        rig.focus = rig.focus.lerp(target, k);
 
-        let follow_k = (1.0 - (-10.0 * dt).exp()).clamp(0.0, 1.0);
-        rig.focus = rig.focus.lerp(target, follow_k);
+        if !looking && rig.auto_yaw_strength > 0.0 {
+            let wish = move_state.map(|m| m.wish_dir).unwrap_or(Vec3::ZERO);
+            let dir = if wish.length_squared() > 0.15 {
+                wish
+            } else {
+                Vec3::new(player.velocity.x, 0.0, player.velocity.z)
+            };
+            if dir.length_squared() > 0.35 {
+                let target_yaw = (-dir.x).atan2(-dir.z);
+                let mut dy = target_yaw - rig.yaw;
+                while dy > std::f32::consts::PI {
+                    dy -= std::f32::consts::TAU;
+                }
+                while dy < -std::f32::consts::PI {
+                    dy += std::f32::consts::TAU;
+                }
+                let ak = (rig.auto_yaw_strength * 2.5 * dt).clamp(0.0, 1.0);
+                rig.yaw += dy * ak;
+            }
+        }
     }
 
     if let Ok((mut t, mut base)) = cam.single_mut() {
         let desired = rig_transform(&rig);
         let eye = collide_camera_eye(rig.focus, desired.translation, &level, &solids.solids);
         let collided = Transform::from_translation(eye).looking_at(rig.focus, Vec3::Y);
-
-        let cam_k = (1.0 - (-18.0 * dt).exp()).clamp(0.0, 1.0);
-        t.translation = t.translation.lerp(collided.translation, cam_k);
-        t.rotation = t.rotation.slerp(collided.rotation, cam_k);
-
+        let ck = (1.0 - (-20.0 * dt).exp()).clamp(0.0, 1.0);
+        t.translation = t.translation.lerp(collided.translation, ck);
+        t.rotation = t.rotation.slerp(collided.rotation, ck);
         base.translation = t.translation;
         base.rotation = t.rotation;
     }

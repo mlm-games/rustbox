@@ -211,3 +211,30 @@ impl PastePreview {
         self.yaw = 0.0;
     }
 }
+
+#[derive(Resource, Clone, Debug)]
+pub struct RecentBrushes {
+    /// Most-recent first. Cap 8 like SMM2 recents strip.
+    pub kinds: Vec<BlockKind>,
+    pub pinned: Vec<BlockKind>,
+}
+
+impl Default for RecentBrushes {
+    fn default() -> Self {
+        Self {
+            kinds: Vec::new(),
+            pinned: Vec::new(),
+        }
+    }
+}
+
+impl RecentBrushes {
+    pub fn push(&mut self, kind: BlockKind) {
+        if self.pinned.contains(&kind) {
+            return;
+        }
+        self.kinds.retain(|k| *k != kind);
+        self.kinds.insert(0, kind);
+        self.kinds.truncate(8);
+    }
+}

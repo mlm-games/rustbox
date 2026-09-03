@@ -558,7 +558,7 @@ fn resolve_axis(
     collided
 }
 
-fn aabb_hits_material(level: &LevelDocument, center: Vec3, he: Vec3) -> bool {
+pub(crate) fn aabb_hits_material(level: &LevelDocument, center: Vec3, he: Vec3) -> bool {
     let min = center - he + Vec3::splat(0.02);
     let max = center + he - Vec3::splat(0.02);
     for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
@@ -893,7 +893,12 @@ pub fn floor_normal_at(level: &LevelDocument, wx: f32, wz: f32) -> Vec3 {
     Vec3::Y
 }
 
-fn camera_probe_hits(level: &LevelDocument, extras: &[RuntimeSolid], center: Vec3, radius: f32) -> bool {
+fn camera_probe_hits(
+    level: &LevelDocument,
+    extras: &[RuntimeSolid],
+    center: Vec3,
+    radius: f32,
+) -> bool {
     let he = Vec3::splat(radius);
     if aabb_hits_material(level, center, he) {
         return true;
@@ -945,6 +950,131 @@ pub fn collide_camera_eye(
     }
 
     desired_eye
+}
+
+pub fn ceiling_corner_correct(
+    level: &LevelDocument,
+    extras: &[RuntimeSolid],
+    mut pos: Vec3,
+    he: Vec3,
+    vel_y: f32,
+) -> Vec3 {
+    if vel_y <= 0.0 {
+        return pos;
+    }
+    let head = pos + Vec3::Y * (he.y - 0.02);
+    if !aabb_hits_material(level, head, Vec3::new(he.x * 0.85, 0.08, he.z * 0.85)) {
+        if !aabb_hits_material(level, pos, he) {
+            return pos;
+        }
+        let mut extra_hit = false;
+        for solid in extras {
+            let (sc, she) =
+                rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
+            let min = pos - he;
+            let max = pos + he;
+            if min.x < sc.x + she.x
+                && max.x > sc.x - she.x
+                && min.y < sc.y + she.y
+                && max.y > sc.y - she.y
+                && min.z < sc.z + she.z
+                && max.z > sc.z - she.z
+            {
+                extra_hit = true;
+                break;
+            }
+        }
+        if !extra_hit {
+            return pos;
+        }
+    }
+    const NUDGE: f32 = 0.28;
+    let candidates = [
+        Vec3::new(NUDGE, 0.0, 0.0),
+        Vec3::new(-NUDGE, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, NUDGE),
+        Vec3::new(0.0, 0.0, -NUDGE),
+        Vec3::new(NUDGE, 0.0, NUDGE) * 0.707,
+        Vec3::new(NUDGE, 0.0, -NUDGE) * 0.707,
+        Vec3::new(-NUDGE, 0.0, NUDGE) * 0.707,
+        Vec3::new(-NUDGE, 0.0, -NUDGE) * 0.707,
+    ];
+    for d in candidates {
+        let trial = pos + d;
+        if !aabb_hits_material(level, trial, he) {
+            // Also ensure not inside an extra solid after nudge
+            let mut hit_extra = false;
+            for solid in extras {
+                let (sc, she) =
+                    rotated_box_aabb(solid.center, solid.shape.half_extents(), solid.rotation);
+                let min = trial - he + Vec3::splat(0.02);
+                let max = trial + he - Vec3::splat(0.02);
+                if min.x < sc.x + she.x
+                    && max.x > sc.x - she.x
+                    && min.y < sc.y + she.y
+                    && max.y > sc.y - she.y
+                    && min.z < sc.z + she.z
+                    && max.z > sc.z - she.z
+                {
+                    hit_extra = true;
+                    break;
+                }
+            }
+            if !hit_extra {
+                return trial;
+            }
+        }
+    }
+    pos
+}
+
+/// Substep large deltas so fast jumps / launches don't tunnel thin floors.
+pub fn move_and_collide_substepped(
+    pos: Vec3,
+    he: Vec3,
+    delta: Vec3,
+    level: &LevelDocument,
+    extras: &[RuntimeSolid],
+    ignore_one_way: bool,
+) -> MoveResult {
+    let max_step = (he.x.min(he.z) * 0.85).max(0.15);
+    let dist = delta.length();
+    if dist <= max_step {
+        return move_and_collide_ex(pos, he, delta, level, extras, ignore_one_way);
+    }
+    let steps = ((dist / max_step).ceil() as usize).clamp(2, 8);
+    let step_d = delta / steps as f32;
+    let mut pos = pos;
+    let mut acc = MoveResult {
+        pos,
+        hit_x: false,
+        hit_y: false,
+        hit_z: false,
+        on_ground: false,
+        floor_normal: Vec3::Y,
+        wall_normal: Vec3::ZERO,
+        stepped_up: false,
+    };
+    for _ in 0..steps {
+        let r = move_and_collide_ex(pos, he, step_d, level, extras, ignore_one_way);
+        pos = r.pos;
+        acc.hit_x |= r.hit_x;
+        acc.hit_y |= r.hit_y;
+        acc.hit_z |= r.hit_z;
+        acc.stepped_up |= r.stepped_up;
+        if r.on_ground {
+            acc.on_ground = true;
+            acc.floor_normal = r.floor_normal;
+        }
+        if r.wall_normal != Vec3::ZERO {
+            acc.wall_normal = r.wall_normal;
+        }
+        if r.hit_x && r.hit_z && step_d.y.abs() < 1e-6 {
+            break;
+        }
+    }
+    acc.pos = pos;
+    acc
 }
 
 /// World-space height of the topmost solid surface at horizontal point
@@ -2189,10 +2319,7 @@ mod tests {
             "should rest just under the thin underside (feet={feet})"
         );
         // A solid full cube above the head must still stop the same move.
-        level.set_block(
-            IVec3::new(0, 2, 0),
-            None,
-        );
+        level.set_block(IVec3::new(0, 2, 0), None);
         level.set_block(
             IVec3::new(0, 3, 0),
             Some(BlockData {

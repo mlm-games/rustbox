@@ -105,6 +105,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<mode::SelectionBoxStart>()
             .init_resource::<mode::EditorClipboard>()
             .init_resource::<mode::PastePreview>()
+            .init_resource::<mode::RecentBrushes>()
             .init_resource::<entities_runtime::LinkState>()
             .init_resource::<interaction::InteractionMemory>()
             .init_resource::<interaction::ForcedMotionRequests>()
@@ -125,6 +126,7 @@ impl Plugin for MakerPlugin {
             .init_resource::<storage::LevelStorage>()
             .init_resource::<ui_bridge::MakerUi>()
             .init_resource::<entities_runtime::ClipLibrary>()
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(Startup, campaign::load_campaign_progress)
             .add_systems(Update, campaign::save_campaign_progress)
             .add_systems(Startup, entities_runtime::init_clip_library)
@@ -162,6 +164,7 @@ impl Plugin for MakerPlugin {
                     editor::update_preview_and_edit
                         .run_if(in_edit)
                         .run_if(not_in_paste_preview),
+                    editor::track_recent_brushes.run_if(in_edit),
                     rendering::rebuild_dirty_chunks,
                     rendering::tick_ghosts,
                     entities_runtime::reconcile_entities,
@@ -190,7 +193,6 @@ impl Plugin for MakerPlugin {
                 Update,
                 (
                     InteractionSet::MoveWorld,
-                    InteractionSet::PlayerMotion.run_if(in_play),
                     InteractionSet::Detect.run_if(in_play),
                     InteractionSet::Resolve.run_if(in_play),
                     InteractionSet::SyncCollision.run_if(in_play),
@@ -200,6 +202,26 @@ impl Plugin for MakerPlugin {
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)
                     .run_if(not_blocked),
+            )
+            .configure_sets(
+                FixedUpdate,
+                (InteractionSet::PlayerMotion.run_if(in_play),)
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked),
+            )
+            .add_systems(
+                FixedUpdate,
+                (
+                    entities_runtime::apply_fans
+                        .in_set(InteractionSet::PlayerMotion)
+                        .before(player::player_controller),
+                    player::player_controller.in_set(InteractionSet::PlayerMotion),
+                )
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked)
+                    .run_if(in_play),
             )
             .add_systems(
                 Update,
@@ -215,11 +237,6 @@ impl Plugin for MakerPlugin {
                         .in_set(InteractionSet::MoveWorld)
                         .after(entities_runtime::tick_drift_plates)
                         .after(entities_runtime::tick_track_followers),
-                    // 2. PlayerMotion: continuous forces first, then the controller.
-                    entities_runtime::apply_fans
-                        .in_set(InteractionSet::PlayerMotion)
-                        .before(player::player_controller),
-                    player::player_controller.in_set(InteractionSet::PlayerMotion),
                     // 3. Detect: latch roll, contacts, use target, damage.
                     interaction::begin_interaction_frame.in_set(InteractionSet::Detect),
                     interaction::gather_use_targets

@@ -843,12 +843,14 @@ pub fn apply_model_anims(
 /// velocity + ground state and faces its wish/move direction; the prowler
 /// walks while the game is in Play (its facing is driven by `move_prowlers`).
 pub fn tick_model_anims(
+    time: Res<Time>,
     mode: Res<MakerMode>,
     players: Query<(&Player, Option<&MoveState>, &Children)>,
     level_ents: Query<(&LevelEnt, &Children)>,
     mut anims: Query<&mut AnimationPlayer>,
     mut model_anims: Query<(&mut ModelAnim, &mut Transform)>,
 ) {
+    let dt = time.delta_secs();
     let playing = *mode == MakerMode::Play;
     for (player, move_state, children) in &players {
         let horizontal = player.velocity.xz().length();
@@ -876,7 +878,9 @@ pub fn tick_model_anims(
                 let d = face.normalize();
                 // Model forward = local -Z (pack convention, matches Prowler):
                 // Quat::from_rotation_y(yaw) * NEG_Z == (d.x, 0, d.y).
-                tf.rotation = Quat::from_rotation_y((-d.x).atan2(-d.y));
+                let target = Quat::from_rotation_y((-d.x).atan2(-d.y));
+                let turn = (1.0 - (-14.0 * dt).exp()).clamp(0.0, 1.0);
+                tf.rotation = tf.rotation.slerp(target, turn);
             }
             let target = if matches!(action, ActionState::Swim) {
                 if horizontal > 0.6 {
