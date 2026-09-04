@@ -459,6 +459,7 @@ impl Plugin for AppPlugin {
                     compose_every_frame: true,
                     msaa_samples: if cfg!(debug_assertions) { 1 } else { 4 },
                     overlay: true,
+                    ..Default::default()
                 },
                 move |_s, rc| {
                     let st = {
