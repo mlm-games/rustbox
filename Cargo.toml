@@ -8,7 +8,7 @@ repository = "https://github.com/mlm-games/rustbox"
 readme = "README.md"
 keywords = ["bevy", "gamedev", "3d", "mario-maker", "repose", "level-editor"]
 categories = ["game-development"]
-rust-version = "1.96"
+rust-version = "1.98"
 default-run = "rustbox-desktop"
 
 [lib]

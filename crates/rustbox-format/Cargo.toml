@@ -6,7 +6,7 @@ license = "GPL-3.0"
 description = "Shared serializable level format for the rustbox game and its online backend (no Bevy dependency)"
 repository = "https://github.com/mlm-games/rustbox"
 keywords = ["gamedev", "bevy", "mario-maker", "level", "serialization"]
-rust-version = "1.96"
+rust-version = "1.98"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
