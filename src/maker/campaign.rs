@@ -110,13 +110,18 @@ impl CampaignProgress {
 const CAMPAIGN_PROGRESS_KEY: &str = "__campaign_progress";
 
 pub fn load_campaign_progress(storage: Res<LevelStorage>, mut progress: ResMut<CampaignProgress>) {
-    let Ok(Some(text)) = storage.0.load(CAMPAIGN_PROGRESS_KEY) else {
-        return;
+    let text = match storage.0.load(CAMPAIGN_PROGRESS_KEY) {
+        Ok(Some(t)) => t,
+        Ok(None) => return,
+        Err(e) => {
+            bevy::log::warn!("Failed to load campaign progress: {e}");
+            return;
+        }
     };
-    let Ok(p) = ron::from_str::<CampaignProgress>(&text) else {
-        return;
-    };
-    *progress = p;
+    match ron::from_str::<CampaignProgress>(&text) {
+        Ok(p) => *progress = p,
+        Err(e) => bevy::log::warn!("Corrupted campaign progress, ignoring: {e}"),
+    }
 }
 
 pub fn save_campaign_progress(storage: Res<LevelStorage>, progress: Res<CampaignProgress>) {

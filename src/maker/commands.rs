@@ -122,7 +122,7 @@ impl CommandHistory {
             return;
         }
         let cmd = if cmds.len() == 1 {
-            cmds.into_iter().next().unwrap()
+            cmds.into_iter().next().expect("len==1 verified above")
         } else {
             EditCommand::Batch(cmds)
         };

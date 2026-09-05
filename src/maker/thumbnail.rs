@@ -16,7 +16,7 @@ pub struct ThumbImage {
     pub rgba: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThumbPreview {
     pub cols: usize,
     pub rows: usize,

@@ -13,23 +13,23 @@ pub const COLLECTION_PREFIX: &str = "__col_";
 /// Keys starting with "__" are internal (campaign progress, etc.) shouldn't
 /// show up as player level slots.
 pub fn list_slots(storage: &LevelStorage) -> Vec<String> {
-    storage
-        .0
-        .list()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|k| !k.starts_with("__"))
-        .collect()
+    match storage.0.list() {
+        Ok(v) => v.into_iter().filter(|k| !k.starts_with("__")).collect(),
+        Err(e) => {
+            bevy::log::warn!("Failed to list level slots: {e}");
+            Vec::new()
+        }
+    }
 }
 
 pub fn list_collection(storage: &LevelStorage) -> Vec<String> {
-    storage
-        .0
-        .list()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|k| k.starts_with(COLLECTION_PREFIX))
-        .collect()
+    match storage.0.list() {
+        Ok(v) => v.into_iter().filter(|k| k.starts_with(COLLECTION_PREFIX)).collect(),
+        Err(e) => {
+            bevy::log::warn!("Failed to list collection: {e}");
+            Vec::new()
+        }
+    }
 }
 
 fn collection_key(name: &str) -> String {

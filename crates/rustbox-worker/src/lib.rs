@@ -49,10 +49,12 @@ use sha2::Digest;
 use wasm_bindgen::JsValue;
 use worker::d1::D1Database;
 use worker::{
-    event, Cors, Env, FormEntry, Headers, Method, Request, Response, Result, RouteContext, Router,
+    Cors, Env, FormEntry, Headers, Method, Request, Response, Result, RouteContext, Router, event,
 };
 
-use rustbox_format::api::{ApiError, LevelListResponse, LevelMeta, MeResponse, UploadMetadata, UploadResponse};
+use rustbox_format::api::{
+    ApiError, LevelListResponse, LevelMeta, MeResponse, UploadMetadata, UploadResponse,
+};
 use rustbox_format::file::{decode_level, validate_level};
 use rustbox_format::{API_VERSION, MAX_TAGS, MAX_UPLOAD_BYTES};
 
@@ -157,7 +159,12 @@ fn cors(env: &Env) -> Cors {
     Cors::new()
         .with_origins(origins)
         .with_methods([Method::Get, Method::Post, Method::Delete, Method::Options])
-        .with_allowed_headers(["Content-Type", "X-Auth-Token", "Authorization", "X-Rustbox-Device"])
+        .with_allowed_headers([
+            "Content-Type",
+            "X-Auth-Token",
+            "Authorization",
+            "X-Rustbox-Device",
+        ])
         .with_exposed_headers(["Content-Type", "Location"])
         .with_max_age(86_400)
 }
@@ -187,13 +194,26 @@ fn bytes_ok(env: &Env, bytes: Vec<u8>) -> AppResult {
     Ok(res)
 }
 
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 fn is_authorized(env: &Env, req: &Request) -> bool {
     let Ok(Some(given)) = req.headers().get("X-Auth-Token") else {
         return false;
     };
-    env.secret("UPLOAD_TOKEN")
-        .ok()
-        .is_some_and(|token| token.to_string().trim() == given.trim())
+    let Some(token) = env.secret("UPLOAD_TOKEN").ok() else {
+        return false;
+    };
+    let expected = token.to_string();
+    constant_time_eq(expected.trim(), given.trim())
 }
 
 fn client_ip(req: &Request) -> String {
@@ -230,7 +250,8 @@ fn normalize_recovery_key(raw: &str) -> Option<String> {
         None => s,
     };
     let ok = (20..=64).contains(&s.len())
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     ok.then_some(s)
 }
 
@@ -276,7 +297,8 @@ fn extract_caller(req: &Request) -> AppResult<Caller> {
     let key =
         bearer_recovery_key(req).ok_or_else(|| ApiFailure::new(401, "missing creator key"))?;
     let owner_id = owner_id_of(&key).ok_or_else(|| ApiFailure::new(400, "invalid creator key"))?;
-    let device_id = device_id(req).ok_or_else(|| ApiFailure::new(400, "missing X-Rustbox-Device"))?;
+    let device_id =
+        device_id(req).ok_or_else(|| ApiFailure::new(400, "missing X-Rustbox-Device"))?;
     Ok(Caller {
         owner_id,
         device_id,
@@ -455,7 +477,14 @@ async fn row_by_id(db: &D1Database, id: u64) -> AppResult<Option<LevelRow>> {
 }
 
 async fn health(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    finish(&ctx.env, json_ok(&ctx.env, &serde_json::json!({"ok": true, "service": "rustbox"}), 200))
+    finish(
+        &ctx.env,
+        json_ok(
+            &ctx.env,
+            &serde_json::json!({"ok": true, "service": "rustbox"}),
+            200,
+        ),
+    )
 }
 
 /// The first call also lazily creates the owner/device rows (no registration endpoint needed).

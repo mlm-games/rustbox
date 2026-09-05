@@ -463,7 +463,7 @@ impl Plugin for AppPlugin {
                 },
                 move |_s, rc| {
                     let st = {
-                        let mut shared = shared_ui.lock().unwrap();
+                        let mut shared = shared_ui.lock().unwrap_or_else(|e| e.into_inner());
                         if shared.block_icon_handles.is_empty() {
                             shared.block_icon_handles =
                                 crate::menus::icons::register_block_icons(rc);
@@ -581,15 +581,23 @@ fn sync_shared_ui(
         ui.new_record = m.new_record;
         ui.player_is_author = m.player_is_author;
         ui.level_slots = m.level_slots.clone();
+        let browse_filter_changed = ui.browse_query != m.browse_query
+            || ui.browse_include_tags != m.browse_include_tags
+            || ui.browse_verified_only != m.browse_verified_only
+            || ui.browse_difficulty != m.browse_difficulty
+            || ui.browse_sort != m.browse_sort
+            || ui.browse_levels.len() != m.catalog.len();
         ui.browse_levels = m.catalog.clone();
-        ui.browse_visible = crate::maker::catalog::filter_catalog(
-            &m.catalog,
-            &m.browse_query,
-            &m.browse_include_tags,
-            m.browse_verified_only,
-            m.browse_difficulty,
-            m.browse_sort,
-        );
+        if browse_filter_changed {
+            ui.browse_visible = crate::maker::catalog::filter_catalog(
+                &m.catalog,
+                &m.browse_query,
+                &m.browse_include_tags,
+                m.browse_verified_only,
+                m.browse_difficulty,
+                m.browse_sort,
+            );
+        }
         ui.browse_query = m.browse_query.clone();
         ui.browse_include_tags = m.browse_include_tags.clone();
         ui.browse_verified_only = m.browse_verified_only;
@@ -610,9 +618,22 @@ fn sync_shared_ui(
         ui.info_height = m.info_height;
         ui.info_blocks = m.info_blocks;
         ui.info_entities = m.info_entities;
-        ui.online_levels = sort_online(&m.online_levels, m.online_sort, m.online_shelf);
-        ui.online_previews = m.online_previews.clone();
-        ui.online_preview_pending = m.online_preview_pending.clone();
+        let online_sort_changed = ui.online_sort != m.online_sort
+            || ui.online_shelf != m.online_shelf
+            || ui.online_levels.len() != m.online_levels.len();
+        if online_sort_changed {
+            ui.online_levels = sort_online(&m.online_levels, m.online_sort, m.online_shelf);
+        } else if ui.online_levels != m.online_levels {
+            ui.online_levels = sort_online(&m.online_levels, m.online_sort, m.online_shelf);
+        }
+        let previews_len_changed = ui.online_previews.len() != m.online_previews.len();
+        let pending_changed = ui.online_preview_pending != m.online_preview_pending;
+        if previews_len_changed || pending_changed {
+            ui.online_previews = m.online_previews.clone();
+            ui.online_preview_pending = m.online_preview_pending.clone();
+        } else {
+            ui.online_preview_pending = m.online_preview_pending.clone();
+        }
         ui.online_query = m.online_query.clone();
         ui.online_token = m.online_token.clone();
         ui.creator_recovery_key = m.creator_recovery_key.clone();
@@ -675,9 +696,10 @@ fn sync_shared_ui(
         })
         .collect();
     if *overlay != OverlayMenu::Settings {
-        ui.master_vol = save.settings.master_volume;
-        ui.sfx_vol = save.settings.sfx_volume;
-        ui.music_vol = save.settings.music_volume;
+        let clamp01 = |v: f32, fb: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { fb };
+        ui.master_vol = clamp01(save.settings.master_volume, 1.0);
+        ui.sfx_vol = clamp01(save.settings.sfx_volume, 1.0);
+        ui.music_vol = clamp01(save.settings.music_volume, 0.8);
     }
     ui.loading_progress = match loading {
         Some(l) if !l.0.is_empty() => {
@@ -693,9 +715,21 @@ fn sync_shared_ui(
     ui.language = locale.current.clone();
     ui.available_languages = locale.available.clone();
     ui.translations = i18n::get_current_translations(&locale);
-    channels.master = save.settings.master_volume;
-    channels.sfx = save.settings.sfx_volume;
-    channels.music = save.settings.music_volume;
+    channels.master = if save.settings.master_volume.is_finite() {
+        save.settings.master_volume.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    channels.sfx = if save.settings.sfx_volume.is_finite() {
+        save.settings.sfx_volume.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    channels.music = if save.settings.music_volume.is_finite() {
+        save.settings.music_volume.clamp(0.0, 1.0)
+    } else {
+        0.8
+    };
 }
 
 fn tick_pending_unpause(

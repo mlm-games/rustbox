@@ -4,9 +4,12 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
 jobs:
   release:
-    uses: mlm-games/ci/.github/workflows/rust-app-release.yml@main
+    uses: mlm-games/ci/.github/workflows/rust-app-release.yml@main # pin to SHA in release branches
     with:
       working-directory: .
       app-slug: rustbox

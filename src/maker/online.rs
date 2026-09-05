@@ -467,8 +467,12 @@ pub fn flush_online_requests(
             Err(e) => ui.set_status(format!("Recovery key import failed: {e}")),
         }
     }
-    ctx.config.recovery_key = ui.creator_recovery_key.clone();
-    ctx.config.device_id = ui.creator_device_id.clone();
+    if ctx.config.recovery_key != ui.creator_recovery_key {
+        ctx.config.recovery_key = ui.creator_recovery_key.clone();
+    }
+    if ctx.config.device_id != ui.creator_device_id {
+        ctx.config.device_id = ui.creator_device_id.clone();
+    }
 
     for req in std::mem::take(&mut ctx.pending) {
         if let OnlineRequest::Download { meta, play } = &req {

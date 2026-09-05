@@ -62,9 +62,11 @@ pub fn load_or_create(storage: &LevelStorage) -> anyhow::Result<CreatorIdentity>
             device_id: id.device_id,
         });
     }
+    let secret = new_secret()?;
+    let device_secret = new_secret()?;
     let id = CreatorIdentity {
-        recovery_key: format!("{RECOVERY_KEY_PREFIX}{}", encode_secret(&new_secret())),
-        device_id: hex::encode(sha2::Sha256::digest(new_secret())),
+        recovery_key: format!("{RECOVERY_KEY_PREFIX}{}", encode_secret(&secret)),
+        device_id: hex::encode(sha2::Sha256::digest(device_secret)),
     };
     persist(storage, &id)?;
     Ok(id)
@@ -75,9 +77,10 @@ pub fn load_or_create(storage: &LevelStorage) -> anyhow::Result<CreatorIdentity>
 /// identity on success.
 pub fn import_recovery_key(storage: &LevelStorage, code: &str) -> anyhow::Result<CreatorIdentity> {
     let secret = decode_secret(&normalize_code(code)).map_err(anyhow::Error::msg)?;
+    let device_secret = new_secret()?;
     let id = CreatorIdentity {
         recovery_key: format!("{RECOVERY_KEY_PREFIX}{}", encode_secret(&secret)),
-        device_id: hex::encode(sha2::Sha256::digest(new_secret())),
+        device_id: hex::encode(sha2::Sha256::digest(device_secret)),
     };
     persist(storage, &id)?;
     Ok(id)
@@ -139,10 +142,10 @@ fn decode_secret(s: &str) -> Result<[u8; 32], &'static str> {
     Ok(secret)
 }
 
-fn new_secret() -> [u8; 32] {
+fn new_secret() -> anyhow::Result<[u8; 32]> {
     let mut out = [0u8; 32];
-    getrandom::fill(&mut out).expect("crypto rng unavailable");
-    out
+    getrandom::fill(&mut out).map_err(|e| anyhow::anyhow!("crypto rng unavailable: {e}"))?;
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -1350,8 +1350,10 @@ pub fn update_preview_and_edit(
                             history.apply(&mut level, EditCommand::DeleteTrack { track });
                         }
                         active.0 = None;
-                    } else {
-                        let cell = level.track(id).map(|t| t.points[index]).unwrap();
+                    } else if let Some(cell) = level
+                        .track(id)
+                        .and_then(|t| t.points.get(index).copied())
+                    {
                         history.apply(
                             &mut level,
                             EditCommand::RemoveTrackPoint {

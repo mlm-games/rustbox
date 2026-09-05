@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::maker::chunk::chunk_of;
 use bevy::asset::RenderAssetUsages;
 use bevy::gltf::GltfAssetLabel;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -968,40 +969,30 @@ pub fn rebuild_dirty_chunks(
         }
     }
 
-    let has_content = |level: &LevelDocument, cpos: IVec3| -> bool {
-        let origin = cpos * CHUNK_SIZE;
-        level.map.keys().any(|k| {
-            let d = *k - origin;
-            (0..CHUNK_SIZE).contains(&d.x)
-                && (0..CHUNK_SIZE).contains(&d.y)
-                && (0..CHUNK_SIZE).contains(&d.z)
-        })
-    };
-    let has_water = |level: &LevelDocument, cpos: IVec3| -> bool {
-        let origin = cpos * CHUNK_SIZE;
-        level.map.iter().any(|(k, b)| {
-            b.kind == BlockKind::Water && {
-                let d = *k - origin;
-                (0..CHUNK_SIZE).contains(&d.x)
-                    && (0..CHUNK_SIZE).contains(&d.y)
-                    && (0..CHUNK_SIZE).contains(&d.z)
-            }
-        })
-    };
+    use std::collections::HashSet;
+    let occupied: HashSet<IVec3> = level.map.keys().map(|k| chunk_of(*k)).collect();
+    let water_occupied: HashSet<IVec3> = level
+        .map
+        .iter()
+        .filter(|(_, b)| b.kind == BlockKind::Water)
+        .map(|(k, _)| chunk_of(*k))
+        .collect();
 
     chunks.0.retain(|cpos, ents| {
-        if !has_content(&level, *cpos) {
+        let keep = occupied.contains(cpos);
+        if !keep {
             for e in ents.iter() {
                 commands.entity(*e).despawn();
             }
         }
-        has_content(&level, *cpos)
+        keep
     });
     water_chunks.0.retain(|cpos, e| {
-        if !has_water(&level, *cpos) {
+        let keep = water_occupied.contains(cpos);
+        if !keep {
             commands.entity(*e).despawn();
         }
-        has_water(&level, *cpos)
+        keep
     });
 }
 
@@ -1020,6 +1011,9 @@ pub fn reconcile_block_overlays(
     let Some(assets) = assets else {
         return;
     };
+    if !level.is_changed() && !level.is_added() {
+        return;
+    }
 
     // Despawn overlays that no longer match the cell: the block went away,
     // the pulse turned off, the pack model disappeared, or the kind/shape/rot
@@ -1094,7 +1088,12 @@ pub fn reconcile_block_overlays(
                     child.insert(ModelMaterial::fallback(assets.model_inert_mat.clone()));
                 }
                 BlockTintMode::Kind | BlockTintMode::Theme | BlockTintMode::Link => {
-                    child.insert(ModelMaterial::force_tint(assets.ghost_mats[&kind].clone()));
+                    let mat = assets
+                        .ghost_mats
+                        .get(&kind)
+                        .cloned()
+                        .unwrap_or_else(|| assets.chunk_material.clone());
+                    child.insert(ModelMaterial::force_tint(mat));
                 }
             }
         });
@@ -1110,12 +1109,25 @@ pub fn spawn_place_ghost(
     shape: BlockShape,
     rot: u8,
 ) {
-    let mesh = assets.shape_meshes[&shape].clone();
+    let mesh = assets.shape_meshes.get(&shape).cloned().unwrap_or_else(|| {
+        assets
+            .shape_meshes
+            .values()
+            .next()
+            .cloned()
+            .unwrap_or_else(|| Handle::default())
+    });
     let mat = assets
         .ghost_alpha_mats
         .get(&kind)
         .cloned()
-        .unwrap_or_else(|| assets.ghost_mats[&kind].clone());
+        .unwrap_or_else(|| {
+            assets
+                .ghost_mats
+                .get(&kind)
+                .cloned()
+                .unwrap_or_else(|| assets.chunk_material.clone())
+        });
     let e = commands
         .spawn((
             Mesh3d(mesh),
@@ -1387,8 +1399,8 @@ pub fn setup_world(
         for shape in ALL_BLOCK_SHAPES {
             if let Some(path) = overlay_model(&manifest, *kind, *shape) {
                 let file = path.split('#').next().unwrap_or(path);
-                let handle = asset_server
-                    .load(GltfAssetLabel::Scene(0).from_asset(file.to_owned()));
+                let handle =
+                    asset_server.load(GltfAssetLabel::Scene(0).from_asset(file.to_owned()));
                 block_overlays.insert((*kind, *shape), handle);
             }
         }

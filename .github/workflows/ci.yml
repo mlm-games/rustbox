@@ -10,9 +10,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   ci:
-    uses: mlm-games/ci/.github/workflows/rust-app-ci.yml@main
+    uses: mlm-games/ci/.github/workflows/rust-app-ci.yml@main # pin to SHA in release branches
     with:
       system-deps-linux: libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
       run-clippy: false

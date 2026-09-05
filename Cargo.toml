@@ -143,10 +143,6 @@ name = "android.permission.ACCESS_NETWORK_STATE"
 min_sdk_version = 26
 target_sdk_version = 37
 
-[lints.clippy]
-too_many_arguments = "allow"
-type_complexity = "allow"
-
 [profile.dev]
 opt-level = 1
 
