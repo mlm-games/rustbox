@@ -64,7 +64,7 @@ pub enum TintMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EntityAssetEntry {
     /// glTF scene path loaded via the `AssetServer` (e.g.
-    /// `models/rustbox/entities/Seal.glb#Scene0`). `None` = procedural mesh.
+    /// `models/rbox/entities/Seal.glb#Scene0`). `None` = procedural mesh.
     pub model: Option<String>,
     /// Visual scale applied to the spawned model root.
     pub scale: f32,
@@ -130,7 +130,7 @@ impl EntityModelManifest {
     }
 
     /// Built-in manifest (mirrors `tools/asset_build/gen_manifests.py`). Every
-    /// kind maps to its `models/rustbox/entities/{Kind}.glb` kitbash at cell
+    /// kind maps to its `models/rbox/entities/{Kind}.glb` kitbash at cell
     /// scale (base-on-origin for ground entities, centered for collectibles),
     /// with `y_offset` cancelling the gameplay root lift so bases sit on the
     /// floor. The RON file on disk overrides these per kind; entries absent
@@ -153,65 +153,198 @@ impl EntityModelManifest {
             }
         };
         // (kind, scale, y_offset, tint, collider, solid) — matches the RON.
-        let rows: [(&str, f32, f32, TintMode, Option<ColliderPrimitive>, Option<SolidShape>); 22] = [
-            ("Glimmer", 1.0, 0.0, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("LaunchPad", 1.0, -0.1, TintMode::Link, Some(ColliderPrimitive::Cylinder(0.15, 0.45)), None),
-            ("Seal", 1.0, -1.0, TintMode::Model, Some(ColliderPrimitive::Box(0.35, 0.35, 0.35)), Some(SolidShape::Box(0.5, 1.0, 0.15))),
-            ("DriftPlate", 1.0, -0.15, TintMode::Model, Some(ColliderPrimitive::Box(0.7, 0.12, 0.7)), None),
-            ("Prowler", 1.0, -0.4, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("TriggerOrb", 1.0, 0.0, TintMode::Link, Some(ColliderPrimitive::Sensor), None),
-            ("RelayGate", 1.0, -1.0, TintMode::Link, Some(ColliderPrimitive::Box(0.5, 1.0, 0.2)), Some(SolidShape::Box(0.5, 1.0, 0.2))),
-            ("Checkpoint", 1.0, -0.55, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("Teleporter", 1.0, -0.15, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("Fan", 1.0, -0.5, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("Bumper", 1.0, -0.35, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("Crate", 1.0, -0.5, TintMode::Model, None, Some(SolidShape::Box(0.5, 0.5, 0.5))),
-            ("Key", 1.0, 0.0, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("LockGate", 1.0, -0.5, TintMode::Model, None, Some(SolidShape::Box(0.55, 1.2, 0.3))),
-            ("HealOrb", 1.0, 0.0, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("SpeedRing", 1.0, 0.0, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("CrumblePlate", 1.0, -0.08, TintMode::Model, None, Some(SolidShape::Box(0.5, 0.12, 0.5))),
-            ("Cannon", 1.0, 0.0, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("OnOffSwitch", 1.0, -0.15, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("TossCrate", 1.0, -0.5, TintMode::Model, Some(ColliderPrimitive::Box(0.4, 0.4, 0.4)), Some(SolidShape::Box(0.5, 0.5, 0.5))),
-            ("Sign", 1.0, -0.1, TintMode::Model, Some(ColliderPrimitive::Sensor), None),
-            ("Wedge", 1.0, 0.0, TintMode::Model, Some(ColliderPrimitive::Wedge(0.5, 0.5, 0.5)), Some(SolidShape::Wedge(0.5, 0.5, 0.5))),
+        let rows: [(
+            &str,
+            f32,
+            f32,
+            TintMode,
+            Option<ColliderPrimitive>,
+            Option<SolidShape>,
+        ); 22] = [
+            (
+                "Glimmer",
+                1.0,
+                0.0,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "LaunchPad",
+                1.0,
+                -0.1,
+                TintMode::Link,
+                Some(ColliderPrimitive::Cylinder(0.15, 0.45)),
+                None,
+            ),
+            (
+                "Seal",
+                1.0,
+                -0.55,
+                TintMode::Model,
+                Some(ColliderPrimitive::Box(0.35, 0.35, 0.35)),
+                Some(SolidShape::Box(0.5, 1.0, 0.15)),
+            ),
+            (
+                "DriftPlate",
+                1.0,
+                -0.15,
+                TintMode::Model,
+                Some(ColliderPrimitive::Box(0.7, 0.12, 0.7)),
+                None,
+            ),
+            (
+                "Prowler",
+                1.0,
+                -0.35,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "TriggerOrb",
+                1.0,
+                0.0,
+                TintMode::Link,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "RelayGate",
+                1.0,
+                -1.0,
+                TintMode::Link,
+                Some(ColliderPrimitive::Box(0.5, 1.0, 0.2)),
+                Some(SolidShape::Box(0.5, 1.0, 0.2)),
+            ),
+            (
+                "Checkpoint",
+                1.0,
+                -0.55,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "Teleporter",
+                1.0,
+                -0.15,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "Fan",
+                1.0,
+                -0.5,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "Bumper",
+                1.0,
+                -0.35,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "Crate",
+                1.0,
+                -0.5,
+                TintMode::Model,
+                None,
+                Some(SolidShape::Box(0.5, 0.5, 0.5)),
+            ),
+            (
+                "Key",
+                1.0,
+                0.0,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "LockGate",
+                1.0,
+                -0.55,
+                TintMode::Model,
+                None,
+                Some(SolidShape::Box(0.55, 1.2, 0.3)),
+            ),
+            (
+                "HealOrb",
+                1.0,
+                0.0,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "SpeedRing",
+                1.0,
+                0.0,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "CrumblePlate",
+                1.0,
+                -0.08,
+                TintMode::Model,
+                None,
+                Some(SolidShape::Box(0.5, 0.12, 0.5)),
+            ),
+            (
+                "Cannon",
+                1.0,
+                0.0,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "OnOffSwitch",
+                1.0,
+                -0.15,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "TossCrate",
+                1.0,
+                -0.5,
+                TintMode::Model,
+                Some(ColliderPrimitive::Box(0.4, 0.4, 0.4)),
+                Some(SolidShape::Box(0.5, 0.5, 0.5)),
+            ),
+            (
+                "Sign",
+                1.0,
+                -0.1,
+                TintMode::Model,
+                Some(ColliderPrimitive::Sensor),
+                None,
+            ),
+            (
+                "Wedge",
+                1.0,
+                0.0,
+                TintMode::Model,
+                Some(ColliderPrimitive::Wedge(0.5, 0.5, 0.5)),
+                Some(SolidShape::Wedge(0.5, 0.5, 0.5)),
+            ),
         ];
         let mut m = HashMap::new();
         for (name, scale, y_offset, tint, collider, solid) in rows {
-            // Wire available Cube World assets for select kinds (Key, Door, Lever, Goblin)
-            let (path, scale, y_offset) = match name {
-                "Key" => (
-                    "models/cubeworld/Key.gltf#Scene0".to_string(),
-                    0.85,
-                    0.15,
-                ),
-                "LockGate" => (
-                    "models/cubeworld/Door_Closed.gltf#Scene0".to_string(),
-                    1.0,
-                    0.0,
-                ),
-                "Seal" => (
-                    "models/cubeworld/Door_Closed.gltf#Scene0".to_string(),
-                    1.0,
-                    0.0,
-                ),
-                "OnOffSwitch" => (
-                    "models/cubeworld/Lever_Left.gltf#Scene0".to_string(),
-                    1.0,
-                    -0.05,
-                ),
-                "Prowler" => (
-                    "models/cubeworld/Goblin.gltf#Scene0".to_string(),
-                    0.55,
-                    0.0,
-                ),
-                _ => (
-                    format!("models/rustbox/entities/{name}.glb#Scene0"),
-                    scale,
-                    y_offset,
-                ),
-            };
+            // Rbox smooth pack: every kind maps to its normalized
+            // `models/rbox/entities/{Kind}.glb` (Kenney CC0 direct copies
+            // or smooth kitbashes sized to the old voxel bbox). Player rig +
+            // clip library intentionally stay on cubeworld until retarget.
+            let path = format!("models/rbox/entities/{name}.glb#Scene0");
             m.insert(
                 name.to_string(),
                 entry(Some(&path), scale, y_offset, tint, collider, solid),
@@ -460,7 +593,12 @@ mod tests {
             EntityKind::Wedge,
         ] {
             let p = root.join(m.preview(kind));
-            assert!(p.exists(), "{}: preview missing at {}", kind.label(), p.display());
+            assert!(
+                p.exists(),
+                "{}: preview missing at {}",
+                kind.label(),
+                p.display()
+            );
         }
     }
 }
