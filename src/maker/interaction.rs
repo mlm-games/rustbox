@@ -16,7 +16,7 @@ use super::player::{ActionState, JUMP_SPEED, MoveState, Player, PlayerMoveMode, 
 use super::ui_bridge::MakerUi;
 
 use bevy_rapier3d::prelude::{Collider, RigidBody, Velocity};
-use game_utils_bevy::juice::Juice;
+use game_utils_bevy::juice::{Juice, SquashStretch};
 use game_utils_bevy::screen_effects::{FlashWhite, ScreenEffects, Trauma};
 
 /// Sentinel actor id used for the player in per-target contact tracking.
@@ -843,6 +843,8 @@ pub fn resolve_forced_motion(
     player.coyote = 0.0;
     player.on_ground = false;
     player.was_on_ground = false;
+    player.ground_plate = None;
+    player.plate_vel = Vec3::ZERO;
     player.fall_speed = 0.0;
     player.hang_cooldown = 0.25;
     player.pre_move_pos = tf.translation;
@@ -1269,6 +1271,8 @@ fn damage_player(
         player.velocity.y = JUMP_SPEED * 0.55;
         player.on_ground = false;
         player.coyote = 0.0;
+        player.ground_plate = None;
+        player.plate_vel = Vec3::ZERO;
         ui.set_status(format!("Ouch! Armor left: {}", player.armor));
     } else {
         ui.deaths += 1;
@@ -1309,6 +1313,7 @@ pub fn resolve_damage(
         (With<Prowler>, Without<Player>),
     >,
     crates: Query<(Entity, &LevelEnt, &Transform, &CrateProp, Option<&Contents>), Without<Player>>,
+    squash_q: Query<Entity, With<SquashStretch>>,
 ) {
     if *mode != MakerMode::Play {
         requests.clear();
@@ -1358,6 +1363,7 @@ pub fn resolve_damage(
                 e,
                 contents,
                 req.source == player_e,
+                squash_q.contains(player_e),
             );
             continue;
         }
@@ -1396,6 +1402,7 @@ fn defeat_prowler(
     e: Entity,
     contents: Option<&Contents>,
     player_bounce: bool,
+    squashing: bool,
 ) {
     if let Some(contents) = contents {
         spawn_drops(commands, assets, counter, origin, contents);
@@ -1406,7 +1413,11 @@ fn defeat_prowler(
         player.velocity.y = JUMP_SPEED * 0.8;
         player.on_ground = false;
         player.coyote = 0.0;
-        Juice::squash_stretch(commands, player_e, Vec2::new(1.3, 0.7), 0.12);
+        player.ground_plate = None;
+        player.plate_vel = Vec3::ZERO;
+        if !squashing {
+            Juice::squash_stretch(commands, player_e, Vec2::new(1.3, 0.7), 0.12);
+        }
     }
     ScreenEffects::add_trauma(trauma, 0.18);
     ui.score += 200;

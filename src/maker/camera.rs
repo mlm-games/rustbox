@@ -20,9 +20,17 @@ pub struct CameraRig {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
-    /// 0 = full manual, 1 = strong auto-follow behind run direction.
+    /// 0 = full manual, 1 = gentle drift behind sustained forward motion.
+    /// Never snaps while steering/strafing; that fight is what made controls
+    /// feel stiff.
     pub auto_yaw_strength: f32,
     pub look_sensitivity: f32,
+    /// Seconds since the last manual look (mouse / right stick). Auto-drift
+    /// stays parked while this is small so it can't fight the player's input.
+    pub since_manual_look: f32,
+    /// Low-passed player velocity driving the soft position lead (prevents
+    /// raw-velocity jitter from feeding back into the frame).
+    pub lead_vel: Vec3,
 }
 
 impl Default for CameraRig {
@@ -32,8 +40,10 @@ impl Default for CameraRig {
             yaw: 0.0,
             pitch: 0.42,
             distance: 12.0,
-            auto_yaw_strength: 0.35,
+            auto_yaw_strength: 0.22,
             look_sensitivity: 0.0045,
+            since_manual_look: 99.0,
+            lead_vel: Vec3::ZERO,
         }
     }
 }
@@ -185,33 +195,53 @@ pub fn play_camera_follow(
             rig.pitch = (rig.pitch + r.y * 1.7 * dt).clamp(0.08, 1.25);
         }
     }
+    if looking {
+        rig.since_manual_look = 0.0;
+    } else {
+        rig.since_manual_look = (rig.since_manual_look + dt).min(99.0);
+    }
 
     if let Ok((player_tf, player, move_state)) = player_q.single() {
-        let flat_vel = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
-        let look_ahead = flat_vel.clamp_length_max(6.0) * 0.22;
-        let vertical_bias = Vec3::Y * (player.velocity.y * 0.05).clamp(-0.35, 0.55);
+        let vk = (1.0 - (-6.0 * dt).exp()).clamp(0.0, 1.0);
+        rig.lead_vel = rig.lead_vel.lerp(player.velocity, vk);
+        let flat_lead = Vec3::new(rig.lead_vel.x, 0.0, rig.lead_vel.z).clamp_length_max(6.0);
+        let look_ahead = flat_lead * 0.12;
+        let vertical_bias = Vec3::Y * (rig.lead_vel.y * 0.02).clamp(-0.25, 0.35);
         let target = player_tf.translation + Vec3::new(0.0, 1.15, 0.0) + look_ahead + vertical_bias;
-        let k = (1.0 - (-16.0 * dt).exp()).clamp(0.0, 1.0);
-        rig.focus = rig.focus.lerp(target, k);
+        let kh = (1.0 - (-9.0 * dt).exp()).clamp(0.0, 1.0);
+        let kv = (1.0 - (-4.5 * dt).exp()).clamp(0.0, 1.0);
+        rig.focus.x += (target.x - rig.focus.x) * kh;
+        rig.focus.z += (target.z - rig.focus.z) * kh;
+        rig.focus.y += (target.y - rig.focus.y) * kv;
 
-        if !looking && rig.auto_yaw_strength > 0.0 {
+        if !looking
+            && rig.auto_yaw_strength > 0.0
+            && rig.since_manual_look > 1.1
+            && player.on_ground
+        {
             let wish = move_state.map(|m| m.wish_dir).unwrap_or(Vec3::ZERO);
-            let dir = if wish.length_squared() > 0.15 {
-                wish
-            } else {
-                Vec3::new(player.velocity.x, 0.0, player.velocity.z)
+            let forward_push = {
+                let (s, c) = rig.yaw.sin_cos();
+                let fwd = Vec3::new(-s, 0.0, -c);
+                wish.dot(fwd)
             };
-            if dir.length_squared() > 0.35 {
-                let target_yaw = (-dir.x).atan2(-dir.z);
-                let mut dy = target_yaw - rig.yaw;
-                while dy > std::f32::consts::PI {
-                    dy -= std::f32::consts::TAU;
+            let speed = Vec2::new(player.velocity.x, player.velocity.z).length();
+            if forward_push > 0.65 && wish.length() > 0.5 && speed > 2.5 {
+                let dir = Vec3::new(player.velocity.x, 0.0, player.velocity.z);
+                if dir.length_squared() > 6.25 {
+                    let target_yaw = (-dir.x).atan2(-dir.z);
+                    let mut dy = target_yaw - rig.yaw;
+                    while dy > std::f32::consts::PI {
+                        dy -= std::f32::consts::TAU;
+                    }
+                    while dy < -std::f32::consts::PI {
+                        dy += std::f32::consts::TAU;
+                    }
+                    if dy.abs() > 0.06 {
+                        let ak = (rig.auto_yaw_strength * 1.4 * dt).clamp(0.0, 1.0);
+                        rig.yaw += dy * ak;
+                    }
                 }
-                while dy < -std::f32::consts::PI {
-                    dy += std::f32::consts::TAU;
-                }
-                let ak = (rig.auto_yaw_strength * 2.5 * dt).clamp(0.0, 1.0);
-                rig.yaw += dy * ak;
             }
         }
     }
@@ -220,7 +250,10 @@ pub fn play_camera_follow(
         let desired = rig_transform(&rig);
         let eye = collide_camera_eye(rig.focus, desired.translation, &level, &solids.solids);
         let collided = Transform::from_translation(eye).looking_at(rig.focus, Vec3::Y);
-        let ck = (1.0 - (-20.0 * dt).exp()).clamp(0.0, 1.0);
+        let blocked = (collided.translation - rig.focus).length_squared()
+            < (t.translation - rig.focus).length_squared() - 1e-6;
+        let rate = if blocked { 18.0 } else { 5.0 };
+        let ck = (1.0 - (-rate * dt).exp()).clamp(0.0, 1.0);
         t.translation = t.translation.lerp(collided.translation, ck);
         t.rotation = t.rotation.slerp(collided.rotation, ck);
         base.translation = t.translation;

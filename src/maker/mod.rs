@@ -232,6 +232,7 @@ impl Plugin for MakerPlugin {
                         .before(PhysicsSet::Writeback),
                     entities_runtime::tick_track_followers.in_set(InteractionSet::MoveWorld),
                     entities_runtime::move_prowlers.in_set(InteractionSet::MoveWorld),
+                    entities_runtime::carry_crate_riders.in_set(InteractionSet::MoveWorld),
                     interactive_blocks::sync_pulse.in_set(InteractionSet::MoveWorld),
                     entities_runtime::rebuild_runtime_solids
                         .in_set(InteractionSet::MoveWorld)

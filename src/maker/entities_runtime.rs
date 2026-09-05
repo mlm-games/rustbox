@@ -1539,24 +1539,31 @@ pub fn tick_track_followers(
     time: Res<Time>,
     level: Res<LevelDocument>,
     _mode: Res<MakerMode>,
-    mut followers: Query<(&mut Transform, &mut TrackFollower, Option<&mut DriftPlate>)>,
+    mut followers: Query<(
+        &mut Transform,
+        &mut TrackFollower,
+        Option<&mut DriftPlate>,
+        Option<&mut Velocity>,
+    )>,
 ) {
     let dt = time.delta_secs();
-    for (mut tf, mut follow, drift) in &mut followers {
+    for (mut tf, mut follow, drift, vel) in &mut followers {
         let Some(track) = level.track(follow.track_id) else {
             continue;
         };
         let prev = tf.translation;
         follow.distance += dt * track.speed.max(0.0);
         tf.translation = track.sample(follow.distance);
-        // player.rs gates on proximity; carry_player only matters for non-player
-        // uses (e.g. hazard prowlers), where carry must not push the player.
+        let step = tf.translation - prev;
         if let Some(mut drift) = drift {
             drift.carry = if follow.carry_player {
-                tf.translation - prev
+                step
             } else {
                 Vec3::ZERO
             };
+        }
+        if let Some(mut vel) = vel {
+            vel.linear = if dt > 0.0 { step / dt } else { Vec3::ZERO };
         }
     }
 }
@@ -1565,6 +1572,7 @@ pub fn move_prowlers(
     time: Res<Time>,
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
+    plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
     mut q: Query<(&mut Transform, &mut Prowler)>,
 ) {
     if *mode != MakerMode::Play {
@@ -1572,9 +1580,34 @@ pub fn move_prowlers(
     }
     let dt = time.delta_secs();
 
+    let mut steps: Vec<(Vec3, Vec3, Vec3)> = Vec::new();
+    if dt > 0.0 {
+        for (ptf, drift, vel) in &plates {
+            let step = vel
+                .map(|v| v.linear * dt)
+                .filter(|s| s.length_squared() > 1e-12)
+                .unwrap_or(drift.carry);
+            if step.length_squared() > 1e-12 {
+                steps.push((ptf.translation, step, Vec3::new(0.7, 0.12, 0.7)));
+            }
+        }
+    }
+    let mut ride_step_at = |pos: Vec3, he: Vec3| -> Vec3 {
+        let feet = pos.y - he.y;
+        for (center, step, phe) in &steps {
+            let top = center.y + phe.y;
+            if (pos.x - center.x).abs() < phe.x + he.x + 0.1
+                && (pos.z - center.z).abs() < phe.z + he.z + 0.1
+                && (feet - top).abs() <= 0.30
+            {
+                return *step;
+            }
+        }
+        Vec3::ZERO
+    };
+
     for (mut tf, mut p) in &mut q {
         if p.on_track {
-            // Track drives translation; we just face travel direction.
             let delta = tf.translation - p.prev;
             let flat = Vec3::new(delta.x, 0.0, delta.z);
             if flat.length_squared() > 1e-6 {
@@ -1585,7 +1618,13 @@ pub fn move_prowlers(
             continue;
         }
 
-        // Patrol: step, then flip at walls or ledges (grid-aware).
+        let ride = ride_step_at(tf.translation, Vec3::splat(0.35));
+        if ride.length_squared() > 1e-12 {
+            tf.translation += ride;
+            p.base_y += ride.y;
+            p.prev += ride;
+        }
+
         let step = p.dir * p.speed * dt;
         let next = Vec3::new(
             tf.translation.x + step.x,
@@ -1605,6 +1644,58 @@ pub fn move_prowlers(
             tf.translation = next;
         }
         tf.rotation = Quat::from_rotation_y((-p.dir.x).atan2(-p.dir.z));
+    }
+}
+
+/// Static crates resting on a rideable platform travel with its full XYZ step.
+/// Dynamic (thrown/held) crates ride through Rapier friction via the platform
+/// velocity instead and are skipped here.
+pub fn carry_crate_riders(
+    time: Res<Time>,
+    mode: Res<MakerMode>,
+    plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
+    mut crates: Query<
+        &mut Transform,
+        (
+            With<CrateProp>,
+            Without<Prowler>,
+            Without<super::rapier::Throwable>,
+            Without<super::rapier::Held>,
+        ),
+    >,
+) {
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    let mut steps: Vec<(Vec3, Vec3)> = Vec::new();
+    for (ptf, drift, vel) in &plates {
+        let step = vel
+            .map(|v| v.linear * dt)
+            .filter(|s| s.length_squared() > 1e-12)
+            .unwrap_or(drift.carry);
+        if step.length_squared() > 1e-12 {
+            steps.push((ptf.translation, step));
+        }
+    }
+    if steps.is_empty() {
+        return;
+    }
+    for mut tf in &mut crates {
+        let feet = tf.translation.y - 0.4;
+        for (center, step) in &steps {
+            let top = center.y + 0.12;
+            if (tf.translation.x - center.x).abs() < 0.7 + 0.4 + 0.1
+                && (tf.translation.z - center.z).abs() < 0.7 + 0.4 + 0.1
+                && (feet - top).abs() <= 0.30
+            {
+                tf.translation += *step;
+                break;
+            }
+        }
     }
 }
 

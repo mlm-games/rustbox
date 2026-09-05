@@ -18,7 +18,8 @@ use super::level::LevelDocument;
 use super::mode::{InputCapture, MakerMode};
 use super::rendering::MakerAssets;
 
-use game_utils_bevy::juice::Juice;
+use bevy_rapier3d::prelude::Velocity;
+use game_utils_bevy::juice::{Juice, SquashStretch};
 use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
 
 /// Default jump impulse (shared with stomp bounce etc.).
@@ -231,6 +232,12 @@ pub struct Player {
     /// Cooldown so bounce pads fire once per landing, not every frame.
     pub bounce_cd: f32,
     pub spawn_lock: f32,
+    /// Rideable platform we stood on last physics step (sticky ride so fast
+    /// or descending platforms can't leave us behind between re-detects).
+    pub ground_plate: Option<Entity>,
+    /// Platform velocity at takeoff, inherited by jumps (generic touring
+    /// platform feel: keep the ride's momentum when leaving it).
+    pub plate_vel: Vec3,
 }
 
 impl Default for Player {
@@ -266,6 +273,8 @@ impl Default for Player {
             jump_held: false,
             bounce_cd: 0.0,
             spawn_lock: 0.0,
+            ground_plate: None,
+            plate_vel: Vec3::ZERO,
         }
     }
 }
@@ -382,6 +391,9 @@ pub fn respawn_player(
     player.jump_held = false;
     player.bounce_cd = 0.0;
     player.spawn_lock = 0.35;
+    player.ground_plate = None;
+    player.plate_vel = Vec3::ZERO;
+    transform.scale = Vec3::ONE;
     *move_state = MoveState::default();
 }
 
@@ -541,6 +553,36 @@ pub struct PlayInput {
     pub drop_through: bool,
 }
 
+/// Per-physics-step displacement of a rideable platform. Rapier velocity is
+/// the frame-rate independent source; raw `carry` (per render frame) is only
+/// a fallback for the first frame before velocity exists.
+fn plate_step(drift: &DriftPlate, vel: Option<&Velocity>, dt: f32) -> Vec3 {
+    if let Some(v) = vel {
+        if v.linear.length_squared() > 1e-10 && dt > 0.0 {
+            return v.linear * dt;
+        }
+    }
+    drift.carry
+}
+
+/// Squash/stretch overwrites any active effect and captures the mid-effect
+/// scale as the new base, so a jump pop overlapping a landing pop drifts the
+/// base scale taller every short hop (e.g. bonking under a low platform).
+/// Skip retriggers while one is active; the visual pop is expendable, a
+/// permanent height change is not.
+fn squash_guarded(
+    commands: &mut Commands,
+    entity: Entity,
+    has_active: bool,
+    amount: Vec2,
+    duration: f32,
+) {
+    if has_active {
+        return;
+    }
+    Juice::squash_stretch(commands, entity, amount, duration);
+}
+
 fn keyboard_down(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
     kb_ok && keys.pressed(key)
 }
@@ -607,8 +649,9 @@ pub fn player_controller(
     tuning: Res<MoveTuning>,
     mut commands: Commands,
     mut trauma: ResMut<Trauma>,
-    plates: Query<(&Transform, &DriftPlate), Without<Player>>,
+    plates: Query<(Entity, &Transform, &DriftPlate, Option<&Velocity>), Without<Player>>,
     onoff: Res<OnOffState>,
+    squash_q: Query<Entity, With<SquashStretch>>,
     mut q: Query<(Entity, &mut Transform, &mut Player, &mut MoveState)>,
 ) {
     let dt = time.delta_secs();
@@ -619,8 +662,10 @@ pub fn player_controller(
     let tuning = &*tuning;
 
     for (entity, mut transform, mut player, mut move_state) in &mut q {
+        if !squash_q.contains(entity) && transform.scale != Vec3::ONE {
+            transform.scale = Vec3::ONE;
+        }
         let mut input = read_play_input(&keys, &gamepads, kb);
-        // Spawn lock: briefly ignore horizontal wishes and jump so you settle.
         player.spawn_lock = (player.spawn_lock - dt).max(0.0);
         if player.spawn_lock > 0.0 {
             input.wish = Vec2::ZERO;
@@ -671,8 +716,36 @@ pub fn player_controller(
         };
         transform.translation.y = feet_y + move_he.y;
 
-        // Hanging: hold E (or West) under a hangable underside (thin conveyor /
-        // hang rail). Overrides gravity while active.
+        let mut pre_carried_plate: Option<Entity> = None;
+        if player.was_on_ground
+            && player.move_mode == PlayerMoveMode::Normal
+            && !player.gripping
+            && let Some(ride_e) = player.ground_plate
+        {
+            if let Ok((_, ride_tf, ride_drift, ride_vel)) = plates.get(ride_e) {
+                let step = plate_step(ride_drift, ride_vel, dt);
+                if step.length_squared() > 1e-10 {
+                    let over = (transform.translation.x - ride_tf.translation.x).abs()
+                        < 0.7 + move_he.x + 0.15
+                        && (transform.translation.z - ride_tf.translation.z).abs()
+                            < 0.7 + move_he.z + 0.15;
+                    let feet = transform.translation.y - move_he.y;
+                    let top = ride_tf.translation.y + 0.12;
+                    if over && (feet - top).abs() <= 0.35 {
+                        transform.translation += step;
+                        player.plate_vel = if dt > 0.0 { step / dt } else { Vec3::ZERO };
+                        pre_carried_plate = Some(ride_e);
+                    } else {
+                        player.ground_plate = None;
+                    }
+                } else {
+                    pre_carried_plate = Some(ride_e);
+                }
+            } else {
+                player.ground_plate = None;
+            }
+        }
+
         let hang_key = input.hang_down;
         player.hang_cooldown = (player.hang_cooldown - dt).max(0.0);
         if player.move_mode == PlayerMoveMode::Hanging {
@@ -880,16 +953,27 @@ pub fn player_controller(
             } else {
                 tuning.jump_speed
             };
-            // Keep horizontal momentum (Mario 64: jump doesn't dump run speed).
             player.velocity.x *= tuning.jump_speed_retain;
             player.velocity.z *= tuning.jump_speed_retain;
-            player.velocity.y = jump_v;
+            let ride = player.plate_vel;
+            player.velocity.x += ride.x;
+            player.velocity.z += ride.z;
+            player.velocity.y = jump_v + ride.y.max(0.0);
             player.jump_buffer = 0.0;
             player.coyote = 0.0;
             player.on_ground = false;
             player.was_on_ground = false;
+            player.ground_plate = None;
+            player.plate_vel = Vec3::ZERO;
             player.jump_held = true;
-            Juice::squash_stretch(&mut commands, entity, Vec2::new(0.72, 1.35), 0.10);
+            let squashing = squash_q.contains(entity);
+            squash_guarded(
+                &mut commands,
+                entity,
+                squashing,
+                Vec2::new(0.72, 1.35),
+                0.10,
+            );
             ScreenEffects::add_trauma(&mut trauma, 0.04);
         }
 
@@ -1032,7 +1116,13 @@ pub fn player_controller(
         let mut corrected_pos = result.pos;
         let mut hit_y_for_vel = result.hit_y;
         if result.hit_y && player.velocity.y > 0.0 {
-            let c = ceiling_corner_correct(&level, &solids.solids, result.pos, move_he, player.velocity.y);
+            let c = ceiling_corner_correct(
+                &level,
+                &solids.solids,
+                result.pos,
+                move_he,
+                player.velocity.y,
+            );
             if (c - corrected_pos).length_squared() > 1e-8 {
                 corrected_pos = c;
                 hit_y_for_vel = false;
@@ -1115,30 +1205,57 @@ pub fn player_controller(
             }
         }
 
-        // One-way plate riding: probe the plate top under our feet after the
-        // move and carry the player with the plate's motion.
         let mut pos = corrected_pos;
         let feet_y = pos.y - move_he.y;
         let prev_feet = player.pre_move_pos.y - move_he.y;
+        let fell = pos.y <= player.pre_move_pos.y + 0.02;
         let mut on_plate = false;
-        for (dtf, drift) in &plates {
+        let mut landed_plate: Option<(Entity, Vec3)> = None;
+        for (plate_e, dtf, drift, pvel) in &plates {
+            let step = plate_step(drift, pvel, dt);
             let top = dtf.translation.y + 0.12;
-            let over = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x
+            let prev_top = top - step.y;
+            let over_now = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x
                 && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z;
-            if over
-                && player.velocity.y <= 0.0
-                && prev_feet >= top - 0.05
-                && feet_y <= top + 0.05
-                && feet_y >= top - 1.5
-            {
-                pos.x += drift.carry.x;
-                pos.z += drift.carry.z;
-                pos.y = top + move_he.y;
-                player.velocity.y = 0.0;
-                on_plate = true;
-                move_state.floor_normal = Vec3::Y;
-                break;
+            let over_prev = (player.pre_move_pos.x - (dtf.translation.x - step.x)).abs()
+                < 0.7 + move_he.x
+                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs() < 0.7 + move_he.z;
+            if !(over_now || over_prev) {
+                continue;
             }
+            if !fell || player.velocity.y > 0.0 {
+                continue;
+            }
+            if pre_carried_plate != Some(plate_e) && prev_feet < prev_top - 0.12 {
+                continue;
+            }
+            let above_tol = if pre_carried_plate == Some(plate_e) {
+                0.55
+            } else {
+                0.10
+            };
+            if feet_y > top + above_tol || feet_y < top - 0.45 {
+                continue;
+            }
+            if pre_carried_plate == Some(plate_e) {
+                pos.y = top + move_he.y;
+            } else {
+                pos.x += step.x;
+                pos.z += step.z;
+                pos.y = top + move_he.y;
+            }
+            player.velocity.y = 0.0;
+            on_plate = true;
+            move_state.floor_normal = Vec3::Y;
+            landed_plate = Some((plate_e, if dt > 0.0 { step / dt } else { Vec3::ZERO }));
+            break;
+        }
+        if let Some((plate_e, pvel)) = landed_plate {
+            player.ground_plate = Some(plate_e);
+            player.plate_vel = pvel;
+        } else {
+            player.ground_plate = None;
+            player.plate_vel = Vec3::ZERO;
         }
         let grounded_now = result.on_ground || on_plate;
         if grounded_now && !on_plate && player.velocity.y <= 0.0 {
@@ -1234,15 +1351,28 @@ pub fn player_controller(
         let was_grounded = result.on_ground || on_plate || player.gripping;
         if was_grounded && !player.was_on_ground {
             let impact = (-player.fall_speed).max(0.0);
+            let squashing = squash_q.contains(entity);
             if player.slamming {
                 let amount = (impact / 40.0).clamp(0.15, 0.45);
-                Juice::squash_stretch(&mut commands, entity, Vec2::new(1.45, 0.55), 0.16);
+                squash_guarded(
+                    &mut commands,
+                    entity,
+                    squashing,
+                    Vec2::new(1.45, 0.55),
+                    0.16,
+                );
                 ScreenEffects::add_trauma(&mut trauma, amount);
             } else if impact > tuning.land_squash_min_impact {
                 let t = ((impact - tuning.land_squash_min_impact) / 18.0).clamp(0.0, 1.0);
                 let sx = 1.0 + 0.28 * t;
                 let sy = 1.0 - 0.32 * t;
-                Juice::squash_stretch(&mut commands, entity, Vec2::new(sx, sy), 0.08 + 0.06 * t);
+                squash_guarded(
+                    &mut commands,
+                    entity,
+                    squashing,
+                    Vec2::new(sx, sy),
+                    0.08 + 0.06 * t,
+                );
                 if impact > 8.0 {
                     ScreenEffects::add_trauma(
                         &mut trauma,
@@ -1308,7 +1438,14 @@ pub fn player_controller(
             )
         {
             player.velocity.y = tuning.jump_speed * 1.55;
-            Juice::squash_stretch(&mut commands, entity, Vec2::new(0.65, 1.45), 0.12);
+            let squashing = squash_q.contains(entity);
+            squash_guarded(
+                &mut commands,
+                entity,
+                squashing,
+                Vec2::new(0.65, 1.45),
+                0.12,
+            );
             ScreenEffects::add_trauma(&mut trauma, 0.08);
             player.on_ground = false;
             player.coyote = 0.0;
