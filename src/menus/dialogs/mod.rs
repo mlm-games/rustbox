@@ -232,7 +232,7 @@ fn pause_panel(
     // Retry is only meaningful in Play; in Edit there is nothing to reset.
     // It lives here (not on the locked Play HUD) because `cursor_policy`
     // unlocks the mouse while paused, so it is actually clickable. During
-    // unpaused Play use `R` — see `win::retry_hotkey`.
+    // unpaused Play use `R`.
     if !st.maker_mode_edit {
         children.push(mk_button(
             &t(tr, "maker-retry", "Retry"),
@@ -243,9 +243,7 @@ fn pause_panel(
     children.push(mk_button(
         &t(tr, "settings", "Settings"),
         col(70, 70, 90),
-        move || {
-            push(&a2, UiAction::OpenSettings)
-        },
+        move || push(&a2, UiAction::OpenSettings),
     ));
     children.push(mk_button(
         &t(tr, "quit-to-title", "Quit to Title"),

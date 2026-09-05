@@ -690,7 +690,6 @@ struct MeshOut {
 fn push_quad(out: &mut MeshOut, v: [Vec3; 4], color: [f32; 4]) {
     let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
     let base = out.positions.len() as u32;
-    // Simple planar UVs (0..1 per face) — good enough for tileable preview PNGs.
     let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     for (i, p) in v.into_iter().enumerate() {
         out.positions.push(p.to_array());
@@ -750,7 +749,6 @@ fn append_block(
     if block.kind.is_pulse() && !level.pulse_on {
         return;
     }
-    // White vertex color — albedo comes from the textured kind material.
     let mut color = [1.0, 1.0, 1.0, 1.0];
     if level.cell_water(cell) {
         color = [0.55, 0.62, 0.78, 1.0];

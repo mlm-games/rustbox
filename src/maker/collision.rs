@@ -1096,7 +1096,6 @@ pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
                 if let Some(h) = surface_top_height_opt(b, wx, wz) {
                     return h;
                 }
-                // Empty column of a partial shape — keep looking below.
             }
             _ => return y as f32 + 1.0, // boundary
         }

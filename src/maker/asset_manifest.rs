@@ -152,7 +152,6 @@ impl EntityModelManifest {
                 preview: None,
             }
         };
-        // (kind, scale, y_offset, tint, collider, solid) — matches the RON.
         let rows: [(
             &str,
             f32,

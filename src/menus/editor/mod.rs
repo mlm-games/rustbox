@@ -85,9 +85,7 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 .child(play_stats_bar(st)),
             )
             .child(
-                // Bottom-left: BACK (return to the editor) — mouse is locked in
-                // Play, so this is keyboard-driven (Tab) but kept for gamepad
-                // / touch. Retry is `R` (see `win::retry_hotkey`) because a
+                // Retry is `R` (see `win::retry_hotkey`) because a
                 // second mouse button would be unreachable while locked.
                 Column(
                     Modifier::new()
@@ -100,8 +98,6 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 .child(clapperboard(st, actions)),
             )
             .child(
-                // Bottom-right: keyboard hint — retry is `R`, not a mouse button,
-                // because `cursor_policy` locks/hides the cursor in Play.
                 Column(
                     Modifier::new()
                         .fill_max_size()
@@ -114,7 +110,11 @@ pub fn ingame_hud(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                         .padding(10.0)
                         .background(tok::bg_elevated())
                         .clip_rounded(tok::R_PILL))
-                    .child(RText("R — Retry".to_string()).size(13.0).color(tok::text_dim())),
+                    .child(
+                        RText("Press R to Retry".to_string())
+                            .size(13.0)
+                            .color(tok::text_dim()),
+                    ),
                 ),
             )
             .child(status_toast(st));
@@ -197,7 +197,7 @@ fn play_stats_bar(st: &SharedUi) -> View {
         .collect::<Vec<_>>()
         .join("");
     let keys_label = if keys.is_empty() {
-        "—".to_string()
+        "NA".to_string()
     } else {
         keys
     };

@@ -11,7 +11,7 @@ voxel). Collision/hitboxes are unchanged (engine `BuiltinShape` math).
 | `rbox/blocks/*.glb` (170) | CC0 derivative (generated `tools/asset_build/build_rbox.py`) | All block kind×shape pairs, smoothed from `rustbox/` geometry |
 | `rbox/entities/*.glb` (22 + Player) | CC0 derivative (generated `tools/asset_build/build_rbox.py`) | Kenney direct copies (Crate, Key, Sign, Heart, Jewel, Spring, Flag, Star, Lever, Ramp, Plate, Bomb, Barrel) + smooth kitbashes (Seal, LockGate, RelayGate, Prowler, Fan, Teleporter) normalized to the voxel bbox |
 | `rustbox/blocks/*.glb`, `rustbox/entities/*.glb` | CC0 derivative | Legacy voxel kit, kept as build reference (not runtime) |
-| `cubeworld/Character_Male_2.gltf`, `cubeworld/Goblin.gltf` | CC0 | Player/prowler rigs + clip library (retarget to Kenney `Player.glb` idle/walk/jump is a follow-up; no Nintendo IP is vendored — `~/Downloads/Mario-Builder-64-maker-dev` was style reference only) |
+| `cubeworld/Character_Male_2.gltf`, `cubeworld/Goblin.gltf` | CC0 | Player/prowler rigs + clip library (retarget to Kenney `Player.glb` idle/walk/jump is a follow-up.|
 
 Models are self-contained glTF 2.0 (embedded buffers).
 
