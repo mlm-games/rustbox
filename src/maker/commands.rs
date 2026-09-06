@@ -27,6 +27,9 @@ pub enum EditCommand {
     },
     DeleteTrack {
         track: TrackData,
+        /// Entity ids detached by the delete (`e.track` cleared on apply);
+        /// restored on revert so undo re-links instead of orphaning.
+        detached: Vec<LevelEntityId>,
     },
     AddTrackPoint {
         track_id: TrackId,
@@ -173,7 +176,15 @@ fn apply_command_inner(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::CreateTrack { track } => {
             level.add_track(track.clone());
         }
-        EditCommand::DeleteTrack { track } => {
+        EditCommand::DeleteTrack { track, detached } => {
+            debug_assert!(
+                detached.iter().all(|id| level
+                    .data
+                    .entities
+                    .iter()
+                    .any(|e| e.id == *id && e.track == Some(track.id))),
+                "DeleteTrack applied with stale detached list"
+            );
             for e in level.data.entities.iter_mut() {
                 if e.track == Some(track.id) {
                     e.track = None;
@@ -311,8 +322,14 @@ fn revert_command_inner(level: &mut LevelDocument, cmd: &EditCommand) {
         EditCommand::CreateTrack { .. } => {
             level.remove_track(cmd_track_id(cmd));
         }
-        EditCommand::DeleteTrack { track } => {
+        EditCommand::DeleteTrack { track, detached } => {
             level.add_track(track.clone());
+            for id in detached.iter() {
+                if let Some(e) = level.data.entities.iter_mut().find(|e| e.id == *id) {
+                    e.track = Some(track.id);
+                }
+            }
+            level.entities_dirty = true;
         }
         EditCommand::AddTrackPoint {
             track_id, index, ..
@@ -435,6 +452,17 @@ pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
     revert_command_inner(level, cmd);
     level.rebuild_blocks_vec();
     invalidate_verification(level);
+}
+
+/// Entity ids currently attached to `track_id` (for `DeleteTrack.detached`).
+pub fn detached_for(level: &LevelDocument, track_id: TrackId) -> Vec<LevelEntityId> {
+    level
+        .data
+        .entities
+        .iter()
+        .filter(|e| e.track == Some(track_id))
+        .map(|e| e.id)
+        .collect()
 }
 
 fn cmd_track_id(cmd: &EditCommand) -> TrackId {

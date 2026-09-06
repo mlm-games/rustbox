@@ -1184,20 +1184,10 @@ pub fn player_controller(
             if n.length_squared() > 1e-6 {
                 let hx = player.velocity.x;
                 let hz = player.velocity.z;
-                let speed_before = (hx * hx + hz * hz).sqrt();
                 let into = hx * n.x + hz * n.z; // < 0 = moving into wall
                 if into < -1e-5 {
                     player.velocity.x -= n.x * into;
                     player.velocity.z -= n.z * into;
-                    // Preserve along-wall speed so grazing doesn't feel like mud.
-                    let tx = player.velocity.x;
-                    let tz = player.velocity.z;
-                    let tlen = (tx * tx + tz * tz).sqrt();
-                    if tlen > 1e-4 && speed_before > tlen {
-                        let s = speed_before / tlen;
-                        player.velocity.x = tx * s;
-                        player.velocity.z = tz * s;
-                    }
                 }
             } else {
                 if result.hit_x {
@@ -1270,7 +1260,8 @@ pub fn player_controller(
                 && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
             let over_prev = (player.pre_move_pos.x - (dtf.translation.x - step.x)).abs()
                 < 0.7 + move_he.x + PLATE_OVER_SLACK
-                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
+                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs()
+                    < 0.7 + move_he.z + PLATE_OVER_SLACK;
             if !(over_now || over_prev) {
                 continue;
             }

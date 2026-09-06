@@ -118,6 +118,7 @@ fn pickup_throwables(
     player: Query<&Transform, With<Player>>,
     crates: Query<(Entity, &Transform), (With<Throwable>, Without<Held>)>,
     held_q: Query<Entity, (With<Throwable>, With<Held>)>,
+    solids: Res<super::entities_runtime::RuntimeSolids>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -156,11 +157,8 @@ fn pickup_throwables(
         let d = ptf.translation.distance(tf.translation);
         if d < 1.6 && facing > 0.15 && best.map_or(true, |(_, bd)| d < bd) {
             let mid = (ptf.translation + tf.translation) * 0.5;
-            let blocked = super::collision::aabb_hits_solid(
-                &level,
-                mid,
-                Vec3::splat(0.2),
-            );
+            let blocked = super::collision::aabb_hits_solid(&level, mid, Vec3::splat(0.2))
+                || super::interaction::solid_blocks(&solids, e, mid, Vec3::splat(0.2));
             if blocked {
                 continue;
             }

@@ -821,12 +821,31 @@ pub(crate) fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vi
             12.0,
             col(230, 160, 70),
         )
+    } else if st.online_total > levels.len() as u64 {
+        RText(format!("Showing {} of {}", levels.len(), st.online_total))
+            .size(12.0)
+            .color(col(150, 150, 170))
     } else {
         RText(format!("{} levels", levels.len()))
             .size(12.0)
             .color(col(150, 150, 170))
     };
     let _sort_row: ();
+    let has_more_online = !st.online_loading && (st.online_total > levels.len() as u64);
+    let a_more = actions.clone();
+    let load_more_row: View = if has_more_online {
+        Row(Modifier::new()
+            .fill_max_width()
+            .align_items(AlignItems::CENTER))
+        .child(mk_primary_button(
+            icon_label(Symbols::EXPAND_MORE, "Load more".into()),
+            col(90, 120, 180),
+            move || push(&a_more, UiAction::OnlineLoadMore),
+        ))
+        .into()
+    } else {
+        spacer(0.0).into()
+    };
 
     let shelf_labels = ["Fresh", "Popular", "Hot", "Mine"];
     let mut shelf_row_children: Vec<View> = Vec::new();
@@ -990,7 +1009,9 @@ pub(crate) fn online_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vi
             Column(Modifier::new().fill_max_width().weight(1.0)).child(scroll_list),
             detail,
         )),
-    );
+    )
+    .child(spacer(8.0))
+    .child(load_more_row);
 
     modal_shell(inner)
 }

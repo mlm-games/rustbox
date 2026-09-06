@@ -23,6 +23,10 @@ pub struct LevelDocument {
     pub next_entity_id: LevelEntityId,
     pub next_track_id: TrackId,
     pub entities_dirty: bool,
+    /// Bumped by `replace_data`/`seed_default` so editor systems can drop
+    /// per-level transient state (paint strokes, selections) that must never
+    /// leak into a freshly loaded level.
+    pub generation: u64,
     /// Runtime solidity of Timed Pulse blocks, driven by `PulseClock` in Play
     /// (free-running solid/empty cycle). Kept on in Edit mode so they build
     /// and feel like normal blocks.
@@ -61,6 +65,7 @@ impl Default for LevelDocument {
             next_track_id: 1,
             entities_dirty: true,
             pulse_on: true,
+            generation: 0,
         };
         doc.seed_default();
         doc
@@ -152,6 +157,7 @@ impl LevelDocument {
         self.mark_all_dirty();
         self.rebuild_blocks_vec();
         self.entities_dirty = true;
+        self.generation = self.generation.wrapping_add(1);
     }
 
     pub fn get_block(&self, pos: IVec3) -> Option<&BlockData> {
@@ -167,10 +173,33 @@ impl LevelDocument {
             Some(data) => {
                 if data.kind == BlockKind::Spawn {
                     self.data.spawn = [pos.x, pos.y + 1, pos.z];
+                } else if self
+                    .map
+                    .get(&pos)
+                    .is_some_and(|b| b.kind == BlockKind::Spawn)
+                {
+                    self.data.spawn = self
+                        .map
+                        .iter()
+                        .find(|(p, b)| **p != pos && b.kind == BlockKind::Spawn)
+                        .map(|(p, _)| [p.x, p.y + 1, p.z])
+                        .unwrap_or([0, 2, 0]);
                 }
                 self.map.insert(pos, data);
             }
             None => {
+                if self
+                    .map
+                    .get(&pos)
+                    .is_some_and(|b| b.kind == BlockKind::Spawn)
+                {
+                    self.data.spawn = self
+                        .map
+                        .iter()
+                        .find(|(p, b)| **p != pos && b.kind == BlockKind::Spawn)
+                        .map(|(p, _)| [p.x, p.y + 1, p.z])
+                        .unwrap_or([0, 2, 0]);
+                }
                 self.map.remove(&pos);
             }
         }
@@ -455,6 +484,7 @@ impl LevelDocument {
         self.rebuild_blocks_vec();
         self.mark_all_dirty();
         self.entities_dirty = true;
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// Drain dirty chunks nearest-first to `focus` (world coords). Sorting a

@@ -200,7 +200,7 @@ impl DamageRequests {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
         for r in &self.requests {
-            if seen.insert((r.target, r.attack)) {
+            if seen.insert(r.target) {
                 out.push(*r);
             }
         }
@@ -701,7 +701,8 @@ pub fn detect_damage(
         if !overlap {
             continue;
         }
-        let is_stomp = player.velocity.y < -0.5 && player_bottom > prow_tf.translation.y - 0.05;
+        let falling = player.velocity.y.min(player.fall_speed);
+        let is_stomp = falling < -0.5 && player_bottom > prow_tf.translation.y - 0.05;
         if is_stomp {
             requests.push(DamageRequest {
                 target: prow_e,
@@ -729,7 +730,8 @@ pub fn detect_damage(
         if !overlap {
             continue;
         }
-        let stomp = player.velocity.y < -0.5 && player_bottom > c_tf.translation.y - 0.05;
+        let stomp = player.velocity.y.min(player.fall_speed) < -0.5
+            && player_bottom > c_tf.translation.y - 0.05;
         if stomp {
             requests.push(DamageRequest {
                 target: c_e,
@@ -818,12 +820,10 @@ pub fn resolve_forced_motion(
                 .insert(Collider::cuboid(0.4, 0.4, 0.4))
                 .insert(Velocity::zero());
         }
-        // The respawn source distinguishes a death (fell out / off the map)
-        // from a manual R reset.
         let status = if motion.source.target == NO_TARGET {
             "You fell off the level!"
         } else {
-            "Level restarted!"
+            "Back to checkpoint!"
         };
         ui.set_status(status);
         respawn_player(&mut tf, &mut player, &mut move_state, &mut vis, &level);

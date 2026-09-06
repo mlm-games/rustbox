@@ -184,6 +184,12 @@ pub struct MakerUi {
 
     /// Online level-sharing state.
     pub online_levels: Vec<LevelMeta>,
+    /// Server-reported total for the current query (`resp.total`); the page
+    /// in `online_levels` may be shorter. Drives the "showing X of N" count
+    /// and the Load More button.
+    pub online_total: u64,
+    /// Offset of the last requested page; non-zero responses append.
+    pub online_last_offset: u64,
     /// Generated previews for online levels whose data has been downloaded/cached.
     /// These are not stored thumbnails; they are rebuilt from LevelData.
     pub online_previews: HashMap<u64, crate::maker::thumbnail::ThumbPreview>,
@@ -464,14 +470,16 @@ pub fn drain_ui_commands(
                 ui.current_key = None;
                 ui.set_status("New level");
             }
-            UiCommand::SaveAs(name) => match storage::save_level(&storage, &mut level, &name) {
-                Ok(()) => {
-                    level.data.name = name.clone();
-                    ui.current_key = Some(name.clone());
-                    ui.set_status(format!("Saved '{name}'"));
+            UiCommand::SaveAs(name) => {
+                level.data.name = name.clone();
+                match storage::save_level(&storage, &mut level, &name) {
+                    Ok(()) => {
+                        ui.current_key = Some(name.clone());
+                        ui.set_status(format!("Saved '{name}'"));
+                    }
+                    Err(e) => ui.set_status(format!("Save failed: {e}")),
                 }
-                Err(e) => ui.set_status(format!("Save failed: {e}")),
-            },
+            }
             UiCommand::LoadSlot(name) => {
                 match storage::load_level(&storage, &mut level, &mut history, &name) {
                     Ok(true) => {
@@ -833,17 +841,16 @@ pub fn drain_ui_commands(
                     };
 
                     if matches!(new, ContainedItem::Key) && old_link == 0 {
-                        history.apply(
-                            &mut level,
-                            EditCommand::SetEntityLink {
-                                id,
-                                old: old_link,
-                                new: 1,
-                            },
-                        );
-                    }
-
-                    if new != old {
+                        let mut cmds = vec![EditCommand::SetEntityLink {
+                            id,
+                            old: old_link,
+                            new: 1,
+                        }];
+                        if new != old {
+                            cmds.push(EditCommand::SetEntityContents { id, old, new });
+                        }
+                        history.apply_many(&mut level, cmds);
+                    } else if new != old {
                         history.apply(&mut level, EditCommand::SetEntityContents { id, old, new });
                     }
                 }
@@ -944,7 +951,8 @@ pub fn drain_ui_commands(
             }
             UiCommand::DeleteTrack(id) => {
                 if let Some(track) = level.track(id).cloned() {
-                    history.apply(&mut level, EditCommand::DeleteTrack { track });
+                    let detached = super::commands::detached_for(&level, id);
+                    history.apply(&mut level, EditCommand::DeleteTrack { track, detached });
                     if active.0 == Some(id) {
                         active.0 = None;
                     }

@@ -1043,7 +1043,7 @@ pub fn reconcile_entities(
                 });
                 ecmds.insert(SealSolid);
                 if playing {
-                    ecmds.insert(Collider::cuboid(0.35, 0.35, 0.35));
+                    ecmds.insert(Collider::cuboid(0.5, 1.0, 0.15));
                 }
             }
             EntityKind::DriftPlate => {
@@ -1159,6 +1159,9 @@ pub fn reconcile_entities(
                     item: data.contents,
                     link: data.link,
                 });
+                if playing {
+                    ecmds.insert((RigidBody::Fixed, Collider::cuboid(0.4, 0.4, 0.4)));
+                }
             }
             EntityKind::Key => {
                 ecmds.insert(KeyPickup {
@@ -1656,12 +1659,8 @@ pub fn move_prowlers(
         let ledge = !is_solid(&level, ahead_cell - IVec3::Y);
         // Closed gates/seals/crates are entity solids, not level cells:
         // without this prowlers walk straight through them.
-        let blocked_by_prop = crate::maker::interaction::solid_blocks(
-            &solids,
-            entity,
-            next,
-            Vec3::splat(0.35),
-        );
+        let blocked_by_prop =
+            crate::maker::interaction::solid_blocks(&solids, entity, next, Vec3::splat(0.35));
         let headroom = is_solid(&level, ahead_cell + IVec3::Y);
 
         if wall || ledge || blocked_by_prop || headroom {

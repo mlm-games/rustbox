@@ -359,6 +359,8 @@ impl Plugin for MakerPlugin {
                     (
                         ui_bridge::update_input_capture,
                         ui_bridge::drain_ui_commands,
+                        editor::validate_editor_refs_system,
+                        editor::clear_transients_on_replace,
                     )
                         .chain()
                         .before(editor::update_preview_and_edit),

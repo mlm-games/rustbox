@@ -705,7 +705,7 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
     if level.tracks.len() > MAX_TRACKS {
         bail!("too many tracks");
     }
-    if level.tags.len() > 6 {
+    if level.tags.len() > crate::api::MAX_TAGS {
         bail!("too many tags");
     }
     if let Some(s) = level.size
@@ -726,9 +726,45 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
             bail!("block out of bounds");
         }
     }
+    // Duplicate positions collapse silently in the editor map (save/load
+    // changes length).
+    {
+        use std::collections::HashSet;
+        let mut seen_blocks = HashSet::new();
+        for b in &level.blocks {
+            if !seen_blocks.insert(b.position) {
+                bail!("duplicate block position");
+            }
+        }
+        let mut seen_entities = HashSet::new();
+        for e in &level.entities {
+            if !seen_entities.insert(e.id) {
+                bail!("duplicate entity id");
+            }
+        }
+        let mut seen_tracks = HashSet::new();
+        for t in &level.tracks {
+            if !seen_tracks.insert(t.id) {
+                bail!("duplicate track id");
+            }
+        }
+    }
     for e in &level.entities {
         if !in_bounds(&e.cell) {
             bail!("entity out of bounds");
+        }
+        if let Some(cell_b) = e.cell_b
+            && !in_bounds(&cell_b)
+        {
+            bail!("entity paired cell out of bounds");
+        }
+        match e.kind {
+            EntityKind::Teleporter | EntityKind::Key | EntityKind::LockGate => {
+                if e.link > 9 {
+                    bail!("link channel out of range");
+                }
+            }
+            _ => {}
         }
         if !e.yaw_deg.is_finite() || !e.param.is_finite() {
             bail!("entity has a non-finite value");

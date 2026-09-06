@@ -82,6 +82,8 @@ pub enum UiAction {
     BrowseAddToCollection,
     OnlineOpen,
     OnlineRefresh,
+    /// Fetch the next page (`offset = shown count`) and append to the grid.
+    OnlineLoadMore,
     OnlinePlay(u64),
     OnlineLike(u64),
     OnlineReport(u64),

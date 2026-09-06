@@ -48,20 +48,19 @@ impl VoxelQuery for LevelQuery<'_> {
 
     fn ground_velocity(&self, cell: [i32; 3]) -> [f32; 3] {
         let iv = IVec3::from_array(cell);
-        if let Some(b) = self.level.get_block(iv) {
-            use rustbox_format::BlockKind;
-            match b.kind {
-                BlockKind::Conveyor | BlockKind::ThinConveyor => {
-                    let dir = match b.rot % 4 {
-                        0 => [1.0, 0.0, 0.0],
-                        1 => [0.0, 0.0, 1.0],
-                        2 => [-1.0, 0.0, 0.0],
-                        _ => [0.0, 0.0, -1.0],
-                    };
-                    return [dir[0] * 3.0, 0.0, dir[2] * 3.0];
-                }
-                _ => {}
-            }
+        if let Some(b) = self.level.get_block(iv)
+            && matches!(
+                b.kind,
+                rustbox_format::BlockKind::Conveyor | rustbox_format::BlockKind::ThinConveyor
+            )
+        {
+            let dir = match b.rot % 4 {
+                0 => [1.0, 0.0, 0.0],
+                1 => [0.0, 0.0, -1.0],
+                2 => [-1.0, 0.0, 0.0],
+                _ => [0.0, 0.0, 1.0],
+            };
+            return [dir[0] * 4.0, 0.0, dir[2] * 4.0];
         }
         [0.0, 0.0, 0.0]
     }

@@ -223,9 +223,29 @@ fn resolve_axis<Q: VoxelQuery>(
     let z0 = (min.z + SKIN).floor() as i32;
     let z1 = (max.z - SKIN).floor() as i32;
 
-    for cx in x0..=x1 {
-        for cy in y0..=y1 {
-            for cz in z0..=z1 {
+    // Scan direction-aware: resolving against the first overlapping cell in
+    // ascending order regardless of direction corrects a -X/-Z move against
+    // the far face (leaving penetration) and lands a fall on the lowest
+    // stacked top instead of the highest.
+    let xs: Vec<i32> = if axis == 0 && amount < 0.0 {
+        (x0..=x1).rev().collect()
+    } else {
+        (x0..=x1).collect()
+    };
+    let ys: Vec<i32> = if axis == 1 && amount < 0.0 {
+        (y0..=y1).rev().collect()
+    } else {
+        (y0..=y1).collect()
+    };
+    let zs: Vec<i32> = if axis == 2 && amount < 0.0 {
+        (z0..=z1).rev().collect()
+    } else {
+        (z0..=z1).collect()
+    };
+    for cx in &xs {
+        for cy in &ys {
+            for cz in &zs {
+                let (cx, cy, cz) = (*cx, *cy, *cz);
                 if !query.is_solid([cx, cy, cz]) {
                     continue;
                 }
@@ -250,11 +270,7 @@ fn resolve_axis<Q: VoxelQuery>(
                             let top = query
                                 .surface_top([cx, cy, cz], wx, wz)
                                 .unwrap_or((cy + 1) as f32);
-                            if body.pos.y >= top - 0.6 {
-                                body.pos.y = top + SKIN;
-                            } else {
-                                body.pos.y = (cy + 1) as f32 + SKIN;
-                            }
+                            body.pos.y = top + SKIN;
                             result.grounded = true;
                             state.on_ground = true;
                             state.ground_vel = query.ground_velocity([cx, cy, cz]);

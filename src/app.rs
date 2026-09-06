@@ -298,6 +298,8 @@ pub struct SharedUi {
     pub info_entities: usize,
     // Online level sharing
     pub online_levels: Vec<rustbox_format::api::LevelMeta>,
+    /// Server-reported total for the current query; mirrors `MakerUi`.
+    pub online_total: u64,
     /// Generated online previews keyed by server id.
     pub online_previews: HashMap<u64, crate::maker::thumbnail::ThumbPreview>,
     /// Online previews currently being fetched/generated.
@@ -418,6 +420,7 @@ impl Default for SharedUi {
             info_blocks: 0,
             info_entities: 0,
             online_levels: Vec::new(),
+            online_total: 0,
             online_previews: HashMap::new(),
             online_preview_pending: Vec::new(),
             online_query: String::new(),
@@ -634,6 +637,7 @@ fn sync_shared_ui(
         } else if ui.online_levels != m.online_levels {
             ui.online_levels = sort_online(&m.online_levels, m.online_sort, m.online_shelf);
         }
+        ui.online_total = m.online_total;
         let previews_len_changed = ui.online_previews.len() != m.online_previews.len();
         let pending_changed = ui.online_preview_pending != m.online_preview_pending;
         if previews_len_changed || pending_changed {
@@ -981,6 +985,7 @@ fn process_ui_actions(
                     m.browse_confirm_delete = None;
                     let query = m.online_query.clone();
                     m.online_loading = true;
+                    m.online_last_offset = 0;
                     m.online_pending.push(OnlineRequest::List {
                         query,
                         limit: 50,
@@ -995,12 +1000,29 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     let query = m.online_query.clone();
                     m.online_loading = true;
+                    m.online_last_offset = 0;
                     m.online_pending.push(OnlineRequest::List {
                         query,
                         limit: 50,
                         offset: 0,
                     });
                     m.set_status("Loading online levels...");
+                }
+            }
+            UiAction::OnlineLoadMore => {
+                if let Some(ref mut m) = maker_ui {
+                    let offset = m.online_levels.len() as u64;
+                    if offset < m.online_total && !m.online_loading {
+                        let query = m.online_query.clone();
+                        m.online_loading = true;
+                        m.online_last_offset = offset;
+                        m.online_pending.push(OnlineRequest::List {
+                            query,
+                            limit: 50,
+                            offset,
+                        });
+                        m.set_status("Loading more levels...");
+                    }
                 }
             }
             UiAction::OnlineSelect(id) => {
@@ -1126,6 +1148,7 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     m.online_query.clear();
                     m.online_loading = true;
+                    m.online_last_offset = 0;
                     m.online_pending.push(OnlineRequest::List {
                         query: String::new(),
                         limit: 50,
@@ -1143,6 +1166,7 @@ fn process_ui_actions(
                 if let Some(ref mut m) = maker_ui {
                     let query = m.online_query.clone();
                     m.online_loading = true;
+                    m.online_last_offset = 0;
                     m.online_pending.push(OnlineRequest::List {
                         query,
                         limit: 50,

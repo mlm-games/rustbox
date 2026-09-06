@@ -55,7 +55,7 @@ use worker::{
 use rustbox_format::api::{
     ApiError, LevelListResponse, LevelMeta, MeResponse, UploadMetadata, UploadResponse,
 };
-use rustbox_format::file::{decode_level, validate_level};
+use rustbox_format::file::{decode_level, encode_level, validate_level};
 use rustbox_format::{API_VERSION, MAX_TAGS, MAX_UPLOAD_BYTES};
 
 const DB: &str = "DB";
@@ -521,21 +521,42 @@ async fn handle_my_levels(req: Request, ctx: RouteContext<()>) -> Result<Respons
             let db = ctx.env.d1(DB)?;
             let caller = extract_caller(&req)?;
             ensure_owner_and_device(&db, &caller, Utc::now().timestamp()).await?;
+            let query = query_params(&req);
+            let limit = query
+                .get("limit")
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(50)
+                .clamp(1, LIST_LIMIT_MAX);
+            let offset = query
+                .get("offset")
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
             let rows = db
                 .prepare(
                     "SELECT * FROM levels WHERE owner_id = ? AND status != 'deleted' \
-                     ORDER BY created_at DESC",
+                     ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 )
-                .bind(&[JsValue::from_str(&caller.owner_id)])?
+                .bind(&[
+                    JsValue::from_str(&caller.owner_id),
+                    JsValue::from(limit as f64),
+                    JsValue::from(offset as f64),
+                ])?
                 .all()
                 .await?
                 .results::<LevelRow>()?;
-            let total = rows.len() as u64;
+            let total = db
+                .prepare(
+                    "SELECT COUNT(*) AS n FROM levels WHERE owner_id = ? AND status != 'deleted'",
+                )
+                .bind(&[JsValue::from_str(&caller.owner_id)])?
+                .first::<i64>(Some("n"))
+                .await?
+                .unwrap_or(0);
             json_ok(
                 &ctx.env,
                 &LevelListResponse {
                     levels: rows.into_iter().map(LevelRow::into_meta).collect(),
-                    total,
+                    total: total.max(0) as u64,
                 },
                 200,
             )
@@ -553,20 +574,26 @@ async fn list_levels(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         &ctx.env,
         async {
             let db = ctx.env.d1(DB)?;
-            let q = req
-                .headers()
-                .get("X-Query")
-                .ok()
-                .flatten()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_lowercase());
             let query = query_params(&req);
+            let q = query
+                .get("q")
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_lowercase())
+                .or_else(|| {
+                    req.headers()
+                        .get("X-Query")
+                        .ok()
+                        .flatten()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_lowercase())
+                });
             let limit = LIST_LIMIT_MAX.min(
                 query
                     .get("limit")
                     .and_then(|v| v.parse::<u64>().ok())
                     .unwrap_or(50),
             );
+            let limit = limit.clamp(1, LIST_LIMIT_MAX);
             let offset = query
                 .get("offset")
                 .and_then(|v| v.parse::<u64>().ok())
@@ -682,10 +709,11 @@ async fn get_level_data(req: Request, ctx: RouteContext<()>) -> Result<Response>
             let count = query_params(&req).get("count").is_some_and(|v| v == "1");
             if count {
                 let _ = db
-                .prepare("UPDATE levels SET plays = plays + 1 WHERE id = ?")
-                .bind(&[JsValue::from(id as f64)])?
-                .run()
-                .await;
+                    .prepare("UPDATE levels SET plays = plays + 1 WHERE id = ?")
+                    .bind(&[JsValue::from(id as f64)])?
+                    .run()
+                    .await;
+            }
             bytes_ok(&ctx.env, bytes)
         }
         .await,
@@ -723,6 +751,9 @@ async fn upload_level(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
             if meta.description.chars().count() > 1_024 {
                 return Err(ApiFailure::bad("description too long"));
             }
+            if meta.game_version.chars().count() > 64 {
+                return Err(ApiFailure::bad("game version too long"));
+            }
             if meta.tags.len() > MAX_TAGS || meta.tags.iter().any(|t| t.is_empty() || t.len() > 24)
             {
                 return Err(ApiFailure::bad("too many or invalid tags"));
@@ -738,16 +769,35 @@ async fn upload_level(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
                 )));
             }
 
-            // Verify the payload actually decodes and is structurally valid so
-            // the bucket never fills with junk.
-            let level = decode_level(&level_bytes)?;
+            let mut level = decode_level(&level_bytes)?;
             validate_level(&level)?;
-            // Metadata must match the payload: otherwise the listing can say
-            // one thing while the level plays another.
+
             if meta.name != level.name || meta.description != level.description {
                 return Err(ApiFailure::bad(
                     "metadata name/description must match the level payload",
                 ));
+            }
+            let payload_tags: Vec<&str> =
+                level.tags.iter().map(|t| t.label()).collect();
+            if meta.tags.len() != payload_tags.len()
+                || meta
+                    .tags
+                    .iter()
+                    .any(|t| !payload_tags.iter().any(|p| p == t))
+            {
+                return Err(ApiFailure::bad(
+                    "metadata tags must match the level payload",
+                ));
+            }
+            level.is_verified = false;
+            level.author_time = None;
+            level.record_ms = None;
+            let level_bytes = encode_level(&level)
+                .map_err(|e| ApiFailure::bad(format!("level re-encode failed: {e}")))?;
+            if level_bytes.is_empty() || level_bytes.len() > MAX_UPLOAD_BYTES {
+                return Err(ApiFailure::bad(format!(
+                    "level size must be 1..={MAX_UPLOAD_BYTES} bytes"
+                )));
             }
 
             let sha = hex::encode(sha2::Sha256::digest(&level_bytes));
@@ -865,11 +915,8 @@ async fn report_level(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     finish(
         &ctx.env,
         async {
-            // Require creator identity (same as upload/delete): IP-only rate
-            // limits allow fraud via rotation with no per-owner uniqueness.
-            let _caller = extract_caller(&req).map_err(|_| {
-                ApiFailure::new(401, "missing or invalid creator key")
-            })?;
+            let caller = extract_caller(&req)
+                .map_err(|_| ApiFailure::new(401, "missing or invalid creator key"))?;
             let ip = client_ip(&req);
             check_rate(&ctx.env, "report", &ip, GENERAL_PER_WINDOW).await?;
             let db = ctx.env.d1(DB)?;
@@ -881,10 +928,31 @@ async fn report_level(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             if row_by_id(&db, id).await?.is_none() {
                 return Err(ApiFailure::not_found("level not found"));
             }
-            db.prepare("UPDATE levels SET reports = reports + 1 WHERE id = ?")
-                .bind(&[JsValue::from(id as f64)])?
+            let already = db
+                .prepare("SELECT 1 AS one FROM level_reports WHERE level_id = ? AND owner_id = ?")
+                .bind(&[
+                    JsValue::from(id as f64),
+                    JsValue::from_str(&caller.owner_id),
+                ])?
+                .first::<i64>(Some("one"))
+                .await?
+                .is_some();
+            if !already {
+                db.prepare(
+                    "INSERT INTO level_reports (level_id, owner_id, created_at) VALUES (?, ?, ?)",
+                )
+                .bind(&[
+                    JsValue::from(id as f64),
+                    JsValue::from_str(&caller.owner_id),
+                    JsValue::from(Utc::now().timestamp() as f64),
+                ])?
                 .run()
                 .await?;
+                db.prepare("UPDATE levels SET reports = reports + 1 WHERE id = ?")
+                    .bind(&[JsValue::from(id as f64)])?
+                    .run()
+                    .await?;
+            }
             empty_ok(&ctx.env, 204)
         }
         .await,
@@ -895,9 +963,8 @@ async fn like_level(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     finish(
         &ctx.env,
         async {
-            let _caller = extract_caller(&req).map_err(|_| {
-                ApiFailure::new(401, "missing or invalid creator key")
-            })?;
+            let caller = extract_caller(&req)
+                .map_err(|_| ApiFailure::new(401, "missing or invalid creator key"))?;
             let ip = client_ip(&req);
             check_rate(&ctx.env, "like", &ip, GENERAL_PER_WINDOW).await?;
             let db = ctx.env.d1(DB)?;
@@ -909,10 +976,31 @@ async fn like_level(req: Request, ctx: RouteContext<()>) -> Result<Response> {
             if row_by_id(&db, id).await?.is_none() {
                 return Err(ApiFailure::not_found("level not found"));
             }
-            db.prepare("UPDATE levels SET likes = likes + 1 WHERE id = ?")
-                .bind(&[JsValue::from(id as f64)])?
+            let already = db
+                .prepare("SELECT 1 AS one FROM level_likes WHERE level_id = ? AND owner_id = ?")
+                .bind(&[
+                    JsValue::from(id as f64),
+                    JsValue::from_str(&caller.owner_id),
+                ])?
+                .first::<i64>(Some("one"))
+                .await?
+                .is_some();
+            if !already {
+                db.prepare(
+                    "INSERT INTO level_likes (level_id, owner_id, created_at) VALUES (?, ?, ?)",
+                )
+                .bind(&[
+                    JsValue::from(id as f64),
+                    JsValue::from_str(&caller.owner_id),
+                    JsValue::from(Utc::now().timestamp() as f64),
+                ])?
                 .run()
                 .await?;
+                db.prepare("UPDATE levels SET likes = likes + 1 WHERE id = ?")
+                    .bind(&[JsValue::from(id as f64)])?
+                    .run()
+                    .await?;
+            }
             empty_ok(&ctx.env, 204)
         }
         .await,

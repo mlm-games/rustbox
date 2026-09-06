@@ -51,11 +51,15 @@ fn collection_key(name: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
+    let mut rand_bytes = [0u8; 4];
+    getrandom::fill(&mut rand_bytes).ok();
+    let rand = u32::from_le_bytes(rand_bytes);
     format!(
-        "{COLLECTION_PREFIX}{}_{}_{}",
+        "{COLLECTION_PREFIX}{}_{}_{}_{:08x}",
         safe,
         nanos,
-        std::process::id()
+        std::process::id(),
+        rand,
     )
 }
 
@@ -107,7 +111,8 @@ impl LevelStorage {
 }
 
 fn sanitize_key(key: &str) -> String {
-    key.chars()
+    let base: String = key
+        .chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '_' || c == '-' {
                 c
@@ -115,7 +120,16 @@ fn sanitize_key(key: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+    if base == key && !base.is_empty() {
+        return base;
+    }
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    let stem = base.trim_matches('_');
+    let stem = if stem.is_empty() { "slot" } else { stem };
+    format!("{}_{:016x}", stem, h.finish())
 }
 
 fn levels_dir() -> std::path::PathBuf {
@@ -284,7 +298,7 @@ pub fn save_level(
     level: &mut LevelDocument,
     key: &str,
 ) -> anyhow::Result<()> {
-    if key.trim_start().starts_with("__") {
+    if !key.starts_with(COLLECTION_PREFIX) && key.trim_start().starts_with("__") {
         anyhow::bail!("name is reserved");
     }
     level.rebuild_blocks_vec();

@@ -492,7 +492,15 @@ pub fn flush_online_requests(
         ctx.config.device_id = ui.creator_device_id.clone();
     }
 
+    ctx.pending
+        .extend(ui.online_pending.drain(..).collect::<Vec<_>>());
     for req in std::mem::take(&mut ctx.pending) {
+        if let OnlineRequest::Download { play, .. } = &req
+            && *play
+        {
+            dispatch(&ctx.config, &ctx.tx, req);
+            continue;
+        }
         if let OnlineRequest::Download { meta, play } = &req {
             if let Some(data) = cache.0.get(&meta.id).cloned() {
                 if !play {
@@ -578,11 +586,25 @@ pub fn poll_online_events(
             OnlineEvent::Listed(result) => match result {
                 Ok(resp) => {
                     ui.online_loading = false;
-                    ui.online_levels = resp.levels;
+                    ui.online_total = resp.total;
+                    if ui.online_last_offset == 0 {
+                        ui.online_levels = resp.levels;
+                    } else {
+                        for m in resp.levels {
+                            if !ui.online_levels.iter().any(|x| x.id == m.id) {
+                                ui.online_levels.push(m);
+                            }
+                        }
+                    }
                     listing.0 = ui.online_levels.clone();
                     ui.online_confirm_delete = None;
                     super::ui_bridge::reconcile_online_nav(&mut ui);
-                    ui.set_status(format!("{} levels online", listing.0.len()));
+                    let shown = listing.0.len() as u64;
+                    ui.set_status(if shown < resp.total {
+                        format!("Showing {shown} of {} levels online", resp.total)
+                    } else {
+                        format!("{} levels online", resp.total)
+                    });
                 }
                 Err(e) => {
                     ui.online_loading = false;
@@ -593,6 +615,8 @@ pub fn poll_online_events(
                 Ok(meta) => {
                     ui.online_loading = false;
                     ui.online_levels = vec![meta];
+                    ui.online_total = 1;
+                    ui.online_last_offset = 0;
                     ui.online_selected = Some(id);
                     ui.online_confirm_delete = None;
                     super::ui_bridge::reconcile_online_nav(&mut ui);
@@ -617,6 +641,12 @@ pub fn poll_online_events(
 
                     ui.online_preview_pending.retain(|id| *id != meta.id);
                     ui.online_previews.insert(meta.id, preview);
+                    const MAX_CACHED_LEVELS: usize = 32;
+                    if cache.0.len() >= MAX_CACHED_LEVELS && !cache.0.contains_key(&meta.id) {
+                        if let Some(old) = cache.0.keys().next().copied() {
+                            cache.0.remove(&old);
+                        }
+                    }
                     cache.0.insert(meta.id, data.clone());
                     touch_online_preview_lru(&mut ui, meta.id);
                     apply_download(
@@ -679,11 +709,13 @@ pub fn poll_online_events(
             OnlineEvent::MyLevels(result) => match result {
                 Ok(resp) => {
                     ui.online_levels = resp.levels;
+                    ui.online_total = resp.total;
+                    ui.online_last_offset = 0;
                     listing.0 = ui.online_levels.clone();
                     ui.online_loading = false;
                     ui.online_confirm_delete = None;
                     super::ui_bridge::reconcile_online_nav(&mut ui);
-                    ui.set_status(format!("{} of your levels online", listing.0.len()));
+                    ui.set_status(format!("{} of your levels online", resp.total));
                 }
                 Err(e) => {
                     ui.online_loading = false;

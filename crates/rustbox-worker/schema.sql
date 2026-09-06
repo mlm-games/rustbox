@@ -57,3 +57,18 @@ CREATE TABLE IF NOT EXISTS upload_events (
 
 CREATE INDEX IF NOT EXISTS idx_upload_events_owner_time ON upload_events (owner_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_upload_events_ip_time ON upload_events (ip_bucket, created_at);
+
+-- Per-owner like/report dedup: one vote per creator identity per level.
+CREATE TABLE IF NOT EXISTS level_likes (
+    level_id   INTEGER NOT NULL,
+    owner_id   TEXT    NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (level_id, owner_id)
+);
+
+CREATE TABLE IF NOT EXISTS level_reports (
+    level_id   INTEGER NOT NULL,
+    owner_id   TEXT    NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (level_id, owner_id)
+);

@@ -435,7 +435,8 @@ fn place_cmd_for_cell_with_rot(
     })
 }
 
-fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {    level
+fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {
+    level
         .get_block(cell)
         .cloned()
         .map(|previous| EditCommand::Remove {
@@ -459,11 +460,7 @@ fn selection_anchor_cell(cursor: &EditorCursor) -> Option<IVec3> {
 /// Apply freehand cmds to the level now but defer the undo entry until the
 /// stroke ends (button release flushes one `Batch`). Keeps long drags to a
 /// single undo press instead of one per frame.
-fn push_stroke(
-    level: &mut LevelDocument,
-    box_start: &mut BoxFillStart,
-    cmds: Vec<EditCommand>,
-) {
+fn push_stroke(level: &mut LevelDocument, box_start: &mut BoxFillStart, cmds: Vec<EditCommand>) {
     let stroke = &mut box_start.stroke;
     if cmds.is_empty() {
         return;
@@ -577,10 +574,12 @@ fn rotate_clipboard_yaw(yaw: &mut f32) {
 
 fn transformed_cell(offset: IVec3, pivot: IVec3, yaw: f32) -> IVec3 {
     let mut p = offset;
+    // Must match `rotate_dir` / Quat Y+90° (used for `data.rot += yaw/90`):
+    // +90° maps (x,z) -> (z,-x).
     match yaw as i32 % 360 {
-        90 => p = IVec3::new(-p.z, p.y, p.x),
+        90 => p = IVec3::new(p.z, p.y, -p.x),
         180 => p = IVec3::new(-p.x, p.y, -p.z),
-        270 => p = IVec3::new(p.z, p.y, -p.x),
+        270 => p = IVec3::new(-p.z, p.y, p.x),
         _ => {}
     }
     pivot + p
@@ -594,6 +593,7 @@ fn paste_clipboard(
     clipboard: &EditorClipboard,
     target: IVec3,
     yaw: f32,
+    limits: &limits::LevelLimits,
 ) -> usize {
     if clipboard.is_empty() {
         return 0;
@@ -625,7 +625,12 @@ fn paste_clipboard(
     for item in &clipboard.entities {
         let pos = transformed_cell(item.offset, target, yaw);
 
-        // Honor stacking rules when pasting into a cell.
+        if pos.x.abs() > 512 || pos.y.abs() > 512 || pos.z.abs() > 512 {
+            continue;
+        }
+        if level.boundary_solid(pos) {
+            continue;
+        }
         if !level.can_place_entity_at(pos, item.data.kind) {
             continue;
         }
@@ -647,13 +652,37 @@ fn paste_clipboard(
         entities.push(entity);
     }
 
-    let count = blocks.len() + entities.len();
-    if count == 0 {
+    if blocks.is_empty() && entities.is_empty() {
+        return 0;
+    }
+
+    // Enforce level budgets on paste (single-place paths already do): trim
+    // blocks to genuinely-new cells within budget, entities to budget.
+    let net_new_blocks = blocks.iter().filter(|(_, _, prev)| prev.is_none()).count() as u32;
+    let block_room = (limits.max_blocks as u32).saturating_sub(level.map.len() as u32);
+    if net_new_blocks > block_room {
+        let mut keep = block_room as usize;
+        let mut trimmed: Vec<(IVec3, BlockData, Option<BlockData>)> = Vec::new();
+        for (pos, data, prev) in blocks {
+            if prev.is_none() {
+                if keep == 0 {
+                    continue;
+                }
+                keep -= 1;
+            }
+            trimmed.push((pos, data, prev));
+        }
+        blocks = trimmed;
+    }
+    let entity_room = (limits.max_entities as usize).saturating_sub(level.data.entities.len());
+    entities.truncate(entity_room);
+    if blocks.is_empty() && entities.is_empty() {
         return 0;
     }
 
     let pasted_blocks: Vec<IVec3> = blocks.iter().map(|(pos, _, _)| *pos).collect();
     let pasted_entities: Vec<_> = entities.iter().map(|entity| entity.id).collect();
+    let count = pasted_blocks.len() + pasted_entities.len();
 
     history.apply(level, EditCommand::PasteSelection { blocks, entities });
 
@@ -688,8 +717,17 @@ pub fn update_paste_preview(
     mut history: ResMut<CommandHistory>,
     mut ui: ResMut<MakerUi>,
     mut box_select: ResMut<SelectionBoxStart>,
+    limits: Res<limits::LevelLimits>,
 ) {
     if !preview.active {
+        return;
+    }
+
+    // Cancel works even with the pointer over UI (keyboard intent).
+    if keys.just_pressed(KeyCode::Escape) {
+        preview.reset();
+        box_select.start = None;
+        ui.set_status("Paste preview cancelled");
         return;
     }
 
@@ -730,6 +768,7 @@ pub fn update_paste_preview(
             &preview.clipboard,
             preview.current_pivot,
             preview.yaw,
+            &limits,
         );
 
         ui.set_status(format!("Pasted {count} item(s)"));
@@ -858,6 +897,7 @@ pub fn selection_hotkeys(
     mut selected_entity: ResMut<SelectedEntity>,
     mut ui: ResMut<MakerUi>,
     mut preview: ResMut<PastePreview>,
+    mut box_start: ResMut<BoxFillStart>,
 ) {
     if capture.ui_wants_keyboard {
         return;
@@ -873,6 +913,7 @@ pub fn selection_hotkeys(
     if keys.just_pressed(KeyCode::Escape) {
         selection.clear();
         box_select.start = None;
+        box_start.start = None;
         selected_entity.0 = None;
         ui.set_status("Selection cleared");
         return;
@@ -1014,11 +1055,87 @@ pub fn selection_hotkeys(
     }
 }
 
+/// Drop per-level editor transients when the level is replaced (load,
+/// download, import, new): a mid-stroke paint, box-fill corner, selection
+/// and active track must never leak into the fresh level. Runs off the
+/// `generation` bump in `replace_data`/`seed_default`.
+pub fn clear_transients_on_replace(
+    level: Res<LevelDocument>,
+    mode: Res<MakerMode>,
+    tab: Res<BrushTab>,
+    mut box_start: ResMut<BoxFillStart>,
+    mut selection: ResMut<SelectionSet>,
+    mut selected_entity: ResMut<SelectedEntity>,
+    mut active: ResMut<ActiveTrack>,
+    mut last_gen: Local<u64>,
+    mut last_mode: Local<MakerMode>,
+    mut last_tab: Local<BrushTab>,
+) {
+    // Skip the very first run: `Default` seeds generation 1 at startup and
+    // there is nothing stale to clear.
+    if *last_gen == 0 {
+        *last_gen = level.generation;
+        *last_mode = *mode;
+        *last_tab = *tab;
+        return;
+    }
+    if *last_gen != level.generation {
+        *last_gen = level.generation;
+        *box_start = BoxFillStart::default();
+        selection.clear();
+        selected_entity.0 = None;
+        active.0 = None;
+    }
+    // Box-fill first corner latches across mode/tab switches: a stale corner
+    // fills from a forgotten cell. Drag state is meaningless across modes.
+    if *last_mode != *mode || *last_tab != *tab {
+        *last_mode = *mode;
+        *last_tab = *tab;
+        *box_start = BoxFillStart::default();
+    }
+}
+
+/// Prune dangling editor references after undo/redo/delete: removed entity
+/// ids linger in the multi-select (inflating counts) and a removed track id
+/// lingers in `ActiveTrack` (later clicks push no-op `AddTrackPoint`s).
+pub fn validate_editor_refs(
+    level: &LevelDocument,
+    selection: &mut SelectionSet,
+    selected_entity: &mut SelectedEntity,
+    active: &mut ActiveTrack,
+) {
+    selection
+        .entities
+        .retain(|id| level.entity_by_id(*id).is_some());
+    if selected_entity
+        .0
+        .is_some_and(|id| level.entity_by_id(id).is_none())
+    {
+        selected_entity.0 = None;
+    }
+    if active.0.is_some_and(|id| level.track(id).is_none()) {
+        active.0 = None;
+    }
+}
+
+/// System wrapper so UI-driven undo/redo/deletes get the same pruning.
+pub fn validate_editor_refs_system(
+    level: Res<LevelDocument>,
+    mut selection: ResMut<SelectionSet>,
+    mut selected_entity: ResMut<SelectedEntity>,
+    mut active: ResMut<ActiveTrack>,
+) {
+    validate_editor_refs(&level, &mut selection, &mut selected_entity, &mut active);
+}
+
 pub fn undo_redo_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     capture: Res<InputCapture>,
     mut history: ResMut<CommandHistory>,
     mut level: ResMut<LevelDocument>,
+    mut selection: ResMut<SelectionSet>,
+    mut selected_entity: ResMut<SelectedEntity>,
+    mut active: ResMut<ActiveTrack>,
 ) {
     if capture.ui_wants_keyboard {
         return;
@@ -1026,9 +1143,11 @@ pub fn undo_redo_hotkeys(
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     if ctrl && keys.just_pressed(KeyCode::KeyZ) {
         history.undo(&mut level);
+        validate_editor_refs(&level, &mut selection, &mut selected_entity, &mut active);
     }
     if ctrl && keys.just_pressed(KeyCode::KeyY) {
         history.redo(&mut level);
+        validate_editor_refs(&level, &mut selection, &mut selected_entity, &mut active);
     }
 }
 
@@ -1080,6 +1199,7 @@ pub fn update_placement_preview(
     assets: Option<Res<MakerAssets>>,
     level: Res<LevelDocument>,
     limits: Res<limits::LevelLimits>,
+    paste: Res<PastePreview>,
     mut preview_q: Query<
         (
             &mut Transform,
@@ -1093,6 +1213,11 @@ pub fn update_placement_preview(
     let Ok((mut tr, mut vis, mut mesh, mut mat)) = preview_q.single_mut() else {
         return;
     };
+    // The paste ghost owns the cursor while a paste preview is active.
+    if paste.active {
+        *vis = Visibility::Hidden;
+        return;
+    }
     if *tab == BrushTab::Tracks {
         *vis = Visibility::Hidden;
         return;
@@ -1109,7 +1234,16 @@ pub fn update_placement_preview(
         *vis = Visibility::Hidden;
         return;
     };
-    if let Some(handle) = assets.shape_meshes.get(&brush.shape) {
+    // Show the normalized shape `build_block_data` will actually place
+    // (thin kinds force `Thin`, water forces `Full`), not the raw brush.
+    let shown_shape = if brush.kind == BlockKind::Water {
+        BlockShape::Full
+    } else if brush.kind.is_thin() {
+        BlockShape::Thin
+    } else {
+        brush.shape
+    };
+    if let Some(handle) = assets.shape_meshes.get(&shown_shape) {
         *mesh = Mesh3d(handle.clone());
     }
     let is_boundary = level.boundary_solid(place_cell);
@@ -1225,14 +1359,15 @@ pub fn update_preview_and_edit(
                             let vol = (max.x - min.x + 1) as u64
                                 * (max.y - min.y + 1) as u64
                                 * (max.z - min.z + 1) as u64;
-                            let budget = (limits.max_blocks as u64)
-                                .saturating_sub(level.map.len() as u64)
-                                + 1;
-                            if vol > budget.max(1) && vol > 1 {
+                            if vol > 1_000_000 {
                                 return;
                             }
+                            let room =
+                                (limits.max_blocks as u32).saturating_sub(level.map.len() as u32);
                             let mut cells = Vec::new();
-                            for x in min.x..=max.x {
+                            let mut new_count: u32 = 0;
+                            let mut over_budget = false;
+                            'scan: for x in min.x..=max.x {
                                 for y in min.y..=max.y {
                                     for z in min.z..=max.z {
                                         let c = IVec3::new(x, y, z);
@@ -1247,14 +1382,21 @@ pub fn update_preview_and_edit(
                                                 )
                                         });
                                         if !same {
+                                            if prev.is_none() {
+                                                new_count += 1;
+                                                if new_count > room {
+                                                    over_budget = true;
+                                                    break 'scan;
+                                                }
+                                            }
                                             cells.push((c, prev));
                                         }
                                     }
                                 }
                             }
-                            let net_new =
-                                cells.iter().filter(|(_, prev)| prev.is_none()).count() as u32;
-                            if !cells.is_empty()
+                            let net_new = new_count;
+                            if !over_budget
+                                && !cells.is_empty()
                                 && (level.map.len() as u32) + net_new <= limits.max_blocks
                             {
                                 history.apply(
@@ -1366,7 +1508,7 @@ pub fn update_preview_and_edit(
             BrushTab::Tracks => {
                 if let Some(id) = level.track_at_cell(place_cell) {
                     active.0 = Some(id);
-                } else if let Some(id) = active.0 {
+                } else if let Some(id) = active.0.filter(|id| level.track(*id).is_some()) {
                     let last = level.track(id).and_then(|t| t.points.last().copied());
                     if last != Some(place_cell.to_array()) {
                         let index = level.track(id).map(|t| t.points.len()).unwrap_or(0);
@@ -1415,7 +1557,8 @@ pub fn update_preview_and_edit(
                 if len > 0 {
                     if len <= 1 {
                         if let Some(track) = level.track(id).cloned() {
-                            history.apply(&mut level, EditCommand::DeleteTrack { track });
+                            let detached = super::commands::detached_for(&level, id);
+                            history.apply(&mut level, EditCommand::DeleteTrack { track, detached });
                         }
                         active.0 = None;
                     } else if let Some(cell) =
@@ -1524,6 +1667,7 @@ pub fn delete_selected_entity(
     keys: Res<ButtonInput<KeyCode>>,
     mode: Res<MakerMode>,
     mut sel_ent: ResMut<SelectedEntity>,
+    mut selection: ResMut<SelectionSet>,
     mut level: ResMut<LevelDocument>,
     mut history: ResMut<CommandHistory>,
 ) {
@@ -1539,6 +1683,7 @@ pub fn delete_selected_entity(
     if let Some(entity) = level.entity_by_id(id).cloned() {
         history.apply(&mut level, EditCommand::RemoveEntity { entity });
         sel_ent.0 = None;
+        selection.entities.remove(&id);
     }
 }
 
