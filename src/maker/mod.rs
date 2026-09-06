@@ -1,7 +1,6 @@
 pub mod asset_manifest;
 pub mod block;
 pub mod block_asset_manifest;
-pub mod palette;
 pub mod camera;
 pub mod campaign;
 pub mod catalog;
@@ -19,6 +18,7 @@ pub mod level;
 pub mod limits;
 pub mod mode;
 pub mod online;
+pub mod palette;
 pub mod player;
 pub mod rapier;
 pub mod rendering;
@@ -30,7 +30,7 @@ pub mod ui_bridge;
 pub mod win;
 
 use bevy::prelude::*;
-use bevy_rapier3d::prelude::PhysicsSet;
+
 use std::path::PathBuf;
 
 use crate::app::{AppState, Paused};
@@ -213,26 +213,24 @@ impl Plugin for MakerPlugin {
             .add_systems(
                 FixedUpdate,
                 (
+                    entities_runtime::tick_drift_plates,
+                    entities_runtime::tick_track_followers,
+                    entities_runtime::move_prowlers,
+                    entities_runtime::carry_crate_riders,
+                    entities_runtime::rebuild_runtime_solids,
                     entities_runtime::apply_fans
                         .in_set(InteractionSet::PlayerMotion)
                         .before(player::player_controller),
                     player::player_controller.in_set(InteractionSet::PlayerMotion),
                 )
+                    .chain()
                     .run_if(in_state(AppState::InGame))
                     .run_if(not_paused)
-                    .run_if(not_blocked)
-                    .run_if(in_play),
+                    .run_if(not_blocked),
             )
             .add_systems(
                 Update,
                 (
-                    // 1. MoveWorld: tracks, drift plates, prowler patrols.
-                    entities_runtime::tick_drift_plates
-                        .in_set(InteractionSet::MoveWorld)
-                        .before(PhysicsSet::Writeback),
-                    entities_runtime::tick_track_followers.in_set(InteractionSet::MoveWorld),
-                    entities_runtime::move_prowlers.in_set(InteractionSet::MoveWorld),
-                    entities_runtime::carry_crate_riders.in_set(InteractionSet::MoveWorld),
                     interactive_blocks::sync_pulse.in_set(InteractionSet::MoveWorld),
                     entities_runtime::rebuild_runtime_solids
                         .in_set(InteractionSet::MoveWorld)

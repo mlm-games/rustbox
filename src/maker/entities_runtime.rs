@@ -1506,7 +1506,7 @@ pub fn draw_link_gizmos(mode: Res<MakerMode>, level: Res<LevelDocument>, mut giz
 }
 
 pub fn tick_drift_plates(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     _mode: Res<MakerMode>,
     mut plates: Query<
         (&mut Transform, &mut DriftPlate, Option<&mut Velocity>),
@@ -1536,7 +1536,7 @@ pub fn tick_drift_plates(
 }
 
 pub fn tick_track_followers(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     level: Res<LevelDocument>,
     _mode: Res<MakerMode>,
     mut followers: Query<(
@@ -1556,20 +1556,25 @@ pub fn tick_track_followers(
         tf.translation = track.sample(follow.distance);
         let step = tf.translation - prev;
         if let Some(mut drift) = drift {
-            drift.carry = if follow.carry_player {
-                step
+            if follow.carry_player {
+                drift.carry = step;
+                if let Some(mut vel) = vel {
+                    vel.linear = if dt > 0.0 { step / dt } else { Vec3::ZERO };
+                }
             } else {
-                Vec3::ZERO
-            };
-        }
-        if let Some(mut vel) = vel {
+                drift.carry = Vec3::ZERO;
+                if let Some(mut vel) = vel {
+                    vel.linear = Vec3::ZERO;
+                }
+            }
+        } else if let Some(mut vel) = vel {
             vel.linear = if dt > 0.0 { step / dt } else { Vec3::ZERO };
         }
     }
 }
 
 pub fn move_prowlers(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
     plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
@@ -1651,7 +1656,7 @@ pub fn move_prowlers(
 /// Dynamic (thrown/held) crates ride through Rapier friction via the platform
 /// velocity instead and are skipped here.
 pub fn carry_crate_riders(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     mode: Res<MakerMode>,
     plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
     mut crates: Query<
@@ -1840,7 +1845,7 @@ pub fn build_solids(
 /// PlayerMotion (before the controller), independent of forced-motion state
 /// (which `begin_interaction_frame` clears each frame).
 pub fn apply_fans(
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     mode: Res<MakerMode>,
     mut player_q: Query<(&Transform, &mut Player)>,
     fans: Query<(&Transform, &Fan), Without<Player>>,

@@ -7,7 +7,7 @@ use super::entities_runtime::RuntimeSolids;
 use super::entity_data::EntityDataExt;
 use super::level::LevelDocument;
 use super::mode::{InputCapture, SelectionSet};
-use super::player::{MoveState, Player};
+use super::player::{ActionState, MoveState, Player};
 
 use game_utils_bevy::screen_effects::CameraBase3d;
 
@@ -202,8 +202,15 @@ pub fn play_camera_follow(
     }
 
     if let Ok((player_tf, player, move_state)) = player_q.single() {
-        let vk = (1.0 - (-6.0 * dt).exp()).clamp(0.0, 1.0);
-        rig.lead_vel = rig.lead_vel.lerp(player.velocity, vk);
+        // Course-style: scripted motion (launch pads, cannons, slams) must not
+        // yank the frame. Freeze the lead while scripted, decay it instead.
+        let scripted = player.launch > 0.0 || player.slamming;
+        if scripted {
+            rig.lead_vel *= (1.0 - (1.0 - (-3.0 * dt).exp()).clamp(0.0, 1.0));
+        } else {
+            let vk = (1.0 - (-6.0 * dt).exp()).clamp(0.0, 1.0);
+            rig.lead_vel = rig.lead_vel.lerp(player.velocity, vk);
+        }
         let flat_lead = Vec3::new(rig.lead_vel.x, 0.0, rig.lead_vel.z).clamp_length_max(6.0);
         let look_ahead = flat_lead * 0.12;
         let vertical_bias = Vec3::Y * (rig.lead_vel.y * 0.02).clamp(-0.25, 0.35);
@@ -214,10 +221,15 @@ pub fn play_camera_follow(
         rig.focus.z += (target.z - rig.focus.z) * kh;
         rig.focus.y += (target.y - rig.focus.y) * kv;
 
+        let running = move_state
+            .map(|m| m.action == ActionState::Run)
+            .unwrap_or(player.on_ground);
         if !looking
             && rig.auto_yaw_strength > 0.0
-            && rig.since_manual_look > 1.1
+            && rig.since_manual_look > 1.6
             && player.on_ground
+            && running
+            && !scripted
         {
             let wish = move_state.map(|m| m.wish_dir).unwrap_or(Vec3::ZERO);
             let forward_push = {

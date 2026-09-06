@@ -123,13 +123,13 @@ fn local_axis_direction(axis: usize, side: u8, rot: u8) -> IVec2 {
         (2, 1) => IVec2::new(0, 1),
         _ => IVec2::ZERO,
     };
-    // Rotate the world direction into the local frame: for rot=1 (+90deg),
-    // world +X maps to local -Z, etc.
+    // Rotate the world direction into the local frame with the same convention
+    // as `local_from_world`: for rot=1 (+90deg), world +X maps to local +Z.
     match rot % 4 {
         0 => world,
-        1 => IVec2::new(world.y, -world.x),
+        1 => IVec2::new(-world.y, world.x),
         2 => -world,
-        3 => IVec2::new(-world.y, world.x),
+        3 => IVec2::new(world.y, -world.x),
         _ => world,
     }
 }
@@ -222,8 +222,6 @@ fn vertical_overlap(lo: f32, hi: f32, flo: f32, fhi: f32) -> bool {
     hi - 0.001 > flo && lo + 0.001 < fhi
 }
 
-const LANDING_RIDE: f32 = 0.35;
-
 const STEP_HEIGHT: f32 = 0.55;
 
 fn resolve_axis(
@@ -255,8 +253,19 @@ fn resolve_axis(
     };
 
     let v = Vec3::from_array(vcenter);
-    let min = v - Vec3::from_array(he);
-    let max = v + Vec3::from_array(he);
+    let start_v = if axis == 1 && probe.is_some() {
+        Vec3::new(vcenter[0], pos.y, vcenter[2])
+    } else {
+        *pos
+    };
+    let he_v = Vec3::from_array(he);
+    let swept_min = (start_v - he_v).min(v - he_v);
+    let swept_max = (start_v + he_v).max(v + he_v);
+    let start_feet = pos.y - he_v.y;
+    let start_head = pos.y + he_v.y;
+
+    let min = swept_min;
+    let max = swept_max;
 
     for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
         for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
@@ -325,11 +334,10 @@ fn resolve_axis(
                             _ => true,
                         };
                         let feet = p[1] - he[1];
-                        let prev_feet = feet - delta;
-                        const RIDE: f32 = LANDING_RIDE;
                         if column_solid
                             && feet <= top + 0.001
-                            && (prev_feet >= top - 0.001 || prev_feet >= top - RIDE)
+                            && start_feet >= top - 0.35
+                            && start_head >= top - 0.001
                         {
                             p[1] = top + he[1];
                             collided = true;
@@ -346,9 +354,8 @@ fn resolve_axis(
                             _ => Some(cell.y as f32),
                         };
                         let head = p[1] + he[1];
-                        let prev_head = head - delta;
                         if let Some(bottom) = bottom
-                            && bottom >= prev_head - 0.001
+                            && bottom >= start_head - 0.001
                             && head >= bottom - 0.001
                         {
                             p[1] = bottom - he[1];
@@ -377,7 +384,8 @@ fn resolve_axis(
                     }
                     if let Some(b) = block.filter(|b| level.kind_is_solid(b.kind))
                         && local_column_solid_at(b, p[0], p[2])
-                        && vlo >= surface_top_height(b, p[0], p[2]) - LANDING_RIDE
+                        && vlo >= surface_top_height(b, p[0], p[2]) - 0.02
+                        && surface_top_height(b, p[0], p[2]) - start_feet <= STEP_HEIGHT + 0.02
                     {
                         continue;
                     }
@@ -471,25 +479,20 @@ fn resolve_axis(
             // Vertical: shape like the block solver - snap to the top surface
             if delta < 0.0 {
                 let feet = p[1] - he[1];
-                let prev_feet = feet - delta;
                 let (sx, sz) = if let Some([px, pz]) = probe {
                     (px, pz)
                 } else {
                     (p[0], p[2])
                 };
                 let top = wedge_top_height(solid, sx, sz).unwrap_or(bmax[1]);
-                let ride = solid.shape.is_wedge();
-                if feet <= top + 0.001
-                    && (prev_feet >= top - 0.001 || (ride && prev_feet >= top - LANDING_RIDE))
-                {
+                if feet <= top + 0.001 && start_feet >= top - 0.35 && start_head >= top - 0.001 {
                     p[1] = top + he[1];
                     collided = true;
                 }
             } else {
                 let head = p[1] + he[1];
-                let prev_head = head - delta;
                 let bottom = bmin[1];
-                if bottom >= prev_head - 0.001 && head >= bottom - 0.001 {
+                if bottom >= start_head - 0.001 && head >= bottom - 0.001 {
                     p[1] = bottom - he[1];
                     collided = true;
                 }
@@ -505,7 +508,7 @@ fn resolve_axis(
             } else {
                 bmax[1]
             };
-            if p[1] - he[1] >= ride_top - LANDING_RIDE {
+            if p[1] - he[1] >= ride_top - 0.02 && ride_top - start_feet <= STEP_HEIGHT + 0.02 {
                 continue;
             }
             // Horizontal: only push out along this axis when the leading edge
@@ -1037,12 +1040,12 @@ pub fn move_and_collide_substepped(
     extras: &[RuntimeSolid],
     ignore_one_way: bool,
 ) -> MoveResult {
-    let max_step = (he.x.min(he.z) * 0.85).max(0.15);
+    let max_step = (he.x.min(he.y).min(he.z) * 0.85).max(0.15);
     let dist = delta.length();
     if dist <= max_step {
         return move_and_collide_ex(pos, he, delta, level, extras, ignore_one_way);
     }
-    let steps = ((dist / max_step).ceil() as usize).clamp(2, 8);
+    let steps = ((dist / max_step).ceil() as usize).clamp(2, 64);
     let step_d = delta / steps as f32;
     let mut pos = pos;
     let mut acc = MoveResult {
@@ -1082,8 +1085,7 @@ pub fn move_and_collide_substepped(
 pub fn ground_height(level: &LevelDocument, wx: f32, wz: f32) -> f32 {
     let cx = wx.floor() as i32;
     let cz = wz.floor() as i32;
-    let from = wx.max(wz).max(0.0) as i32 + 8;
-    for y in ((-512 + 8)..=from).rev() {
+    for y in (-504..=520).rev() {
         let cell = IVec3::new(cx, y, cz);
         let block = level.get_block(cell);
         let solid =
