@@ -177,6 +177,14 @@ pub struct ChunkMeshInput {
     /// Base color per kind (linear). Shade is multiplied per face.
     pub kind_color: HashMap<BlockKind, [f32; 4]>,
     pub water_color: [f32; 4],
+    /// Kind×shape pairs replaced by pack models (skipped in chunk mesh, same
+    /// as the sync overlay path).
+    pub skip_overlay: std::collections::HashSet<(BlockKind, BlockShape)>,
+    /// Global water plane Y (`None` = no plane). Waterlogged or submerged
+    /// opaque cells get the submerged tint like the sync path.
+    pub water_level: Option<i32>,
+    /// Tint for submerged/waterlogged opaque faces.
+    pub submerged_tint: [f32; 4],
 }
 
 impl Default for ChunkMeshInput {
@@ -185,6 +193,9 @@ impl Default for ChunkMeshInput {
             pulse_on: true,
             kind_color: HashMap::new(),
             water_color: [0.2, 0.45, 0.85, 0.72],
+            skip_overlay: std::collections::HashSet::new(),
+            water_level: None,
+            submerged_tint: [0.55, 0.62, 0.78, 1.0],
         }
     }
 }
@@ -231,7 +242,15 @@ pub fn build_chunk_mesh(
                 if block.kind == BlockKind::Water {
                     continue; // handled below
                 }
-                if block.shape == BlockShape::Full && block.rot == 0 {
+                if input.skip_overlay.contains(&(block.kind, block.shape)) {
+                    continue;
+                }
+                // Submerged Fulls go exact so the water tint isn't lost in a
+                // merged dry rect.
+                if block.shape == BlockShape::Full
+                    && block.rot == 0
+                    && !is_submerged(cell, block, input)
+                {
                     full_cells.entry(block.kind).or_default().push(cell);
                 } else {
                     fallback.push((cell, block.clone()));
@@ -241,23 +260,39 @@ pub fn build_chunk_mesh(
     }
 
     for (kind, cells) in full_cells {
-        let color = input
+        // Filter overlay kinds that slipped in (grid predates manifest check).
+        let cells: Vec<[i32; 3]> = cells
+            .into_iter()
+            .filter(|cell| {
+                grid.get(*cell).is_none_or(|b| {
+                    !input.skip_overlay.contains(&(b.kind, b.shape))
+                })
+            })
+            .collect();
+        if cells.is_empty() {
+            continue;
+        }
+        let mut color = input
             .kind_color
             .get(&kind)
             .copied()
             .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+        let _ = &mut color;
         let mesh = out.opaque.entry(kind).or_default();
         let before = mesh.quad_count();
-        greedy_full_faces(grid, &cells, input.pulse_on, is_solid, color, mesh);
+        greedy_full_faces(grid, &cells, input, is_solid, mesh);
         out.merged_quads += mesh.quad_count() - before;
     }
 
     for (cell, block) in fallback {
-        let color = input
+        let mut color = input
             .kind_color
             .get(&block.kind)
             .copied()
             .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+        if is_submerged(cell, &block, input) {
+            color = input.submerged_tint;
+        }
         let mesh = out.opaque.entry(block.kind).or_default();
         let before = mesh.quad_count();
         push_box_faces(grid, cell, &block, input.pulse_on, is_solid, color, mesh);
@@ -348,16 +383,31 @@ fn full_face_quad(origin: [f32; 3], dir: [i32; 3]) -> [[f32; 3]; 4] {
 /// Greedy-merge Full faces: for each of the 6 dirs, for each slice
 /// perpendicular to dir, build a 16x16 occupancy mask of faces that need
 /// emitting, then expand maximal rects.
+fn is_submerged(cell: CellPos, block: &BlockData, input: &ChunkMeshInput) -> bool {
+    if block.waterlogged {
+        return true;
+    }
+    if let Some(wl) = input.water_level {
+        return cell[1] < wl;
+    }
+    false
+}
+
 fn greedy_full_faces(
     grid: &VoxelGrid,
     cells: &[[i32; 3]],
-    pulse_on: bool,
+    input: &ChunkMeshInput,
     is_solid: impl Fn(BlockKind) -> bool + Copy,
-    color: [f32; 4],
     mesh: &mut MeshData,
 ) {
     use std::collections::HashSet;
     let set: HashSet<[i32; 3]> = cells.iter().copied().collect();
+    // All greedy cells share one kind here; tint once (submerged handled
+    // per-merged-quad below via the anchor cell).
+    let kind = cells
+        .first()
+        .and_then(|c| grid.get(*c))
+        .map(|b| b.kind);
 
     for dir in DIRS {
         let mut slices: HashMap<i32, Vec<[i32; 3]>> = HashMap::new();
@@ -366,7 +416,7 @@ fn greedy_full_faces(
             let occluded = match grid.get(ncell) {
                 None => false,
                 Some(nb) => {
-                    classify(nb.kind, pulse_on) == FaceKind::Opaque
+                    classify(nb.kind, input.pulse_on) == FaceKind::Opaque
                         && is_solid(nb.kind)
                         && neighbor_occludes(nb, [-dir[0], -dir[1], -dir[2]], true)
                 }
@@ -416,7 +466,11 @@ fn greedy_full_faces(
                     }
                     let (origin, eu, ev) = merged_quad_frame(&members, dir, u, v, w, h);
                     let _ = &set;
-                    mesh.push_merged_quad(origin, eu, ev, shaded_color(color, dir));
+                    let base = kind
+                        .and_then(|k| input.kind_color.get(&k).copied())
+                        .unwrap_or([1.0, 1.0, 1.0, 1.0]);
+                    // Submerged tint follows the anchor cell of the rect.
+                    mesh.push_merged_quad(origin, eu, ev, shaded_color(base, dir));
                 }
             }
         }

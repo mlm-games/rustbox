@@ -494,6 +494,7 @@ impl Plugin for AppPlugin {
                 DevToolsPlugin,
             ))
             .add_systems(Startup, setup_camera)
+            .add_systems(Startup, apply_saved_language)
             .add_systems(
                 Update,
                 (
@@ -506,6 +507,13 @@ impl Plugin for AppPlugin {
                 )
                     .chain(),
             );
+    }
+}
+
+fn apply_saved_language(save: Res<SaveData>, mut locale: ResMut<LocaleResources>) {
+    // The app previously always booted to the first locale, ignoring the save.
+    if !locale.set_locale(&save.settings.language) {
+        locale.set_locale("en");
     }
 }
 
@@ -653,12 +661,33 @@ fn sync_shared_ui(
         ui.glimmers_collected = m.glimmers_collected;
         ui.glimmers_total = m.glimmers_total;
         ui.level_verified = m.level_verified;
-        ui.export_code = m.export_code.clone();
-        ui.import_code = m.import_code.clone();
+        // Share codes can be megabytes: fast-path the common empty case so we
+        // never compare/clone MB strings per frame.
+        if m.export_code.is_empty() {
+            if !ui.export_code.is_empty() {
+                ui.export_code.clear();
+            }
+        } else if ui.export_code != m.export_code {
+            ui.export_code = m.export_code.clone();
+        }
+        if m.import_code.is_empty() {
+            if !ui.import_code.is_empty() {
+                ui.import_code.clear();
+            }
+        } else if ui.import_code != m.import_code {
+            ui.import_code = m.import_code.clone();
+        }
         ui.export_error = m.export_error.clone();
-        ui.selected_entity_data = m.selected_entity_data.clone();
-        ui.active_track_data = m.active_track_data.clone();
-        ui.track_ids = m.track_ids.clone();
+        // Inspector + track payloads: only re-clone on selection change or
+        // level edits (per-frame clones of entity/track structs churn).
+        let sel_id = m.selected_entity_data.as_ref().map(|e| e.id);
+        let ui_sel_id = ui.selected_entity_data.as_ref().map(|e| e.id);
+        let level_touched = level.as_ref().is_some_and(|l| l.is_changed() || l.is_added());
+        if sel_id != ui_sel_id || level_touched {
+            ui.selected_entity_data = m.selected_entity_data.clone();
+            ui.active_track_data = m.active_track_data.clone();
+            ui.track_ids = m.track_ids.clone();
+        }
         ui.mirror = m.mirror;
         ui.link_channel = m.link_channel;
         ui.play_time_secs = m.play_timer;
@@ -679,22 +708,26 @@ fn sync_shared_ui(
         use crate::maker::campaign::LevelSource;
         ui.is_bundled = *s != LevelSource::Editor;
     }
-    ui.campaign_levels = crate::maker::campaign::BUNDLED_LEVELS
-        .iter()
-        .map(|b| {
-            let rec = progress
-                .as_deref()
-                .map(|p| p.record(b.id))
-                .unwrap_or_default();
-            crate::maker::campaign::CampaignLevelUi {
-                title: b.name.to_string(),
-                teaches: b.teaches.to_string(),
-                completed: rec.completed,
-                best_time: rec.best_time,
-                best_deaths: rec.best_deaths,
-            }
-        })
-        .collect();
+    ui.campaign_levels = if ui.campaign_levels.is_empty() || progress.as_ref().is_some_and(|p| p.is_changed()) {
+        crate::maker::campaign::BUNDLED_LEVELS
+            .iter()
+            .map(|b| {
+                let rec = progress
+                    .as_deref()
+                    .map(|p| p.record(b.id))
+                    .unwrap_or_default();
+                crate::maker::campaign::CampaignLevelUi {
+                    title: b.name.to_string(),
+                    teaches: b.teaches.to_string(),
+                    completed: rec.completed,
+                    best_time: rec.best_time,
+                    best_deaths: rec.best_deaths,
+                }
+            })
+            .collect()
+    } else {
+        std::mem::take(&mut ui.campaign_levels)
+    };
     if *overlay != OverlayMenu::Settings {
         let clamp01 = |v: f32, fb: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { fb };
         ui.master_vol = clamp01(save.settings.master_volume, 1.0);
@@ -712,9 +745,13 @@ fn sync_shared_ui(
     };
     ui.transition_alpha = transition.overlay_alpha;
     ui.flash_alpha = flash.amount;
-    ui.language = locale.current.clone();
+    // Translations only change when the language does: rebuilding the map per
+    // frame wastes cycles and churns the UI text cache.
+    if ui.translations.is_empty() || ui.language != locale.current {
+        ui.language = locale.current.clone();
+        ui.translations = i18n::get_current_translations(&locale);
+    }
     ui.available_languages = locale.available.clone();
-    ui.translations = i18n::get_current_translations(&locale);
     channels.master = if save.settings.master_volume.is_finite() {
         save.settings.master_volume.clamp(0.0, 1.0)
     } else {

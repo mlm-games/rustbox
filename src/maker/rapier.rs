@@ -58,10 +58,14 @@ pub struct Held;
 
 /// While a crate is held it becomes a kinematic body parked in front of the
 /// player, tracking the camera heading. Its collider is stripped while held so
-/// Rapier can't shove the player with the kinematic body.
+/// Rapier can't shove the player with the kinematic body. The target is
+/// validated against level + runtime solids: a blocked target keeps the old
+/// position instead of teleporting through walls.
 fn move_held_objects(
     rig: Res<super::camera::CameraRig>,
     player: Query<&Transform, With<Player>>,
+    level: Res<super::level::LevelDocument>,
+    solids: Res<super::entities_runtime::RuntimeSolids>,
     mut commands: Commands,
     mut held: Query<
         (Entity, &mut Transform, &mut Velocity, Option<&Collider>),
@@ -74,7 +78,24 @@ fn move_held_objects(
     let (sin, cos) = rig.yaw.sin_cos();
     let forward = Vec3::new(-sin, 0.0, -cos);
     for (e, mut tf, mut vel, col) in &mut held {
-        tf.translation = ptf.translation + forward * 1.2 - Vec3::Y * 0.15;
+        let target = ptf.translation + forward * 1.2 - Vec3::Y * 0.15;
+        let he = Vec3::splat(0.4);
+        // Far-away hold (retry/load teleported the player): drop in place
+        // instead of dragging the old crate across the level to the spawn.
+        // Blocked target (wall): also drop rather than teleport through.
+        let far = tf.translation.distance(target) > 6.0;
+        let blocked = super::collision::aabb_hits_solid(&level, target, he)
+            || super::interaction::solid_blocks(&solids, e, target, he);
+        if far || blocked {
+            commands
+                .entity(e)
+                .insert(RigidBody::Dynamic)
+                .remove::<Held>()
+                .insert(Velocity::zero())
+                .insert(Collider::cuboid(0.4, 0.4, 0.4));
+            continue;
+        }
+        tf.translation = target;
         vel.linear = Vec3::ZERO;
         vel.angular = Vec3::ZERO;
         if col.is_some() {
@@ -92,6 +113,7 @@ fn pickup_throwables(
     mode: Res<MakerMode>,
     capture: Res<InputCapture>,
     rig: Res<super::camera::CameraRig>,
+    level: Res<super::level::LevelDocument>,
     mut commands: Commands,
     player: Query<&Transform, With<Player>>,
     crates: Query<(Entity, &Transform), (With<Throwable>, Without<Held>)>,
@@ -125,12 +147,23 @@ fn pickup_throwables(
     }
 
     // Otherwise pick up the nearest crate in front of the player within reach.
+    // Requires line-of-sight: no level solid or runtime solid between player
+    // chest and crate (prevents grabbing through walls).
     let mut best: Option<(Entity, f32)> = None;
     for (e, tf) in &crates {
         let to = (tf.translation - ptf.translation).normalize_or_zero();
         let facing = forward.dot(to);
         let d = ptf.translation.distance(tf.translation);
         if d < 1.6 && facing > 0.15 && best.map_or(true, |(_, bd)| d < bd) {
+            let mid = (ptf.translation + tf.translation) * 0.5;
+            let blocked = super::collision::aabb_hits_solid(
+                &level,
+                mid,
+                Vec3::splat(0.2),
+            );
+            if blocked {
+                continue;
+            }
             best = Some((e, d));
         }
     }

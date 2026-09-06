@@ -40,6 +40,9 @@ pub struct MeshJobChannels {
     pub rx: Receiver<FinishedChunk>,
 }
 
+#[derive(Resource, Default)]
+pub struct MeshGenerations(pub std::collections::HashMap<IVec3, u64>);
+
 impl Default for MeshJobChannels {
     fn default() -> Self {
         let (tx, rx) = unbounded();
@@ -49,6 +52,7 @@ impl Default for MeshJobChannels {
 
 pub struct FinishedChunk {
     pub cpos: IVec3,
+    pub generation: u64,
     pub output: ChunkMeshOutput,
     pub kind_colors: HashMap<BlockKind, [f32; 4]>,
     pub water_color: [f32; 4],
@@ -65,6 +69,7 @@ pub fn dispatch_mesh_jobs(
     mut level: ResMut<LevelDocument>,
     assets: Option<Res<MakerAssets>>,
     channels: Res<MeshJobChannels>,
+    mut generations: ResMut<MeshGenerations>,
     flag: Res<UseAsyncMesh>,
     camera_q: Query<&Transform, With<Camera>>,
 ) {
@@ -88,7 +93,33 @@ pub fn dispatch_mesh_jobs(
     let grid = level.to_voxel_grid();
     let pulse_on = level.pulse_on;
     let theme = level.data.theme;
+    let water_level = level.data.water_level;
     let kind_colors = kind_color_table();
+    // Overlay kinds render as pack models, never chunk mesh (same skip as sync).
+    let skip_overlay: std::collections::HashSet<(
+        rustbox_format::BlockKind,
+        rustbox_format::BlockShape,
+    )> = if let Some(assets) = assets.as_ref() {
+        rustbox_format::ALL_BLOCK_KINDS
+            .iter()
+            .copied()
+            .flat_map(|kind| {
+                rustbox_format::ALL_BLOCK_SHAPES
+                    .iter()
+                    .copied()
+                    .filter(move |&shape| {
+                        kind != rustbox_format::BlockKind::Water
+                            && assets
+                                .block_manifest
+                                .entry(kind, shape)
+                                .is_some_and(|e| e.model.is_some())
+                    })
+                    .map(move |shape| (kind, shape))
+            })
+            .collect()
+    } else {
+        Default::default()
+    };
     let water_color = super::theme::theme_env(theme)
         .water
         .to_linear()
@@ -98,20 +129,27 @@ pub fn dispatch_mesh_jobs(
     let pool = AsyncComputeTaskPool::get();
     let grid_shared = std::sync::Arc::new(grid);
     for cpos in dirty {
+        let generation = generations.0.get(&cpos).copied().unwrap_or(0) + 1;
+        generations.0.insert(cpos, generation);
         let grid_clone = grid_shared.clone();
         let tx = channels.tx.clone();
         let colors = kind_colors.clone();
+        let skip = skip_overlay.clone();
         let cpos_arr = [cpos.x, cpos.y, cpos.z];
         let task = pool.spawn(async move {
             let input = ChunkMeshInput {
                 pulse_on,
                 kind_color: colors.clone(),
                 water_color,
+                skip_overlay: skip,
+                water_level,
+                submerged_tint: [0.55, 0.62, 0.78, 1.0],
             };
             let output =
                 rustbox_mesh::build_chunk_mesh(&grid_clone, cpos_arr, &input, |k| k.is_solid());
             FinishedChunk {
                 cpos,
+                generation,
                 output,
                 kind_colors: colors,
                 water_color,
@@ -154,15 +192,30 @@ fn kind_color_table() -> HashMap<BlockKind, [f32; 4]> {
 pub fn poll_mesh_jobs(
     mut commands: Commands,
     channels: Res<MeshJobChannels>,
+    generations: Res<MeshGenerations>,
+    flag: Res<UseAsyncMesh>,
+    level: Res<LevelDocument>,
     mut meshes: ResMut<Assets<Mesh>>,
     assets: Option<Res<MakerAssets>>,
     mut chunks: ResMut<super::rendering::ChunkEntities>,
     mut water_chunks: ResMut<super::rendering::WaterChunkEntities>,
 ) {
     let Some(assets) = assets else { return };
+    // Sync path owns the chunks while async is off: drain without uploading
+    // so toggling can't overwrite fresh sync rebuilds with stale tasks.
+    if !flag.0 {
+        while channels.rx.try_recv().is_ok() {}
+        return;
+    }
     while let Ok(finished) = channels.rx.try_recv() {
+        // Drop stale snapshots superseded by a re-edit in flight.
+        if generations.0.get(&finished.cpos).copied().unwrap_or(0) != finished.generation {
+            continue;
+        }
         use bevy::asset::RenderAssetUsages;
         use bevy::mesh::{Indices, PrimitiveTopology};
+        // Prune flag before the loop moves `opaque`.
+        let empty_opaque = finished.output.opaque.is_empty();
         if let Some(ents) = chunks.0.remove(&finished.cpos) {
             for e in ents {
                 commands.entity(e).despawn();
@@ -197,8 +250,15 @@ pub fn poll_mesh_jobs(
                 .id();
             spawned.push(e);
         }
+        let empty_opaque_prune = empty_opaque;
         if !spawned.is_empty() {
             chunks.0.insert(finished.cpos, spawned);
+        }
+        // Prune emptied chunks (sync `retain` equivalent): an all-erased
+        // chunk yields empty output but no new entities, so stale entries
+        // must not linger as ghost meshes.
+        if empty_opaque_prune {
+            chunks.0.remove(&finished.cpos);
         }
         if !finished.output.water.is_empty() {
             let data = &finished.output.water;

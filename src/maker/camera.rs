@@ -264,10 +264,15 @@ pub fn play_camera_follow(
         let collided = Transform::from_translation(eye).looking_at(rig.focus, Vec3::Y);
         let blocked = (collided.translation - rig.focus).length_squared()
             < (t.translation - rig.focus).length_squared() - 1e-6;
-        let rate = if blocked { 18.0 } else { 5.0 };
-        let ck = (1.0 - (-rate * dt).exp()).clamp(0.0, 1.0);
-        t.translation = t.translation.lerp(collided.translation, ck);
-        t.rotation = t.rotation.slerp(collided.rotation, ck);
+        if blocked {
+            // Snap: lerping old→safe sweeps through corner geometry.
+            t.translation = collided.translation;
+            t.rotation = collided.rotation;
+        } else {
+            let ck = (1.0 - (-5.0 * dt).exp()).clamp(0.0, 1.0);
+            t.translation = t.translation.lerp(collided.translation, ck);
+            t.rotation = t.rotation.slerp(collided.rotation, ck);
+        }
         base.translation = t.translation;
         base.rotation = t.rotation;
     }

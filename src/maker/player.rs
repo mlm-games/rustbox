@@ -27,6 +27,13 @@ pub const JUMP_SPEED: f32 = 9.0;
 
 const GROUND_STEP_MAX: f32 = 0.55;
 
+/// Single source for platform-ride tolerances (pre-carry and landing agree —
+/// previously 0.15 slack / 0.10 fresh-top / 0.55 carried drifted apart).
+const PLATE_OVER_SLACK: f32 = 0.15;
+const PLATE_SNAP: f32 = 0.35;
+const PLATE_ABOVE_CARRIED: f32 = 0.55;
+const PLATE_BELOW: f32 = 0.45;
+
 /// Small gap kept between the head and the underside while hanging, so the
 /// body hangs just below the slab instead of embedding into it.
 const HANG_SKIN: f32 = 0.02;
@@ -534,6 +541,41 @@ fn read_move_wish(keys: &ButtonInput<KeyCode>, kb_ok: bool, gamepads: &Query<&Ga
     wish
 }
 
+/// Latched edge-triggered presses sampled in `Update` and consumed in
+/// `FixedUpdate`. `ButtonInput::just_pressed` is cleared per-`Update`, so a
+/// tap on a frame with zero `FixedUpdate` runs would otherwise be lost, and
+/// on a frame with two runs it would double-latch.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct PressedLatch {
+    pub jump: bool,
+    pub crouch: bool,
+    pub interact: bool,
+    pub throw: bool,
+    pub reset: bool,
+}
+
+/// Sample edge presses in `Update` (where `just_pressed` is valid) and OR
+/// them into the latch for the next `FixedUpdate` chain.
+pub fn latch_play_presses(
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    capture: Res<InputCapture>,
+    mut latch: ResMut<PressedLatch>,
+) {
+    let kb = !capture.ui_wants_keyboard;
+    let input = read_play_input(&keys, &gamepads, kb);
+    latch.jump |= input.jump_pressed;
+    latch.crouch |= input.crouch_pressed;
+    latch.interact |= input.interact_pressed;
+    latch.throw |= input.throw_pressed;
+    latch.reset |= input.reset_pressed;
+}
+
+/// Clear the latch after the `FixedUpdate` motion chain consumed it.
+pub fn clear_pressed_latch(mut latch: ResMut<PressedLatch>) {
+    *latch = PressedLatch::default();
+}
+
 /// Single source of truth for Play-mode buttons. Keyboard respects input
 /// capture (dialogs / overlays); gamepad is always live while playing.
 #[derive(Clone, Copy, Debug)]
@@ -644,6 +686,7 @@ pub fn player_controller(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     capture: Res<InputCapture>,
+    latch: Res<PressedLatch>,
     level: Res<LevelDocument>,
     rig: Res<CameraRig>,
     solids: Res<RuntimeSolids>,
@@ -667,6 +710,13 @@ pub fn player_controller(
             transform.scale = Vec3::ONE;
         }
         let mut input = read_play_input(&keys, &gamepads, kb);
+        // Merge Update-sampled edges: `just_pressed` is per-Update, but this
+        // runs in FixedUpdate (0..N times per frame).
+        input.jump_pressed |= latch.jump;
+        input.crouch_pressed |= latch.crouch;
+        input.interact_pressed |= latch.interact;
+        input.throw_pressed |= latch.throw;
+        input.reset_pressed |= latch.reset;
         player.spawn_lock = (player.spawn_lock - dt).max(0.0);
         if player.spawn_lock > 0.0 {
             input.wish = Vec2::ZERO;
@@ -727,12 +777,12 @@ pub fn player_controller(
                 let step = plate_step(ride_drift, ride_vel, dt);
                 if step.length_squared() > 1e-10 {
                     let over = (transform.translation.x - ride_tf.translation.x).abs()
-                        < 0.7 + move_he.x + 0.15
+                        < 0.7 + move_he.x + PLATE_OVER_SLACK
                         && (transform.translation.z - ride_tf.translation.z).abs()
-                            < 0.7 + move_he.z + 0.15;
+                            < 0.7 + move_he.z + PLATE_OVER_SLACK;
                     let feet = transform.translation.y - move_he.y;
                     let top = ride_tf.translation.y + 0.12;
-                    if over && (feet - top).abs() <= 0.35 {
+                    if over && (feet - top).abs() <= PLATE_SNAP {
                         transform.translation += step;
                         player.plate_vel = if dt > 0.0 { step / dt } else { Vec3::ZERO };
                         pre_carried_plate = Some(ride_e);
@@ -1216,11 +1266,11 @@ pub fn player_controller(
             let step = plate_step(drift, pvel, dt);
             let top = dtf.translation.y + 0.12;
             let prev_top = top - step.y;
-            let over_now = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x
-                && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z;
+            let over_now = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x + PLATE_OVER_SLACK
+                && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
             let over_prev = (player.pre_move_pos.x - (dtf.translation.x - step.x)).abs()
-                < 0.7 + move_he.x
-                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs() < 0.7 + move_he.z;
+                < 0.7 + move_he.x + PLATE_OVER_SLACK
+                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
             if !(over_now || over_prev) {
                 continue;
             }
@@ -1231,11 +1281,11 @@ pub fn player_controller(
                 continue;
             }
             let above_tol = if pre_carried_plate == Some(plate_e) {
-                0.55
+                PLATE_ABOVE_CARRIED
             } else {
-                0.10
+                PLATE_SNAP
             };
-            if feet_y > top + above_tol || feet_y < top - 0.45 {
+            if feet_y > top + above_tol || feet_y < top - PLATE_BELOW {
                 continue;
             }
             if pre_carried_plate == Some(plate_e) {
@@ -1321,6 +1371,7 @@ pub fn player_controller(
             && !on_climb
             && result.wall_normal.y.abs() < 0.1
             && (result.hit_x || result.hit_z)
+            && player.velocity.y <= 0.0
         {
             // Ledge mantle: only when clearly into a wall and lip is boxy.
             // Skips slopes/thin/hang-rails via is_grabbable_lip.

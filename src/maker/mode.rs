@@ -77,13 +77,15 @@ pub struct MirrorMode(pub u8);
 /// Editor paint state: `start` is the first corner of an in-progress
 /// Shift+click box fill; `last_paint`/`last_erase` track the last cell of a
 /// hold-drag.
-#[derive(Resource, Default, Clone, Copy, Debug)]
+#[derive(Resource, Default, Clone, Debug)]
 pub struct BoxFillStart {
     pub start: Option<IVec3>,
     pub last_paint: Option<IVec3>,
     pub last_erase: Option<IVec3>,
     /// Pointer position when we last painted or erased in this stroke.
     pub last_pointer: Option<Vec2>,
+    /// Accumulated freehand stroke (single undo entry on release).
+    pub stroke: Vec<super::commands::EditCommand>,
 }
 
 /// Active link channel stamped onto newly placed orbs/gates (1-9).

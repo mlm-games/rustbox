@@ -652,7 +652,7 @@ async fn get_level(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
     )
 }
 
-async fn get_level_data(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+async fn get_level_data(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     finish(
         &ctx.env,
         async {
@@ -677,7 +677,11 @@ async fn get_level_data(_req: Request, ctx: RouteContext<()>) -> Result<Response
                 .ok_or_else(|| ApiFailure::new(500, "level data missing body"))?
                 .bytes()
                 .await?;
-            let _ = db
+            // Previews must not inflate `plays`: only count real play
+            // downloads (`?count=1`, sent when `play=true`).
+            let count = query_params(&req).get("count").is_some_and(|v| v == "1");
+            if count {
+                let _ = db
                 .prepare("UPDATE levels SET plays = plays + 1 WHERE id = ?")
                 .bind(&[JsValue::from(id as f64)])?
                 .run()
@@ -735,19 +739,30 @@ async fn upload_level(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
             }
 
             // Verify the payload actually decodes and is structurally valid so
-            // the bucket never fills with junk. `author` is server-set below.
+            // the bucket never fills with junk.
             let level = decode_level(&level_bytes)?;
             validate_level(&level)?;
+            // Metadata must match the payload: otherwise the listing can say
+            // one thing while the level plays another.
+            if meta.name != level.name || meta.description != level.description {
+                return Err(ApiFailure::bad(
+                    "metadata name/description must match the level payload",
+                ));
+            }
 
             let sha = hex::encode(sha2::Sha256::digest(&level_bytes));
 
             let db = ctx.env.d1(DB)?;
 
-            // Cheap spam guard: reject exact re-uploads (the sha256 is already
-            // in LevelMeta and validated to be an exact match on the client).
+            // Spam guard scoped per owner: the same author re-uploading (new
+            // version) is fine; squatting someone else's bytes globally is not.
+            let owner_preview = caller.as_ref().map(|c| c.owner_id.as_str()).unwrap_or("");
             let dup = db
-                .prepare("SELECT id FROM levels WHERE sha256 = ? LIMIT 1")
-                .bind(&[JsValue::from(sha.as_str())])?
+                .prepare("SELECT id FROM levels WHERE sha256 = ? AND owner_id = ? LIMIT 1")
+                .bind(&[
+                    JsValue::from(sha.as_str()),
+                    JsValue::from(owner_preview),
+                ])?
                 .first::<i64>(None)
                 .await?;
             if dup.is_some() {
@@ -782,6 +797,14 @@ async fn upload_level(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
             };
 
             let owner_id = caller.map(|c| c.owner_id).unwrap_or_default();
+            // Author comes from the validated payload, not a constant: every
+            // row previously said "alpha-tester", making author search useless.
+            let author = level.author.trim();
+            let author = if author.is_empty() {
+                "anonymous".to_string()
+            } else {
+                author.chars().take(64).collect()
+            };
             let tags_json = serde_json::to_string(&meta.tags).unwrap_or_else(|_| "[]".into());
             let row = db
                 .prepare(
@@ -792,7 +815,7 @@ async fn upload_level(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
                                size_bytes, sha256, likes, plays, status, owner_id, created_at, updated_at",
                 )
                 .bind(&[
-                    JsValue::from("alpha-tester"),
+                    JsValue::from(author.as_str()),
                     JsValue::from(meta.name.as_str()),
                     JsValue::from(meta.description.as_str()),
                     JsValue::from(tags_json.as_str()),
@@ -842,6 +865,11 @@ async fn report_level(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     finish(
         &ctx.env,
         async {
+            // Require creator identity (same as upload/delete): IP-only rate
+            // limits allow fraud via rotation with no per-owner uniqueness.
+            let _caller = extract_caller(&req).map_err(|_| {
+                ApiFailure::new(401, "missing or invalid creator key")
+            })?;
             let ip = client_ip(&req);
             check_rate(&ctx.env, "report", &ip, GENERAL_PER_WINDOW).await?;
             let db = ctx.env.d1(DB)?;
@@ -867,6 +895,9 @@ async fn like_level(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     finish(
         &ctx.env,
         async {
+            let _caller = extract_caller(&req).map_err(|_| {
+                ApiFailure::new(401, "missing or invalid creator key")
+            })?;
             let ip = client_ip(&req);
             check_rate(&ctx.env, "like", &ip, GENERAL_PER_WINDOW).await?;
             let db = ctx.env.d1(DB)?;

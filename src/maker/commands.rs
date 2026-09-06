@@ -419,6 +419,18 @@ pub fn apply_command(level: &mut LevelDocument, cmd: &EditCommand) {
     invalidate_verification(level);
 }
 
+/// Apply many commands with a single rebuild + invalidation (stroke fast path).
+pub fn apply_commands_immediate(level: &mut LevelDocument, cmds: &[EditCommand]) {
+    if cmds.is_empty() {
+        return;
+    }
+    for cmd in cmds {
+        apply_command_inner(level, cmd);
+    }
+    level.rebuild_blocks_vec();
+    invalidate_verification(level);
+}
+
 pub fn revert_command(level: &mut LevelDocument, cmd: &EditCommand) {
     revert_command_inner(level, cmd);
     level.rebuild_blocks_vec();

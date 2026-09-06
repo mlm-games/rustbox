@@ -241,7 +241,13 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
             );
         }
         OnlineRequest::Download { meta, play } => {
-            let url = format!("{base}/v1/levels/{}/data", meta.id);
+            // `count=1` only for real plays: previews share the endpoint and
+            // must not inflate the server `plays` counter.
+            let url = if play {
+                format!("{base}/v1/levels/{}/data?count=1", meta.id)
+            } else {
+                format!("{base}/v1/levels/{}/data", meta.id)
+            };
             ehttp::fetch(ehttp::Request::get(url), move |result| {
                 let event = match result {
                     Ok(resp) if resp.ok && !resp.bytes.is_empty() => {
@@ -273,15 +279,19 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
         }
         OnlineRequest::Like { id } => {
             let url = format!("{base}/v1/levels/{id}/like");
-            send_empty(ehttp::Request::post(url, Vec::new()), ev_tx, move |r| {
-                OnlineEvent::Liked { id, result: r }
-            });
+            send_empty(
+                with_auth(cfg, ehttp::Request::post(url, Vec::new())),
+                ev_tx,
+                move |r| OnlineEvent::Liked { id, result: r },
+            );
         }
         OnlineRequest::Report { id } => {
             let url = format!("{base}/v1/levels/{id}/report");
-            send_empty(ehttp::Request::post(url, Vec::new()), ev_tx, move |r| {
-                OnlineEvent::Reported { id, result: r }
-            });
+            send_empty(
+                with_auth(cfg, ehttp::Request::post(url, Vec::new())),
+                ev_tx,
+                move |r| OnlineEvent::Reported { id, result: r },
+            );
         }
         OnlineRequest::Delete { id } => {
             let url = format!("{base}/v1/levels/{id}");

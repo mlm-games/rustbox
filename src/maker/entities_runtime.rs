@@ -1426,6 +1426,12 @@ pub fn update_seals(
             if solid.is_some() {
                 commands.entity(e).remove::<SealSolid>();
             }
+            // Remove the Rapier collider in the same system: previously it was
+            // dropped async in `rapier.rs` with undefined order, leaving a
+            // 1-frame visual-open / physics-solid window for thrown crates.
+            commands
+                .entity(e)
+                .remove::<bevy_rapier3d::prelude::Collider>();
         }
     }
 }
@@ -1582,8 +1588,9 @@ pub fn move_prowlers(
     time: Res<Time<Fixed>>,
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
+    solids: Res<RuntimeSolids>,
     plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
-    mut q: Query<(&mut Transform, &mut Prowler)>,
+    mut q: Query<(Entity, &mut Transform, &mut Prowler)>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -1616,7 +1623,7 @@ pub fn move_prowlers(
         Vec3::ZERO
     };
 
-    for (mut tf, mut p) in &mut q {
+    for (entity, mut tf, mut p) in &mut q {
         if p.on_track {
             let delta = tf.translation - p.prev;
             let flat = Vec3::new(delta.x, 0.0, delta.z);
@@ -1647,8 +1654,17 @@ pub fn move_prowlers(
         let ahead_cell = IVec3::new(ahead.x.floor() as i32, body_y, ahead.z.floor() as i32);
         let wall = is_solid(&level, ahead_cell);
         let ledge = !is_solid(&level, ahead_cell - IVec3::Y);
+        // Closed gates/seals/crates are entity solids, not level cells:
+        // without this prowlers walk straight through them.
+        let blocked_by_prop = crate::maker::interaction::solid_blocks(
+            &solids,
+            entity,
+            next,
+            Vec3::splat(0.35),
+        );
+        let headroom = is_solid(&level, ahead_cell + IVec3::Y);
 
-        if wall || ledge {
+        if wall || ledge || blocked_by_prop || headroom {
             p.dir = -p.dir;
         } else {
             tf.translation = next;
@@ -1880,7 +1896,11 @@ pub fn apply_fans(
         // Slight lift so fans feel useful in 3D platforming.
         force.y += fan.strength * 0.15 * falloff * dt;
     }
-    player.velocity += cap_fan_force(force, MAX_FAN_FORCE);
+    // `force` is a per-tick velocity delta (already ×dt); the cap is a
+    // velocity rate (m/s), so scale it to the tick. Without this a single fan
+    // (~0.2/tick) can never reach the cap and 10 stacked fans (~2.0) still
+    // pass, integrating unbounded every FixedUpdate.
+    player.velocity += cap_fan_force(force, MAX_FAN_FORCE * dt.max(1e-4));
 }
 
 pub fn update_drops(

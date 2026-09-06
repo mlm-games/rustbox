@@ -284,9 +284,10 @@ fn resolve_axis(
                 // One-way platforms are solid only when approached from above:
                 // land on top, but pass through from below and from the sides.
                 // `ignore_one_way` (crouch drop-through) waives them entirely.
-                if block.is_some_and(|b| b.kind.is_one_way())
-                    && (ignore_one_way || axis != 1 || delta > 0.0)
-                {
+                // Side entries must never pop up: thin one-ways would teleport
+                // a sideways walker up to 0.35 onto the top.
+                let one_way = block.is_some_and(|b| b.kind.is_one_way());
+                if one_way && (ignore_one_way || axis != 1 || delta > 0.0) {
                     continue;
                 }
 
@@ -334,9 +335,12 @@ fn resolve_axis(
                             _ => true,
                         };
                         let feet = p[1] - he[1];
+                        // One-ways require crossing from above (no side pop-up);
+                        // solid blocks keep the 0.35 anti-tunnel window.
+                        let snap_window = if one_way { 0.001 } else { 0.35 };
                         if column_solid
                             && feet <= top + 0.001
-                            && start_feet >= top - 0.35
+                            && start_feet >= top - snap_window
                             && start_head >= top - 0.001
                         {
                             p[1] = top + he[1];
@@ -484,7 +488,12 @@ fn resolve_axis(
                 } else {
                     (p[0], p[2])
                 };
-                let top = wedge_top_height(solid, sx, sz).unwrap_or(bmax[1]);
+                // Outside the wedge footprint there is no material: skip the
+                // cell instead of treating it as a full-height box (phantom
+                // wall/top when rotated or at AABB corners).
+                let Some(top) = wedge_top_height(solid, sx, sz) else {
+                    continue;
+                };
                 if feet <= top + 0.001 && start_feet >= top - 0.35 && start_head >= top - 0.001 {
                     p[1] = top + he[1];
                     collided = true;
@@ -498,17 +507,22 @@ fn resolve_axis(
                 }
             }
         } else {
-            let ride_top = if solid.shape.is_wedge() {
-                wedge_top_height(
+            // Ride-over check: wedges only count where the probe is actually
+            // over the ramp; outside the footprint the cell is air.
+            if solid.shape.is_wedge() {
+                let Some(ride_top) = wedge_top_height(
                     solid,
                     p[0].clamp(bmin[0], bmax[0]),
                     p[2].clamp(bmin[2], bmax[2]),
-                )
-                .unwrap_or(bmax[1])
-            } else {
-                bmax[1]
-            };
-            if p[1] - he[1] >= ride_top - 0.02 && ride_top - start_feet <= STEP_HEIGHT + 0.02 {
+                ) else {
+                    continue;
+                };
+                if p[1] - he[1] >= ride_top - 0.02 && ride_top - start_feet <= STEP_HEIGHT + 0.02
+                {
+                    continue;
+                }
+            } else if p[1] - he[1] >= bmax[1] - 0.02 && bmax[1] - start_feet <= STEP_HEIGHT + 0.02
+            {
                 continue;
             }
             // Horizontal: only push out along this axis when the leading edge
@@ -1069,8 +1083,18 @@ pub fn move_and_collide_substepped(
             acc.on_ground = true;
             acc.floor_normal = r.floor_normal;
         }
+        // Accumulate per-axis normals: overwriting loses the first axis on
+        // diagonal corner hits, and the slide projection then re-injects
+        // velocity into the wall (jitter).
         if r.wall_normal != Vec3::ZERO {
-            acc.wall_normal = r.wall_normal;
+            if acc.wall_normal == Vec3::ZERO {
+                acc.wall_normal = r.wall_normal;
+            } else {
+                let merged = acc.wall_normal + r.wall_normal;
+                if merged.length_squared() > 1e-8 {
+                    acc.wall_normal = merged.normalize_or_zero();
+                }
+            }
         }
         if r.hit_x && r.hit_z && step_d.y.abs() < 1e-6 {
             break;
@@ -1395,6 +1419,11 @@ pub fn ledge_grip(
     hit_x: bool,
     hit_z: bool,
 ) -> Option<LedgeGrip> {
+    // Only while falling: rising jumps must never grab and kill momentum,
+    // and fast fall-bys need real inward motion, not drift.
+    if vel.y >= 0.0 {
+        return None;
+    }
     let feet = center.y - he.y;
     let approach = Vec2::new(vel.x, vel.z);
     let dirs: [(Vec2, f32, bool); 4] = [
@@ -1410,7 +1439,7 @@ pub fn ledge_grip(
             || (face.x < -0.5 && hit_axis && vel.x <= 0.0)
             || (face.y > 0.5 && hit_axis && vel.z >= 0.0)
             || (face.y < -0.5 && hit_axis && vel.z <= 0.0);
-        let moving_in = approach.dot(face) > 0.15;
+        let moving_in = approach.dot(face) > 1.0;
         let pressed =
             approach.length_squared() < 0.01 && face_adjacent_solid(level, center, face, he);
         if !(hit_into || moving_in || pressed) {

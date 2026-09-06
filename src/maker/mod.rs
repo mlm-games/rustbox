@@ -129,7 +129,9 @@ impl Plugin for MakerPlugin {
             .init_resource::<ui_bridge::MakerUi>()
             .init_resource::<entities_runtime::ClipLibrary>()
             .init_resource::<mesh_jobs::MeshJobChannels>()
+            .init_resource::<mesh_jobs::MeshGenerations>()
             .init_resource::<mesh_jobs::UseAsyncMesh>()
+            .init_resource::<player::PressedLatch>()
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(Startup, campaign::load_campaign_progress)
             .add_systems(Update, campaign::save_campaign_progress)
@@ -229,6 +231,7 @@ impl Plugin for MakerPlugin {
                         .in_set(InteractionSet::PlayerMotion)
                         .before(player::player_controller),
                     player::player_controller.in_set(InteractionSet::PlayerMotion),
+                    player::clear_pressed_latch.after(player::player_controller),
                 )
                     .chain()
                     .run_if(in_state(AppState::InGame))
@@ -237,12 +240,21 @@ impl Plugin for MakerPlugin {
             )
             .add_systems(
                 Update,
+                player::latch_play_presses
+                    .run_if(in_state(AppState::InGame))
+                    .run_if(not_paused)
+                    .run_if(not_blocked)
+                    .run_if(in_play)
+                    .after(ui_bridge::update_input_capture),
+            )
+            .add_systems(
+                Update,
                 (
                     interactive_blocks::sync_pulse.in_set(InteractionSet::MoveWorld),
-                    entities_runtime::rebuild_runtime_solids
-                        .in_set(InteractionSet::MoveWorld)
-                        .after(entities_runtime::tick_drift_plates)
-                        .after(entities_runtime::tick_track_followers),
+                    // NOTE: no `rebuild_runtime_solids` here: FixedUpdate
+                    // rebuilds for `player_controller`, and `SyncCollision`
+                    // rebuilds after `Resolve` writes gates/seals. A third
+                    // build in MoveWorld was identical input, 3×/frame cost.
                     // 3. Detect: latch roll, contacts, use target, damage.
                     interaction::begin_interaction_frame.in_set(InteractionSet::Detect),
                     interaction::gather_use_targets

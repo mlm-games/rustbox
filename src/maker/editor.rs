@@ -435,8 +435,7 @@ fn place_cmd_for_cell_with_rot(
     })
 }
 
-fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {
-    level
+fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {    level
         .get_block(cell)
         .cloned()
         .map(|previous| EditCommand::Remove {
@@ -455,6 +454,22 @@ fn shift_pressed(keys: &ButtonInput<KeyCode>) -> bool {
 
 fn selection_anchor_cell(cursor: &EditorCursor) -> Option<IVec3> {
     cursor.hit.or(cursor.place)
+}
+
+/// Apply freehand cmds to the level now but defer the undo entry until the
+/// stroke ends (button release flushes one `Batch`). Keeps long drags to a
+/// single undo press instead of one per frame.
+fn push_stroke(
+    level: &mut LevelDocument,
+    box_start: &mut BoxFillStart,
+    cmds: Vec<EditCommand>,
+) {
+    let stroke = &mut box_start.stroke;
+    if cmds.is_empty() {
+        return;
+    }
+    super::commands::apply_commands_immediate(level, &cmds);
+    stroke.extend(cmds);
 }
 
 fn cell_in_aabb(cell: IVec3, min: IVec3, max: IVec3) -> bool {
@@ -1153,7 +1168,8 @@ pub fn update_preview_and_edit(
 ) {
     // End stroke when the button is released so the next click is a fresh
     // single place. Must run before early returns so drag state doesn't latch
-    // when cursor leaves valid area while dragging.
+    // when cursor leaves valid area while dragging. Flush the accumulated
+    // stroke as one undo entry.
     if !buttons.pressed(MouseButton::Left) {
         box_start.last_paint = None;
     }
@@ -1162,6 +1178,10 @@ pub fn update_preview_and_edit(
     }
     if !buttons.pressed(MouseButton::Left) && !buttons.pressed(MouseButton::Right) {
         box_start.last_pointer = None;
+        if !box_start.stroke.is_empty() {
+            let cmds = std::mem::take(&mut box_start.stroke);
+            history.apply_many(&mut level, cmds);
+        }
     }
 
     let Some(hit_cell) = cursor.hit else {
@@ -1312,7 +1332,7 @@ pub fn update_preview_and_edit(
                                 });
                             }
                         }
-                        history.apply_many(&mut level, cmds);
+                        push_stroke(&mut level, box_start.as_mut(), cmds);
                     }
                     // Anchor stroke: one block this click; drag needs pointer motion.
                     box_start.last_paint = Some(place_cell);
@@ -1420,7 +1440,7 @@ pub fn update_preview_and_edit(
                 .filter_map(|cell| remove_cmd_for_cell(&level, cell))
                 .collect();
 
-            history.apply_many(&mut level, cmds);
+            push_stroke(&mut level, box_start.as_mut(), cmds);
             // Anchor erase stroke (prevents tunneling while held still).
             box_start.last_erase = Some(hit_cell);
             box_start.last_pointer = pointer;
@@ -1466,7 +1486,7 @@ pub fn update_preview_and_edit(
                         });
                     }
                 }
-                history.apply_many(&mut level, cmds);
+                push_stroke(&mut level, box_start.as_mut(), cmds);
             }
             box_start.last_paint = Some(place_cell);
             box_start.last_pointer = pointer;
@@ -1480,7 +1500,7 @@ pub fn update_preview_and_edit(
                 .filter_map(|cell| remove_cmd_for_cell(&level, cell))
                 .collect();
 
-            history.apply_many(&mut level, cmds);
+            push_stroke(&mut level, box_start.as_mut(), cmds);
             box_start.last_erase = Some(hit_cell);
             box_start.last_pointer = pointer;
         }
