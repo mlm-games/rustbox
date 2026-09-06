@@ -1,0 +1,13 @@
+[package]
+name = "rustbox-mesh"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Greedy + rotation-aware voxel meshing (pure, async-ready)"
+repository = "https://github.com/mlm-games/rustbox"
+keywords = ["gamedev", "voxel", "meshing"]
+rust-version = "1.98"
+
+[dependencies]
+rustbox-format = { path = "../rustbox-format" }
+rustbox-voxel = { path = "../rustbox-voxel" }

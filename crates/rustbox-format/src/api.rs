@@ -6,8 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Wire version the API accepts for uploads. Must match `file::FORMAT_VERSION`.
-pub const API_VERSION: u32 = 2;
+/// Wire version the API accepts for uploads. Single source of truth: always
+/// equals `file::FORMAT_VERSION` so client and worker cannot disagree.
+pub const API_VERSION: u32 = crate::file::FORMAT_VERSION;
 
 /// Upper bound on a compressed level payload in a single upload (bytes).
 pub const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;

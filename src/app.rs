@@ -1674,3 +1674,53 @@ fn sync_virtual_time_with_pause(paused: Res<Paused>, mut virtual_time: ResMut<Ti
         virtual_time.unpause();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn ftl_keys(ftl: &str) -> HashSet<String> {
+        ftl.lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+                    return None;
+                }
+                line.split_once('=').map(|(k, _)| k.trim().to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn translation_keys_match_en_locale() {
+        let en = LOCALES.iter().find(|(lang, _)| *lang == "en").unwrap().1;
+        let keys = ftl_keys(en);
+        let mut seen = HashSet::new();
+        for key in TRANSLATION_KEYS {
+            assert!(seen.insert(*key), "duplicate key in TRANSLATION_KEYS: {key}");
+            assert!(keys.contains(*key), "missing key in en/main.ftl: {key}");
+        }
+    }
+
+    #[test]
+    fn all_locales_parse_as_key_values() {
+        for (lang, ftl) in LOCALES {
+            let keys = ftl_keys(ftl);
+            assert!(!keys.is_empty(), "locale {lang} has no keys");
+        }
+    }
+
+    #[test]
+    fn all_locales_cover_translation_keys() {
+        for (lang, ftl) in LOCALES {
+            let keys = ftl_keys(ftl);
+            for key in TRANSLATION_KEYS {
+                assert!(
+                    keys.contains(*key),
+                    "locale {lang} missing key: {key}"
+                );
+            }
+        }
+    }
+}

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::maker::chunk::chunk_of;
 use bevy::asset::RenderAssetUsages;
 use bevy::gltf::GltfAssetLabel;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -136,6 +135,17 @@ fn rotate_y(v: Vec3, rot: u8) -> Vec3 {
         return v;
     }
     Quat::from_rotation_y(rot as f32 * std::f32::consts::FRAC_PI_2) * v
+}
+
+/// Rotate a cell-space direction by `rot` yaw steps (matches `rotate_y`).
+fn rotate_dir(d: IVec3, rot: u8) -> IVec3 {
+    match rot % 4 {
+        0 => d,
+        1 => IVec3::new(d.z, d.y, -d.x),
+        2 => IVec3::new(-d.x, d.y, -d.z),
+        3 => IVec3::new(-d.z, d.y, d.x),
+        _ => d,
+    }
 }
 
 /// A face to emit: `dir` is the neighbor direction to cull against (ZERO =
@@ -652,26 +662,36 @@ fn shape_faces(shape: BlockShape) -> Vec<FaceSpec> {
     faces
 }
 
-/// Whether a solid `neighbor` fully hides one of our faces in `dir`.
-fn face_occluded(level: &LevelDocument, shape: BlockShape, neighbor: Option<&BlockData>) -> bool {
+/// Whether a solid `neighbor` fully hides one of our faces in `dir` (world).
+/// Rotation-aware: the neighbor's covering side is looked up in its local
+/// frame, and shaped faces (ramps/corners) are never culled on their sides
+/// so seams can't punch holes. Only axis-aligned box faces and slab caps
+/// participate.
+fn face_occluded(
+    level: &LevelDocument,
+    shape: BlockShape,
+    dir: IVec3,
+    neighbor: Option<&BlockData>,
+) -> bool {
     let Some(nb) = neighbor else {
         return false;
     };
     if !level.kind_is_solid(nb.kind) {
         return false;
     }
-    // A box-shaped neighbor with a full footprint covers an axis-aligned box
-    // face. Sloped/cut shapes keep their side walls (culling them would punch
-    // holes), so only boxes cull boxes.
-    let boxy = matches!(
-        nb.shape,
-        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf | BlockShape::Thin
-    );
-    match shape {
-        BlockShape::Full | BlockShape::Half | BlockShape::TopHalf | BlockShape::Thin => boxy,
-        BlockShape::VerticalSlab => false,
-        _ => true,
+    if dir == IVec3::ZERO {
+        return false;
     }
+    let ours_cullable = match shape {
+        BlockShape::Full | BlockShape::VerticalSlab => true,
+        BlockShape::Half => dir != IVec3::Y,
+        BlockShape::TopHalf | BlockShape::Thin => dir != IVec3::NEG_Y,
+        _ => dir == IVec3::NEG_Y,
+    };
+    if !ours_cullable {
+        return false;
+    }
+    rustbox_mesh::neighbor_occludes(nb, [-dir.x, -dir.y, -dir.z], true)
 }
 
 /// Is a solid/water neighbor fully covering one of our faces?
@@ -756,8 +776,9 @@ fn append_block(
     let origin = cell.as_vec3();
     for f in shape_faces(block.shape) {
         if f.dir != IVec3::ZERO {
-            let neighbor = level.get_block(cell + f.dir);
-            if face_occluded(level, block.shape, neighbor) {
+            let dir_world = rotate_dir(f.dir, block.rot);
+            let neighbor = level.get_block(cell + dir_world);
+            if face_occluded(level, block.shape, dir_world, neighbor) {
                 continue;
             }
         }
@@ -900,6 +921,8 @@ pub fn rebuild_dirty_chunks(
     mut meshes: ResMut<Assets<Mesh>>,
     mut chunks: ResMut<ChunkEntities>,
     mut water_chunks: ResMut<WaterChunkEntities>,
+    camera_q: Query<&Transform, With<Camera>>,
+    async_flag: Option<Res<super::mesh_jobs::UseAsyncMesh>>,
 ) {
     let Some(assets) = assets else {
         return;
@@ -907,11 +930,18 @@ pub fn rebuild_dirty_chunks(
     if level.dirty_chunks.is_empty() && !level.is_changed() {
         return;
     }
+    if async_flag.is_some_and(|f| f.0) {
+        return;
+    }
 
-    let dirty: Vec<IVec3> = level.dirty_chunks.drain().collect();
+    let focus = camera_q
+        .iter()
+        .next()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
+    let dirty: Vec<IVec3> = level.drain_dirty_sorted(focus);
 
     for cpos in dirty {
-        // Despawn old solid chunk parts
         if let Some(ents) = chunks.0.remove(&cpos) {
             for e in ents {
                 commands.entity(e).despawn();
@@ -967,14 +997,7 @@ pub fn rebuild_dirty_chunks(
         }
     }
 
-    use std::collections::HashSet;
-    let occupied: HashSet<IVec3> = level.map.keys().map(|k| chunk_of(*k)).collect();
-    let water_occupied: HashSet<IVec3> = level
-        .map
-        .iter()
-        .filter(|(_, b)| b.kind == BlockKind::Water)
-        .map(|(k, _)| chunk_of(*k))
-        .collect();
+    let (occupied, water_occupied) = level.occupied_sets();
 
     chunks.0.retain(|cpos, ents| {
         let keep = occupied.contains(cpos);

@@ -5123,6 +5123,9 @@ dependencies = [
  "repose-ui",
  "ron",
  "rustbox-format",
+ "rustbox-mesh",
+ "rustbox-physics",
+ "rustbox-voxel",
  "serde",
  "serde_json",
  "sha2",
@@ -5140,6 +5143,25 @@ dependencies = [
  "bincode",
  "miniz_oxide 0.8.9",
  "serde",
+]
+
+[[package]]
+name = "rustbox-mesh"
+version = "0.1.0"
+dependencies = [
+ "rustbox-format",
+ "rustbox-voxel",
+]
+
+[[package]]
+name = "rustbox-physics"
+version = "0.1.0"
+
+[[package]]
+name = "rustbox-voxel"
+version = "0.1.0"
+dependencies = [
+ "rustbox-format",
 ]
 
 [[package]]

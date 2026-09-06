@@ -16,9 +16,11 @@ pub mod interaction;
 pub mod interactive_blocks;
 pub mod level;
 pub mod limits;
+pub mod mesh_jobs;
 pub mod mode;
 pub mod online;
 pub mod palette;
+pub mod physics_bridge;
 pub mod player;
 pub mod rapier;
 pub mod rendering;
@@ -126,6 +128,8 @@ impl Plugin for MakerPlugin {
             .init_resource::<storage::LevelStorage>()
             .init_resource::<ui_bridge::MakerUi>()
             .init_resource::<entities_runtime::ClipLibrary>()
+            .init_resource::<mesh_jobs::MeshJobChannels>()
+            .init_resource::<mesh_jobs::UseAsyncMesh>()
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(Startup, campaign::load_campaign_progress)
             .add_systems(Update, campaign::save_campaign_progress)
@@ -166,6 +170,9 @@ impl Plugin for MakerPlugin {
                         .run_if(not_in_paste_preview),
                     editor::track_recent_brushes.run_if(in_edit),
                     rendering::rebuild_dirty_chunks,
+                    mesh_jobs::dispatch_mesh_jobs.after(rendering::rebuild_dirty_chunks),
+                    mesh_jobs::collect_mesh_tasks,
+                    mesh_jobs::poll_mesh_jobs,
                     rendering::tick_ghosts,
                     entities_runtime::reconcile_entities,
                     entities_runtime::bob_glimmers,

@@ -244,11 +244,19 @@ pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequ
             let url = format!("{base}/v1/levels/{}/data", meta.id);
             ehttp::fetch(ehttp::Request::get(url), move |result| {
                 let event = match result {
-                    Ok(resp) if resp.ok && !resp.bytes.is_empty() => OnlineEvent::Downloaded {
-                        result: decode_level(&resp.bytes).map_err(|e| e.to_string()),
-                        meta,
-                        play,
-                    },
+                    Ok(resp) if resp.ok && !resp.bytes.is_empty() => {
+                        let decoded = decode_level(&resp.bytes).map_err(|e| e.to_string());
+                        let checked = decoded.and_then(|data| {
+                            rustbox_format::file::validate_level(&data)
+                                .map(|()| data)
+                                .map_err(|e| format!("invalid level: {e}"))
+                        });
+                        OnlineEvent::Downloaded {
+                            result: checked,
+                            meta,
+                            play,
+                        }
+                    }
                     Ok(resp) => OnlineEvent::Downloaded {
                         result: Err(parse_error(resp)),
                         meta,

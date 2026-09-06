@@ -705,6 +705,19 @@ pub fn validate_level(level: &LevelData) -> anyhow::Result<()> {
     if level.tracks.len() > MAX_TRACKS {
         bail!("too many tracks");
     }
+    if level.tags.len() > 6 {
+        bail!("too many tags");
+    }
+    if let Some(s) = level.size
+        && (s.iter().any(|c| c.abs() > MAX_COORD || *c < 1))
+    {
+        bail!("size out of bounds");
+    }
+    for b in &level.blocks {
+        if b.rot > 3 {
+            bail!("block rotation out of range");
+        }
+    }
     if !in_bounds(&level.spawn) {
         bail!("spawn out of bounds");
     }

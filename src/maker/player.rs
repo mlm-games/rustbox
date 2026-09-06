@@ -393,6 +393,7 @@ pub fn respawn_player(
     player.spawn_lock = 0.35;
     player.ground_plate = None;
     player.plate_vel = Vec3::ZERO;
+    player.invuln = 1.0;
     transform.scale = Vec3::ONE;
     *move_state = MoveState::default();
 }

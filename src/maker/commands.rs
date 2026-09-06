@@ -108,6 +108,7 @@ pub fn invalidate_verification(level: &mut LevelDocument) {
     level.data.is_verified = false;
     level.data.author_time = None;
     level.data.author_deaths = 0;
+    level.data.record_ms = None;
 }
 
 impl CommandHistory {
@@ -173,6 +174,12 @@ fn apply_command_inner(level: &mut LevelDocument, cmd: &EditCommand) {
             level.add_track(track.clone());
         }
         EditCommand::DeleteTrack { track } => {
+            for e in level.data.entities.iter_mut() {
+                if e.track == Some(track.id) {
+                    e.track = None;
+                }
+            }
+            level.entities_dirty = true;
             level.remove_track(track.id);
         }
         EditCommand::AddTrackPoint {

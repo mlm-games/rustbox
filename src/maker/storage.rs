@@ -24,7 +24,10 @@ pub fn list_slots(storage: &LevelStorage) -> Vec<String> {
 
 pub fn list_collection(storage: &LevelStorage) -> Vec<String> {
     match storage.0.list() {
-        Ok(v) => v.into_iter().filter(|k| k.starts_with(COLLECTION_PREFIX)).collect(),
+        Ok(v) => v
+            .into_iter()
+            .filter(|k| k.starts_with(COLLECTION_PREFIX))
+            .collect(),
         Err(e) => {
             bevy::log::warn!("Failed to list collection: {e}");
             Vec::new()
@@ -42,12 +45,18 @@ fn collection_key(name: &str) -> String {
                 '_'
             }
         })
+        .take(32)
         .collect();
-    let secs = std::time::SystemTime::now()
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("{COLLECTION_PREFIX}{}_{}", safe, secs)
+    format!(
+        "{COLLECTION_PREFIX}{}_{}_{}",
+        safe,
+        nanos,
+        std::process::id()
+    )
 }
 
 /// Saves the current level into the browsable collection and returns the key.
@@ -87,146 +96,136 @@ impl Default for LevelStorage {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-mod native {
-    use super::*;
-    use std::fs;
-    use std::path::PathBuf;
-
-    pub struct FsBackend {
-        dir: PathBuf,
+impl LevelStorage {
+    /// In-memory backend for hermetic tests (no filesystem access).
+    #[cfg(test)]
+    pub fn for_testing() -> Self {
+        Self(Box::new(SaveStoreBackend::<
+            game_utils::storage::MemoryStorage,
+        >::new_for_testing()))
     }
+}
 
-    impl FsBackend {
-        pub fn new() -> Self {
-            let dir = directories::ProjectDirs::from("com", "mlm-games", "rustbox")
-                .map(|d| d.data_dir().join("levels"))
-                .unwrap_or_else(|| PathBuf::from("levels"));
-            let _ = fs::create_dir_all(&dir);
-            Self { dir }
-        }
+fn sanitize_key(key: &str) -> String {
+    key.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
 
-        fn path(&self, key: &str) -> PathBuf {
-            let safe: String = key
-                .chars()
-                .map(|c| {
-                    if c.is_alphanumeric() || c == '_' || c == '-' {
-                        c
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
-            self.dir.join(format!("{safe}.ron"))
+fn levels_dir() -> std::path::PathBuf {
+    if let Some(proj) = directories::ProjectDirs::from("com", "mlm-games", "rustbox") {
+        let dir = proj.data_dir().join("levels");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return dir;
         }
     }
+    let dir = std::env::temp_dir().join("com-mlm-games-rustbox-levels");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
 
-    impl StorageBackend for FsBackend {
-        fn save(&self, key: &str, data: &str) -> anyhow::Result<()> {
-            let path = self.path(key);
-            if path.exists() {
-                let _ = fs::copy(&path, path.with_extension("ron.bak"));
-            }
-            fs::write(&path, data)?;
-            Ok(())
-        }
+/// Crash-safe backend built on `game_utils::save_store::SaveStore`:
+/// temp+rename + fsync, throttled `.bak` rotation, corrupt quarantine, and
+/// load recovery (temp → bak) instead of the previous ad-hoc copy/bak logic.
+/// `FsStorage` already routes to OPFS on wasm, so one impl covers both.
+pub struct SaveStoreBackend<S: game_utils::storage::Storage = game_utils::storage::FsStorage> {
+    dir: std::path::PathBuf,
+    storage: S,
+}
 
-        fn load(&self, key: &str) -> anyhow::Result<Option<String>> {
-            let path = self.path(key);
-            if !path.exists() {
-                let bak = path.with_extension("ron.bak");
-                if bak.exists() {
-                    return Ok(Some(fs::read_to_string(bak)?));
-                }
-                return Ok(None);
-            }
-            Ok(Some(fs::read_to_string(path)?))
-        }
-
-        fn list(&self) -> anyhow::Result<Vec<String>> {
-            let mut out = vec![];
-            for entry in fs::read_dir(&self.dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.extension().is_some_and(|e| e == "ron")
-                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-                {
-                    out.push(stem.to_string());
-                }
-            }
-            out.sort();
-            Ok(out)
-        }
-
-        fn delete(&self, key: &str) -> anyhow::Result<()> {
-            let path = self.path(key);
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-            Ok(())
+impl SaveStoreBackend<game_utils::storage::FsStorage> {
+    pub fn new() -> Self {
+        Self {
+            dir: levels_dir(),
+            storage: game_utils::storage::FsStorage,
         }
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-mod web {
-    use super::*;
+#[cfg(test)]
+impl SaveStoreBackend<game_utils::storage::MemoryStorage> {
+    pub fn new_for_testing() -> Self {
+        Self {
+            dir: std::path::PathBuf::from("/tmp/rustbox-levels-test"),
+            storage: game_utils::storage::MemoryStorage::new(),
+        }
+    }
+}
 
-    const PREFIX: &str = "maker3d:";
-
-    pub struct LocalStorageBackend;
-
-    fn storage() -> anyhow::Result<web_sys::Storage> {
-        web_sys::window()
-            .and_then(|w| w.local_storage().ok().flatten())
-            .ok_or_else(|| anyhow::anyhow!("localStorage unavailable"))
+impl<S: game_utils::storage::Storage> SaveStoreBackend<S> {
+    fn file_name(&self, key: &str) -> String {
+        format!("{}.ron", sanitize_key(key))
     }
 
-    impl StorageBackend for LocalStorageBackend {
-        fn save(&self, key: &str, data: &str) -> anyhow::Result<()> {
-            storage()?
-                .set_item(&format!("{PREFIX}{key}"), data)
-                .map_err(|_| anyhow::anyhow!("localStorage write failed (quota?)"))
-        }
+    fn store(&self, key: &str) -> game_utils::save_store::SaveStore<S> {
+        game_utils::save_store::SaveStore::new_with_storage(
+            self.dir.clone(),
+            self.file_name(key),
+            self.storage.clone(),
+        )
+        .with_validator(game_utils::save_store::SaveStore::<S>::is_intact_ron)
+    }
+}
 
-        fn load(&self, key: &str) -> anyhow::Result<Option<String>> {
-            Ok(storage()?
-                .get_item(&format!("{PREFIX}{key}"))
-                .map_err(|_| anyhow::anyhow!("localStorage read failed"))?)
-        }
+impl<S: game_utils::storage::Storage> StorageBackend for SaveStoreBackend<S> {
+    fn save(&self, key: &str, data: &str) -> anyhow::Result<()> {
+        self.store(key)
+            .write(data.as_bytes())
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
 
-        fn list(&self) -> anyhow::Result<Vec<String>> {
-            let s = storage()?;
-            let mut out = vec![];
-            let len = s.length().unwrap_or(0);
-            for i in 0..len {
-                if let Ok(Some(k)) = s.key(i) {
-                    if let Some(stripped) = k.strip_prefix(PREFIX) {
-                        out.push(stripped.to_string());
-                    }
+    fn load(&self, key: &str) -> anyhow::Result<Option<String>> {
+        use game_utils::save_store::LoadStatus;
+        let store = self.store(key);
+        let res = store.load(&game_utils::save_store::SaveStore::<S>::is_intact_ron, &[]);
+        match res.status {
+            LoadStatus::Ok => res
+                .data
+                .map(|b| String::from_utf8(b).map_err(|e| anyhow::anyhow!("{e}")))
+                .transpose(),
+            LoadStatus::Missing => Ok(None),
+            LoadStatus::Corrupt => match res.data {
+                Some(b) => Ok(Some(
+                    String::from_utf8(b).map_err(|e| anyhow::anyhow!("{e}"))?,
+                )),
+                None => anyhow::bail!("saved level is corrupt (quarantined)"),
+            },
+            LoadStatus::Unreadable => anyhow::bail!("saved level is unreadable (locked?)"),
+        }
+    }
+
+    fn list(&self) -> anyhow::Result<Vec<String>> {
+        use game_utils::storage::Storage;
+        let entries = self.storage.read_dir(&self.dir).unwrap_or_default();
+        let mut out = vec![];
+        for path in entries {
+            if path.extension().is_some_and(|e| e == "ron")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                if stem.starts_with("temp_") || stem.starts_with("corrupted_") {
+                    continue;
                 }
+                out.push(stem.to_string());
             }
-            out.sort();
-            Ok(out)
         }
+        out.sort();
+        Ok(out)
+    }
 
-        fn delete(&self, key: &str) -> anyhow::Result<()> {
-            storage()?
-                .remove_item(&format!("{PREFIX}{key}"))
-                .map_err(|_| anyhow::anyhow!("localStorage delete failed"))
-        }
+    fn delete(&self, key: &str) -> anyhow::Result<()> {
+        self.store(key).delete();
+        Ok(())
     }
 }
 
 fn create_backend() -> Box<dyn StorageBackend> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Box::new(native::FsBackend::new())
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        Box::new(web::LocalStorageBackend)
-    }
+    Box::new(SaveStoreBackend::new())
 }
 
 pub fn serialize_level(level: &LevelData) -> anyhow::Result<String> {
@@ -247,32 +246,50 @@ pub fn deserialize_level(text: &str) -> anyhow::Result<LevelData> {
     }
     let header: LevelHeader =
         ron::from_str(text).map_err(|_| anyhow::anyhow!("could not read level file"))?;
-    match header.version {
-        // RON is text with serde defaults, so v4..=v8 saves all parse into the
-        // live `LevelFile` (missing `contents` / `sign_text` default to None/empty).
+    let data = match header.version {
         4 | 5 | 6 | 7 | 8 => {
             let file: LevelFile =
                 ron::from_str(text).map_err(|_| anyhow::anyhow!("corrupted level file"))?;
-            Ok(file.level)
+            file.level
         }
         1 | 2 | 3 => {
             let file: LevelFileV3 =
                 ron::from_str(text).map_err(|_| anyhow::anyhow!("corrupted level file"))?;
-            Ok(upgrade_v3(file.level))
+            upgrade_v3(file.level)
         }
         v => anyhow::bail!("unknown level format version {v}"),
-    }
+    };
+    rustbox_format::file::validate_level(&data)
+        .map_err(|e| anyhow::anyhow!("invalid level: {e}"))?;
+    Ok(data)
 }
 
 pub use rustbox_format::file::export_code as export_level_code;
-pub use rustbox_format::file::import_code as import_level_code;
+use rustbox_format::file::import_code as import_code_raw;
+
+/// Share-code import: validates like every other untrusted path and strips
+/// forged verification/record flags so codes can't grant publish rights.
+pub fn import_level_code(code: &str) -> anyhow::Result<LevelData> {
+    let mut data = import_code_raw(code.trim()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    rustbox_format::file::validate_level(&data)
+        .map_err(|e| anyhow::anyhow!("invalid level: {e}"))?;
+    data.is_verified = false;
+    data.author_time = None;
+    data.record_ms = None;
+    Ok(data)
+}
 
 pub fn save_level(
     storage: &LevelStorage,
     level: &mut LevelDocument,
     key: &str,
 ) -> anyhow::Result<()> {
+    if key.trim_start().starts_with("__") {
+        anyhow::bail!("name is reserved");
+    }
     level.rebuild_blocks_vec();
+    rustbox_format::file::validate_level(&level.data)
+        .map_err(|e| anyhow::anyhow!("invalid level: {e}"))?;
     let text = serialize_level(&level.data)?;
     storage.0.save(key, &text)
 }

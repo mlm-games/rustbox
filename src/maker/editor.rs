@@ -316,6 +316,28 @@ fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
     out
 }
 
+/// Yaw for a mirrored copy: X-mirror flips 0<->2, Z-mirror flips 1<->3,
+/// both adds 180°. Derived per-cell from origin vs mirrored position so
+/// `Slope`/`Conveyor`/`Corner` keep facing the mirrored direction.
+fn mirror_rot_for(origin: IVec3, mirrored: IVec3, rot: u8) -> u8 {
+    let mx = mirrored.x != origin.x;
+    let mz = mirrored.z != origin.z;
+    match (mx, mz) {
+        (true, false) => match rot % 4 {
+            0 => 2,
+            2 => 0,
+            r => r,
+        },
+        (false, true) => match rot % 4 {
+            1 => 3,
+            3 => 1,
+            r => r,
+        },
+        (true, true) => (rot + 2) % 4,
+        _ => rot % 4,
+    }
+}
+
 /// Minimum screen-space movement (pixels squared) before hold-drag may
 /// place/erase another cell. Blocks raycast extrusion while the pointer stays.
 const DRAG_POINTER_EPSILON_SQ: f32 = 4.0; // 2px - raised for tablet jitter
@@ -383,11 +405,20 @@ fn place_cmd_for_cell(
     brush: &BlockBrush,
     cell: IVec3,
 ) -> Option<EditCommand> {
+    place_cmd_for_cell_with_rot(level, brush, cell, brush.rot)
+}
+
+fn place_cmd_for_cell_with_rot(
+    level: &LevelDocument,
+    brush: &BlockBrush,
+    cell: IVec3,
+    rot: u8,
+) -> Option<EditCommand> {
     if level.boundary_solid(cell) {
         return None;
     }
 
-    let data = build_block_data(brush.kind, brush.shape, brush.rot, brush.waterlogged, cell);
+    let data = build_block_data(brush.kind, brush.shape, rot, brush.waterlogged, cell);
     let previous = level.get_block(cell).cloned();
 
     if previous
@@ -566,7 +597,11 @@ fn paste_clipboard(
 
         let mut data = item.data.clone();
         data.position = pos.to_array();
-        data.rot = (data.rot + (yaw as u8 / 90) as u8) % 4;
+        data.rot = (data.rot + ((yaw as i32 / 90).rem_euclid(4) as u8)) % 4;
+
+        if pos.x.abs() > 512 || pos.y.abs() > 512 || pos.z.abs() > 512 {
+            continue;
+        }
 
         let previous = level.get_block(pos).cloned();
         blocks.push((pos, data, previous));
@@ -1167,6 +1202,15 @@ pub fn update_preview_and_edit(
                             box_start.start = None;
                             let min = a.min(place_cell);
                             let max = a.max(place_cell);
+                            let vol = (max.x - min.x + 1) as u64
+                                * (max.y - min.y + 1) as u64
+                                * (max.z - min.z + 1) as u64;
+                            let budget = (limits.max_blocks as u64)
+                                .saturating_sub(level.map.len() as u64)
+                                + 1;
+                            if vol > budget.max(1) && vol > 1 {
+                                return;
+                            }
                             let mut cells = Vec::new();
                             for x in min.x..=max.x {
                                 for y in min.y..=max.y {
@@ -1218,6 +1262,7 @@ pub fn update_preview_and_edit(
                         mirrored
                             .into_iter()
                             .filter_map(|cell| {
+                                let rot = mirror_rot_for(place_cell, cell, brush.rot);
                                 if let Some(existing) = level.get_block(cell) {
                                     if existing.kind == brush.kind {
                                         if level.boundary_solid(cell) {
@@ -1234,17 +1279,20 @@ pub fn update_preview_and_edit(
                                             previous: Some(existing.clone()),
                                         })
                                     } else {
-                                        place_cmd_for_cell(&level, &brush, cell)
+                                        place_cmd_for_cell_with_rot(&level, &brush, cell, rot)
                                     }
                                 } else {
-                                    place_cmd_for_cell(&level, &brush, cell)
+                                    place_cmd_for_cell_with_rot(&level, &brush, cell, rot)
                                 }
                             })
                             .collect()
                     } else {
                         mirrored
                             .into_iter()
-                            .filter_map(|cell| place_cmd_for_cell(&level, &brush, cell))
+                            .filter_map(|cell| {
+                                let rot = mirror_rot_for(place_cell, cell, brush.rot);
+                                place_cmd_for_cell_with_rot(&level, &brush, cell, rot)
+                            })
                             .collect()
                     };
 
@@ -1350,9 +1398,8 @@ pub fn update_preview_and_edit(
                             history.apply(&mut level, EditCommand::DeleteTrack { track });
                         }
                         active.0 = None;
-                    } else if let Some(cell) = level
-                        .track(id)
-                        .and_then(|t| t.points.get(index).copied())
+                    } else if let Some(cell) =
+                        level.track(id).and_then(|t| t.points.get(index).copied())
                     {
                         history.apply(
                             &mut level,
@@ -1397,7 +1444,10 @@ pub fn update_preview_and_edit(
         {
             let cmds: Vec<EditCommand> = mirror_cells(place_cell, mirror.0)
                 .into_iter()
-                .filter_map(|cell| place_cmd_for_cell(&level, &brush, cell))
+                .filter_map(|cell| {
+                    let rot = mirror_rot_for(place_cell, cell, brush.rot);
+                    place_cmd_for_cell_with_rot(&level, &brush, cell, rot)
+                })
                 .collect();
 
             let net_new = cmds

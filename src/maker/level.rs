@@ -456,6 +456,55 @@ impl LevelDocument {
         self.mark_all_dirty();
         self.entities_dirty = true;
     }
+
+    /// Drain dirty chunks nearest-first to `focus` (world coords). Sorting a
+    /// handful of chunks by distance keeps nearby edits responsive while far
+    /// chunks wait a frame — same idea as a prioritized mesh queue.
+    pub fn drain_dirty_sorted(&mut self, focus: Vec3) -> Vec<IVec3> {
+        let mut out: Vec<IVec3> = self.dirty_chunks.drain().collect();
+        out.sort_by(|a, b| {
+            let da = (a.as_vec3() * 16.0 + Vec3::splat(8.0) - focus).length_squared();
+            let db = (b.as_vec3() * 16.0 + Vec3::splat(8.0) - focus).length_squared();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        out
+    }
+
+    /// Occupied solid + water chunk sets in a single pass (the mesher used to
+    /// scan `map` twice per rebuild).
+    pub fn occupied_sets(&self) -> (HashSet<IVec3>, HashSet<IVec3>) {
+        use super::chunk::chunk_of;
+        let mut solid = HashSet::new();
+        let mut water = HashSet::new();
+        for (pos, b) in &self.map {
+            let c = chunk_of(*pos);
+            solid.insert(c);
+            if b.kind == super::block::BlockKind::Water {
+                water.insert(c);
+            }
+        }
+        (solid, water)
+    }
+
+    /// Export blocks into a dense grid for background meshing. The grid owns
+    /// its copy so the task pool can build without borrowing the world.
+    pub fn to_voxel_grid(&self) -> rustbox_voxel::VoxelGrid {
+        let mut grid = rustbox_voxel::VoxelGrid::new();
+        for (pos, b) in &self.map {
+            grid.set(
+                [pos.x, pos.y, pos.z],
+                Some(rustbox_format::level::BlockData {
+                    position: [pos.x, pos.y, pos.z],
+                    kind: b.kind,
+                    shape: b.shape,
+                    rot: b.rot,
+                    waterlogged: b.waterlogged,
+                }),
+            );
+        }
+        grid.clear_dirty();
+        grid
+    }
 }
 
 fn auto_size(data: &LevelData) -> [i32; 3] {

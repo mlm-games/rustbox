@@ -1017,6 +1017,12 @@ pub fn reconcile_entities(
             EntityKind::Glimmer => {
                 ecmds.insert(GlimmerTag);
                 ecmds.insert(Sensor);
+                ecmds.insert(KitAnim {
+                    base_y: tf.translation.y,
+                    spin: 2.0,
+                    bob: 0.04,
+                    seed: data.id as f32,
+                });
             }
             EntityKind::LaunchPad => {
                 ecmds.insert(LaunchPad {
@@ -1292,12 +1298,11 @@ pub fn reconcile_entities(
     }
 }
 
-pub fn bob_glimmers(time: Res<Time>, mut q: Query<&mut Transform, With<GlimmerTag>>) {
+pub fn bob_glimmers(time: Res<Time>, mut q: Query<(&mut Transform, &KitAnim), With<GlimmerTag>>) {
     let t = time.elapsed_secs();
-    for (i, mut tf) in q.iter_mut().enumerate() {
-        let bob = (t * 3.0 + i as f32).sin() * 0.04;
-        tf.translation.y += bob;
-        tf.rotate_y(time.delta_secs() * 2.0);
+    for (mut tf, anim) in &mut q {
+        tf.translation.y = anim.base_y + (t * 3.0 + anim.seed).sin() * anim.bob;
+        tf.rotate_y(time.delta_secs() * anim.spin);
     }
 }
 

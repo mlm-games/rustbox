@@ -1507,7 +1507,7 @@ pub fn raycast_present(
         origin.z.floor() as i32,
     );
 
-    if level.is_solid(cell) {
+    if level.get_block(cell).is_some() || level.boundary_solid(cell) {
         return Some((cell, IVec3::ZERO));
     }
 
@@ -1570,7 +1570,7 @@ pub fn raycast_present(
             normal = IVec3::new(0, 0, -step.z);
         }
 
-        if level.is_solid(cell) {
+        if level.get_block(cell).is_some() || level.boundary_solid(cell) {
             return Some((cell, normal));
         }
     }

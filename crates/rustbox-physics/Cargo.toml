@@ -1,0 +1,11 @@
+[package]
+name = "rustbox-physics"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Single-authority character physics types (position/velocity/state/colliders, swept AABB)"
+repository = "https://github.com/mlm-games/rustbox"
+keywords = ["gamedev", "physics", "voxel"]
+rust-version = "1.98"
+
+[dependencies]

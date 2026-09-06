@@ -1,0 +1,12 @@
+[package]
+name = "rustbox-voxel"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0"
+description = "Dense voxel chunk storage + dirty tracking with palette compression and focus-sorted mesh todos"
+repository = "https://github.com/mlm-games/rustbox"
+keywords = ["gamedev", "voxel", "bevy"]
+rust-version = "1.98"
+
+[dependencies]
+rustbox-format = { path = "../rustbox-format" }

@@ -101,6 +101,9 @@ bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", default-feat
     "dim3",
 ] }
 rustbox-format = { path = "crates/rustbox-format" }
+rustbox-voxel = { path = "crates/rustbox-voxel" }
+rustbox-mesh = { path = "crates/rustbox-mesh" }
+rustbox-physics = { path = "crates/rustbox-physics" }
 ehttp = { version = "0.7", features = ["multipart", "json"] }
 crossbeam-channel = "0.5"
 sha2 = "0.11"
