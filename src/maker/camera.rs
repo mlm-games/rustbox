@@ -206,7 +206,7 @@ pub fn play_camera_follow(
         // yank the frame. Freeze the lead while scripted, decay it instead.
         let scripted = player.launch > 0.0 || player.slamming;
         if scripted {
-            rig.lead_vel *= (1.0 - (1.0 - (-3.0 * dt).exp()).clamp(0.0, 1.0));
+            rig.lead_vel *= 1.0 - (1.0 - (-3.0 * dt).exp()).clamp(0.0, 1.0);
         } else {
             let vk = (1.0 - (-6.0 * dt).exp()).clamp(0.0, 1.0);
             rig.lead_vel = rig.lead_vel.lerp(player.velocity, vk);

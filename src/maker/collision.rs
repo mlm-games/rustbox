@@ -972,7 +972,7 @@ pub fn collide_camera_eye(
 pub fn ceiling_corner_correct(
     level: &LevelDocument,
     extras: &[RuntimeSolid],
-    mut pos: Vec3,
+    pos: Vec3,
     he: Vec3,
     vel_y: f32,
 ) -> Vec3 {
