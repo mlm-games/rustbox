@@ -5,10 +5,7 @@
 use rustbox_format::{ALL_BLOCK_KINDS, ALL_ENTITY_KINDS, BlockKind, EntityKind};
 
 pub fn block_index(kind: BlockKind) -> u8 {
-    ALL_BLOCK_KINDS
-        .iter()
-        .position(|k| *k == kind)
-        .unwrap_or(0) as u8
+    ALL_BLOCK_KINDS.iter().position(|k| *k == kind).unwrap_or(0) as u8
 }
 
 pub fn block_from_index(i: u8) -> BlockKind {

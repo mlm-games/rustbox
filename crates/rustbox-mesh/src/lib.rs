@@ -264,9 +264,8 @@ pub fn build_chunk_mesh(
         let cells: Vec<[i32; 3]> = cells
             .into_iter()
             .filter(|cell| {
-                grid.get(*cell).is_none_or(|b| {
-                    !input.skip_overlay.contains(&(b.kind, b.shape))
-                })
+                grid.get(*cell)
+                    .is_none_or(|b| !input.skip_overlay.contains(&(b.kind, b.shape)))
             })
             .collect();
         if cells.is_empty() {
@@ -404,10 +403,7 @@ fn greedy_full_faces(
     let set: HashSet<[i32; 3]> = cells.iter().copied().collect();
     // All greedy cells share one kind here; tint once (submerged handled
     // per-merged-quad below via the anchor cell).
-    let kind = cells
-        .first()
-        .and_then(|c| grid.get(*c))
-        .map(|b| b.kind);
+    let kind = cells.first().and_then(|c| grid.get(*c)).map(|b| b.kind);
 
     for dir in DIRS {
         let mut slices: HashMap<i32, Vec<[i32; 3]>> = HashMap::new();

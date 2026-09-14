@@ -44,9 +44,15 @@ pub struct SettingsData {
     pub language: String,
 }
 
-fn default_master() -> f32 { 1.0 }
-fn default_sfx() -> f32 { 1.0 }
-fn default_music() -> f32 { 0.8 }
+fn default_master() -> f32 {
+    1.0
+}
+fn default_sfx() -> f32 {
+    1.0
+}
+fn default_music() -> f32 {
+    0.8
+}
 
 impl Default for SettingsData {
     fn default() -> Self {

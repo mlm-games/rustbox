@@ -517,12 +517,10 @@ fn resolve_axis(
                 ) else {
                     continue;
                 };
-                if p[1] - he[1] >= ride_top - 0.02 && ride_top - start_feet <= STEP_HEIGHT + 0.02
-                {
+                if p[1] - he[1] >= ride_top - 0.02 && ride_top - start_feet <= STEP_HEIGHT + 0.02 {
                     continue;
                 }
-            } else if p[1] - he[1] >= bmax[1] - 0.02 && bmax[1] - start_feet <= STEP_HEIGHT + 0.02
-            {
+            } else if p[1] - he[1] >= bmax[1] - 0.02 && bmax[1] - start_feet <= STEP_HEIGHT + 0.02 {
                 continue;
             }
             // Horizontal: only push out along this axis when the leading edge

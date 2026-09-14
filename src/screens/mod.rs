@@ -78,8 +78,10 @@ fn tick_loading(
     let Some(mut timer) = timer else { return };
     let loaded = assets
         .map(|a| {
-            a.0.iter()
-                .all(|h| asset_server.is_loaded_with_dependencies(h))
+            a.0.iter().all(|h| {
+                asset_server.is_loaded_with_dependencies(h)
+                    || crate::asset_tracking::asset_failed(&asset_server, h)
+            })
         })
         .unwrap_or(true);
     if loaded && timer.0.tick(time.delta()).just_finished() {
