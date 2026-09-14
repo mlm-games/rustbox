@@ -69,7 +69,7 @@ bevy = { git = "https://github.com/bevyengine/bevy", rev = "fb89a8649d9b359e53ff
     "reflect_auto_register",
     "bevy_clipboard",
     "custom_cursor",
-    "webgl2",
+    "webgpu",
     "android-native-activity",
     "bevy_pbr",
     "bevy_scene",

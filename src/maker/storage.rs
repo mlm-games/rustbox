@@ -132,6 +132,7 @@ fn sanitize_key(key: &str) -> String {
     format!("{}_{:016x}", stem, h.finish())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn levels_dir() -> std::path::PathBuf {
     if let Some(proj) = directories::ProjectDirs::from("com", "mlm-games", "rustbox") {
         let dir = proj.data_dir().join("levels");
@@ -141,6 +142,16 @@ fn levels_dir() -> std::path::PathBuf {
     }
     let dir = std::env::temp_dir().join("com-mlm-games-rustbox-levels");
     let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// WASM has no `ProjectDirs`/`std::fs`: use the virtual ropfs path instead.
+/// `FsStorage` routes to OPFS/localStorage on wasm, so one backend covers both.
+#[cfg(target_arch = "wasm32")]
+fn levels_dir() -> std::path::PathBuf {
+    use game_utils::storage::Storage;
+    let dir = std::path::PathBuf::from("com-mlm-games-rustbox-levels");
+    let _ = game_utils::storage::FsStorage.create_dir_all(&dir);
     dir
 }
 

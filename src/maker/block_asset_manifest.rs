@@ -154,9 +154,14 @@ impl BlockAssetManifest {
     /// either way).
     pub fn load(asset_root: &Path) -> Self {
         let path = asset_root.join("models/blocks.ron");
+        // WASM has no `std::fs`: manifests ship in `assets/` for the asset
+        // server, but this sync RON overlay is desktop-only; web uses defaults.
+        #[cfg(not(target_arch = "wasm32"))]
         let disk = std::fs::read_to_string(&path)
             .ok()
             .and_then(|text| ron::from_str::<Self>(&text).ok());
+        #[cfg(target_arch = "wasm32")]
+        let disk: Option<Self> = None;
         match disk {
             Some(other) => Self::defaults().merged_with(other),
             None => Self::defaults(),
