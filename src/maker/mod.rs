@@ -136,19 +136,24 @@ impl Plugin for MakerPlugin {
             .add_systems(Startup, campaign::load_campaign_progress)
             .add_systems(Update, campaign::save_campaign_progress)
             .add_systems(Startup, entities_runtime::init_clip_library)
+            .add_systems(Startup, camera::spawn_camera)
             .add_systems(
                 OnEnter(AppState::InGame),
                 (
                     setup_maker,
                     rendering::setup_world,
                     entities_runtime::setup_entity_assets,
-                    camera::spawn_camera,
+                    camera::activate_world_camera,
                 )
                     .chain(),
             )
             .add_systems(
                 OnExit(AppState::InGame),
-                (cleanup_maker, cursor::restore_cursor),
+                (
+                    camera::deactivate_world_camera,
+                    cleanup_maker,
+                    cursor::restore_cursor,
+                ),
             )
             .add_systems(
                 Update,
