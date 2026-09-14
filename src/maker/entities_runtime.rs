@@ -1678,7 +1678,7 @@ pub fn move_prowlers(
 pub fn carry_crate_riders(
     time: Res<Time<Fixed>>,
     mode: Res<MakerMode>,
-    plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
+    plates: Query<(&Transform, &DriftPlate, Option<&Velocity>), Without<CrateProp>>,
     mut crates: Query<
         &mut Transform,
         (
