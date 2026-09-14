@@ -9,6 +9,7 @@ use super::level::LevelDocument;
 use super::mode::{InputCapture, SelectionSet};
 use super::player::{ActionState, MoveState, Player};
 
+use game_utils_bevy::post_process::ScreenEffectSettings;
 use game_utils_bevy::screen_effects::CameraBase3d;
 
 #[derive(Component)]
@@ -55,11 +56,19 @@ fn rig_transform(rig: &CameraRig) -> Transform {
 }
 
 pub fn spawn_camera(mut commands: Commands, rig: Res<CameraRig>) {
+    // Runs once at Startup (NOT on InGame enter): the screen-effect dynamic
+    // uniform buffer is sized by camera count. Spawning this camera later
+    // reallocates that GPU buffer while the post-process bind-group cache
+    // still references the old one, which WebGPU rejects with
+    // DynamicBindingOutOfBounds (offset 32 overruns a stale 32-byte buffer).
+    // Both cameras exist from boot so the buffer stays at 2 entries;
+    // `activate/deactivate_world_camera` toggles `is_active` instead.
     let tf = rig_transform(&rig);
     commands.spawn((
         Camera3d::default(),
         Camera {
             order: 0,
+            is_active: false,
             clear_color: ClearColorConfig::Custom(Color::srgb(0.53, 0.72, 0.92)),
             ..default()
         },
@@ -68,10 +77,26 @@ pub fn spawn_camera(mut commands: Commands, rig: Res<CameraRig>) {
             translation: tf.translation,
             rotation: tf.rotation,
         },
+        ScreenEffectSettings::default(),
         WorldCamera,
-        MakerCleanup,
     ));
+}
 
+/// Activates the persistent world camera on entering gameplay and syncs it
+/// to the current rig transform. Spawns the scene light here (it is
+/// `MakerCleanup`-scoped, so it respawns fresh each session).
+pub fn activate_world_camera(
+    mut commands: Commands,
+    rig: Res<CameraRig>,
+    mut cam: Query<(&mut Transform, &mut CameraBase3d, &mut Camera), With<WorldCamera>>,
+) {
+    if let Ok((mut t, mut base, mut cam)) = cam.single_mut() {
+        let desired = rig_transform(&rig);
+        *t = desired;
+        base.translation = desired.translation;
+        base.rotation = desired.rotation;
+        cam.is_active = true;
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 10_000.0,
@@ -81,6 +106,16 @@ pub fn spawn_camera(mut commands: Commands, rig: Res<CameraRig>) {
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -0.9, 0.0)),
         MakerCleanup,
     ));
+}
+
+/// Deactivates the persistent world camera when leaving gameplay so the
+/// menu/title renders with the 2D overlay camera only. The entity (and its
+/// `ScreenEffectSettings` uniform slot) stays alive, keeping the dynamic
+/// uniform buffer size stable across state transitions.
+pub fn deactivate_world_camera(mut cam: Query<&mut Camera, With<WorldCamera>>) {
+    for mut c in &mut cam {
+        c.is_active = false;
+    }
 }
 
 pub fn edit_camera_control(
