@@ -10,6 +10,7 @@ fn card_state_colors(bg: Color) -> StateColors {
     StateColors {
         default: Color::TRANSPARENT,
         hovered: Color::TRANSPARENT,
+        focused: Color::TRANSPARENT,
         pressed: Color::TRANSPARENT,
         dragged: th.on_surface.with_alpha_f32(0.12).composite_over(bg),
         disabled: th.on_surface.with_alpha_f32(0.12).composite_over(bg),
