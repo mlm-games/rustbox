@@ -1612,7 +1612,7 @@ pub fn move_prowlers(
             }
         }
     }
-    let mut ride_step_at = |pos: Vec3, he: Vec3| -> Vec3 {
+    let ride_step_at = |pos: Vec3, he: Vec3| -> Vec3 {
         let feet = pos.y - he.y;
         for (center, step, phe) in &steps {
             let top = center.y + phe.y;

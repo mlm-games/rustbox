@@ -298,7 +298,7 @@ fn part_tile(
     } else {
         tok::bg_panel_solid()
     };
-    let pad = if selected { 3.0 } else { 2.0 };
+    let _pad = if selected { 3.0 } else { 2.0 };
 
     let mut inner_stack = ZStack(Modifier::new().fill_max_size());
     if let Some(handle) = icon {

@@ -1,5 +1,6 @@
 use repose_core::View;
-use repose_core::prelude::{Color, Modifier, StateColors, theme};
+use repose_core::StateColors;
+use repose_core::prelude::{Color, Modifier, theme};
 use repose_material::material3::{Card, CardConfig};
 use repose_material::ripple::{RippleConfig, ripple};
 use repose_ui::{Column, ViewExt};
@@ -9,7 +10,6 @@ fn card_state_colors(bg: Color) -> StateColors {
     StateColors {
         default: Color::TRANSPARENT,
         hovered: Color::TRANSPARENT,
-        focused: Color::TRANSPARENT,
         pressed: Color::TRANSPARENT,
         dragged: th.on_surface.with_alpha_f32(0.12).composite_over(bg),
         disabled: th.on_surface.with_alpha_f32(0.12).composite_over(bg),

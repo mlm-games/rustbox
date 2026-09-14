@@ -23,7 +23,6 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use rustbox_format::BlockKind;
 use rustbox_mesh::{ChunkMeshInput, ChunkMeshOutput};
-use rustbox_voxel::VoxelGrid;
 
 use super::MakerCleanup;
 use super::block::BlockKindColor;
@@ -194,7 +193,7 @@ pub fn poll_mesh_jobs(
     channels: Res<MeshJobChannels>,
     generations: Res<MeshGenerations>,
     flag: Res<UseAsyncMesh>,
-    level: Res<LevelDocument>,
+    _level: Res<LevelDocument>,
     mut meshes: ResMut<Assets<Mesh>>,
     assets: Option<Res<MakerAssets>>,
     mut chunks: ResMut<super::rendering::ChunkEntities>,

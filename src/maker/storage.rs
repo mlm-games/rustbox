@@ -215,7 +215,6 @@ impl<S: game_utils::storage::Storage> StorageBackend for SaveStoreBackend<S> {
     }
 
     fn list(&self) -> anyhow::Result<Vec<String>> {
-        use game_utils::storage::Storage;
         let entries = self.storage.read_dir(&self.dir).unwrap_or_default();
         let mut out = vec![];
         for path in entries {
