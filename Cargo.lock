@@ -4562,6 +4562,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
+name = "pollster"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6355899e1c9462875b6757c79f3caa011a1fdae12bbb1a2e72dd1f234f8336"
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4881,22 +4887,21 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "repose-app"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aae03471a9541eee7b42ced60853adaa37fc90e21abfb938f8007eb9c111ae8f"
+checksum = "2c222ab1338d84301d98127e2c7fe8cd2f06b17b47a2a9185c16728897e3911a"
 dependencies = [
  "log",
  "repose-core",
  "repose-text",
  "repose-ui",
- "rustc-hash 2.1.3",
  "web-time",
 ]
 
 [[package]]
 name = "repose-bevy"
 version = "0.2.0"
-source = "git+https://github.com/mlm-games/repose-bevy?rev=7ac0e39940fd46f0f0ec099f38beaa8cf7e03395#7ac0e39940fd46f0f0ec099f38beaa8cf7e03395"
+source = "git+https://github.com/mlm-games/repose-bevy?rev=8124dabaedfe16a2e90fd9f4bbd008ce7abceabc#8124dabaedfe16a2e90fd9f4bbd008ce7abceabc"
 dependencies = [
  "anyhow",
  "bevy",
@@ -4914,27 +4919,23 @@ dependencies = [
 
 [[package]]
 name = "repose-core"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0e7e97be512b097edbeb0b20f29c4a7898b9ae5162010c628c6503c9448e573"
+checksum = "da72a1935f11f5bb0b7e5ebf00fd4595ee1ff4087caf01ac8c41ba2abbc97b92"
 dependencies = [
- "bitflags 2.13.1",
  "log",
  "parking_lot",
  "repose-macros",
  "rustc-hash 2.1.3",
- "slotmap",
- "smallvec",
- "taffy 0.12.2",
- "thiserror 2.0.20",
+ "taffy 0.14.0",
  "web-time",
 ]
 
 [[package]]
 name = "repose-macros"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86eac0ff26ffede6d21eed50e15c4e4deab8ea03acf6ab472ccd4a3fe0c42102"
+checksum = "ec5da7d83d94fae1ad37c907e887db8fd1076b5836497fb51fa603e7645c4c75"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4943,9 +4944,9 @@ dependencies = [
 
 [[package]]
 name = "repose-material"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb7b2ab6e709d7b5c3f82a68a1e9085e94beb6a6d91272962692e1eb3d31629"
+checksum = "1c91bdf4b2244f95d0a48d16c799b664bd335f7c1ff1c6780fdf895869487530"
 dependencies = [
  "repose-core",
  "repose-text",
@@ -4956,9 +4957,9 @@ dependencies = [
 
 [[package]]
 name = "repose-render-wgpu"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958d5e1d83d47fe9752929cb0409c7bd0a0e60599468b50285e8eb5a2901da13"
+checksum = "fca27a61311d972cb5d01c9eeb8bcb429d1266c7f8a838941321b1483554ccd8"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4966,7 +4967,7 @@ dependencies = [
  "log",
  "lyon_path",
  "lyon_tessellation",
- "pollster",
+ "pollster 1.0.1",
  "repose-core",
  "repose-text",
  "web-workers",
@@ -4976,14 +4977,13 @@ dependencies = [
 
 [[package]]
 name = "repose-text"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef5c157960eda1df570ce050ecdf3fcf9a9836fd61b67363854da729a4909f6d"
+checksum = "58b06d303d245d92636f3f516522b1228276a91d1dcb3037e16739c8bb015af3"
 dependencies = [
  "font-awl",
  "js-sys",
  "log",
- "once_cell",
  "parley",
  "rapidhash",
  "skrifa",
@@ -4996,9 +4996,9 @@ dependencies = [
 
 [[package]]
 name = "repose-tree"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3885acb3fbcd060ee23b1cba770c350bf40d356cc5a9eee0ece9d70b9048230"
+checksum = "c8377a1e7a1d83de7d22a27d85900856776dd1d783de7c8bfb92ebbde47fcb32"
 dependencies = [
  "log",
  "rapidhash",
@@ -5006,21 +5006,21 @@ dependencies = [
  "rustc-hash 2.1.3",
  "slotmap",
  "smallvec",
+ "taffy 0.14.0",
 ]
 
 [[package]]
 name = "repose-ui"
-version = "0.28.20"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac3edfda174757e44bb49d344e46f074eee81763ae77be1c09c794ad01d3ece3"
+checksum = "128e48a6b2f30a25c5b31d34fe1365aec0c75d07bee47e896c4b77686cc6e9c4"
 dependencies = [
  "log",
  "repose-core",
  "repose-text",
  "repose-tree",
  "rustc-hash 2.1.3",
- "smallvec",
- "taffy 0.12.2",
+ "taffy 0.14.0",
  "unicode-segmentation",
  "web-time",
  "webbrowser",
@@ -5137,6 +5137,7 @@ dependencies = [
  "repose-core",
  "repose-material",
  "repose-render-wgpu",
+ "repose-text",
  "repose-ui",
  "ron",
  "rustbox-format",
@@ -5637,14 +5638,14 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.12.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "340a09581f29809fc0df82a3955501dc7f2a21f887e5d1c13dbe288fe1c0bef4"
+checksum = "639627c87f43b9181c811f40a6296409e093a17bc761214cba3c15df74f86b99"
 dependencies = [
  "arrayvec",
- "grid",
  "serde",
  "slotmap",
+ "smallvec",
 ]
 
 [[package]]
@@ -6322,7 +6323,7 @@ dependencies = [
  "js-sys",
  "minicov",
  "pin-project",
- "pollster",
+ "pollster 0.4.0",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

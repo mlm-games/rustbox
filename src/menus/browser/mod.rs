@@ -16,8 +16,8 @@ use repose_material::material3::{
 use repose_ui::anim_ext::{AnimatedVisibility, AnimatedVisibilityConfig};
 use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{
-    BasicTextField, Column, FlowRow, Row, Text as RText, TextFieldConfig, TextFieldState,
-    TextStyle, ViewExt,
+    BasicTextField, Column, FlowRow, FlowRowConfig, Row, Text as RText, TextFieldConfig,
+    TextFieldState, TextStyle, ViewExt,
 };
 
 use crate::app::{OverlayMenu, SharedUi};
@@ -142,7 +142,11 @@ pub(crate) fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vi
             )
         }));
     }
-    let filter_row = FlowRow(Modifier::new().fill_max_width().gap(6.0)).child(filter_chips);
+    let filter_row = FlowRow(
+        Modifier::new().fill_max_width().gap(6.0),
+        FlowRowConfig::default(),
+    )
+    .child(filter_chips);
 
     // Tag include chips.
     let mut chip_views: Vec<View> = Vec::new();
@@ -158,7 +162,11 @@ pub(crate) fn browse_ui(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vi
             push(&a, UiAction::BrowseToggleTag(tag))
         }));
     }
-    let tag_row = FlowRow(Modifier::new().fill_max_width().gap(6.0)).child(chip_views);
+    let tag_row = FlowRow(
+        Modifier::new().fill_max_width().gap(6.0),
+        FlowRowConfig::default(),
+    )
+    .child(chip_views);
 
     let sort_label = match st.browse_sort % 6 {
         0 => "Sort: Recent",

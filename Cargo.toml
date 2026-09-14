@@ -81,15 +81,16 @@ bevy = { git = "https://github.com/bevyengine/bevy", rev = "fb89a8649d9b359e53ff
     "bevy_gizmos_render",
     "debug",
 ] }
-repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", rev = "7ac0e39940fd46f0f0ec099f38beaa8cf7e03395", default-features = false, features = [
+repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", rev = "8124dabaedfe16a2e90fd9f4bbd008ce7abceabc", default-features = false, features = [
     "shared-device",
 ] }
 wgpu = { version = "30", features = ["webgpu", "webgl"] }
-repose-core = "=0.28.20"
-repose-ui = "=0.28.20"
-repose-app = "=0.28.20"
-repose-material = "=0.28.20"
-repose-render-wgpu = "=0.28.20"
+repose-core = "=0.29.0"
+repose-ui = "=0.29.0"
+repose-app = "=0.29.0"
+repose-material = "=0.29.0"
+repose-render-wgpu = "=0.29.0"
+repose-text = "=0.29.0"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
