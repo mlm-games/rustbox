@@ -1592,7 +1592,7 @@ pub fn move_prowlers(
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
     solids: Res<RuntimeSolids>,
-    plates: Query<(&Transform, &DriftPlate, Option<&Velocity>)>,
+    plates: Query<(&Transform, &DriftPlate, Option<&Velocity>), Without<Prowler>>,
     mut q: Query<(Entity, &mut Transform, &mut Prowler)>,
 ) {
     if *mode != MakerMode::Play {
