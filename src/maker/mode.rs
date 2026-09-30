@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
-use bevy::prelude::*;
+use glam::{IVec3, Vec2};
 
 use super::block::{BlockKind, BlockShape};
 use super::entity_data::{EntityData, EntityKind, LevelEntityId};
 use super::level::BlockData;
 
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MakerMode {
     #[default]
     Edit,
@@ -15,7 +15,7 @@ pub enum MakerMode {
 
 /// The active block brush: kind (material), voxel shape, yaw rotation and
 /// whether newly placed blocks should be waterlogged.
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct BlockBrush {
     pub kind: BlockKind,
     pub shape: BlockShape,
@@ -34,7 +34,7 @@ impl Default for BlockBrush {
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BrushTab {
     #[default]
     Blocks,
@@ -42,7 +42,7 @@ pub enum BrushTab {
     Tracks,
 }
 
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SelectedEntityKind(pub EntityKind);
 
 impl Default for SelectedEntityKind {
@@ -51,7 +51,7 @@ impl Default for SelectedEntityKind {
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct PlaceYaw(pub f32);
 
 impl Default for PlaceYaw {
@@ -60,24 +60,24 @@ impl Default for PlaceYaw {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct InputCapture {
     pub ui_wants_pointer: bool,
     pub ui_wants_keyboard: bool,
 }
 
 /// The entity currently selected in the inspector (Edit mode only).
-#[derive(Resource, Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct SelectedEntity(pub Option<LevelEntityId>);
 
 /// Mirror brush mode: bit 0 = X mirror, bit 1 = Z mirror.
-#[derive(Resource, Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct MirrorMode(pub u8);
 
 /// Editor paint state: `start` is the first corner of an in-progress
 /// Shift+click box fill; `last_paint`/`last_erase` track the last cell of a
 /// hold-drag.
-#[derive(Resource, Default, Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct BoxFillStart {
     pub start: Option<IVec3>,
     pub last_paint: Option<IVec3>,
@@ -89,7 +89,7 @@ pub struct BoxFillStart {
 }
 
 /// Active link channel stamped onto newly placed orbs/gates (1-9).
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ActiveLinkChannel(pub u32);
 
 impl Default for ActiveLinkChannel {
@@ -99,7 +99,7 @@ impl Default for ActiveLinkChannel {
 }
 
 /// Cell the edit cursor is currently aiming at (Edit mode only).
-#[derive(Resource, Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct EditorCursor {
     pub hit: Option<IVec3>,
     pub place: Option<IVec3>,
@@ -108,7 +108,7 @@ pub struct EditorCursor {
 }
 
 /// Emitted when a block is placed so the pop-in ghost can spawn.
-#[derive(Message, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct BlockPlaced {
     pub cell: IVec3,
     pub kind: BlockKind,
@@ -116,13 +116,13 @@ pub struct BlockPlaced {
     pub rot: u8,
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct MakerStats {
     pub blocks_placed: u32,
 }
 
 /// Multi-selection used by build-mode structure editing.
-#[derive(Resource, Default, Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct SelectionSet {
     pub blocks: HashSet<IVec3>,
     pub entities: HashSet<LevelEntityId>,
@@ -156,7 +156,7 @@ impl SelectionSet {
 }
 
 /// First corner for two-click volume selection.
-#[derive(Resource, Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct SelectionBoxStart {
     pub start: Option<IVec3>,
 }
@@ -176,7 +176,7 @@ pub struct ClipboardEntity {
 }
 
 /// Internal editor clipboard for selected structures.
-#[derive(Resource, Default, Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct EditorClipboard {
     pub blocks: Vec<ClipboardBlock>,
     pub entities: Vec<ClipboardEntity>,
@@ -198,7 +198,7 @@ impl EditorClipboard {
 }
 
 /// Live preview of a clipboard structure while the user positions it.
-#[derive(Resource, Default, Debug)]
+#[derive(Default, Debug)]
 pub struct PastePreview {
     pub active: bool,
     pub clipboard: EditorClipboard,
@@ -214,7 +214,7 @@ impl PastePreview {
     }
 }
 
-#[derive(Resource, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct RecentBrushes {
     /// Most-recent first. Cap 8 like SMM2 recents strip.
     pub kinds: Vec<BlockKind>,

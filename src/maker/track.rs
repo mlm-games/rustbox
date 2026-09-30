@@ -1,7 +1,4 @@
-use bevy::prelude::*;
-
-use super::level::LevelDocument;
-use super::mode::MakerMode;
+use glam::{IVec3, Vec3};
 
 pub use rustbox_format::track::{TrackData, TrackId, TrackMode};
 
@@ -112,37 +109,5 @@ impl TrackDataExt for TrackData {
 }
 
 /// The track currently being edited (Edit mode only).
-#[derive(Resource, Default, Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct ActiveTrack(pub Option<TrackId>);
-
-pub fn draw_track_gizmos(
-    mode: Res<MakerMode>,
-    level: Res<LevelDocument>,
-    active: Res<ActiveTrack>,
-    mut gizmos: Gizmos,
-) {
-    if *mode != MakerMode::Edit {
-        return;
-    }
-    for track in &level.data.tracks {
-        let pts = track.world_points();
-        if pts.is_empty() {
-            continue;
-        }
-        let selected = active.0 == Some(track.id);
-        let color = if selected {
-            Color::srgb(1.0, 0.9, 0.2)
-        } else {
-            Color::srgb(0.9, 0.55, 0.25)
-        };
-        for w in pts.windows(2) {
-            gizmos.line(w[0], w[1], color);
-        }
-        if track.mode == TrackMode::Loop && pts.len() > 2 {
-            gizmos.line(*pts.last().unwrap(), pts[0], color);
-        }
-        for p in &pts {
-            gizmos.sphere(Isometry3d::from_translation(*p), 0.12, color);
-        }
-    }
-}

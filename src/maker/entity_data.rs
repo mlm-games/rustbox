@@ -1,60 +1,60 @@
-use bevy::prelude::*;
+use glam::IVec3;
 
 pub use rustbox_format::entity::{
     ALL_ENTITY_KINDS, ContainedItem, EntityData, EntityKind, LevelEntityId,
 };
 
-/// Bevy-side color for an entity kind (materials, gizmos, thumbnails).
+/// Color for an entity kind (materials, gizmos, thumbnails), sRGB.
 pub trait EntityKindColor {
-    fn color(&self) -> Color;
+    fn color(&self) -> [f32; 3];
 }
 
 impl EntityKindColor for EntityKind {
-    fn color(&self) -> Color {
+    fn color(&self) -> [f32; 3] {
         match self {
-            Self::Glimmer => Color::srgb(1.0, 0.85, 0.25),
-            Self::LaunchPad => Color::srgb(0.35, 0.75, 1.0),
-            Self::Seal => Color::srgb(0.75, 0.35, 0.9),
-            Self::DriftPlate => Color::srgb(0.95, 0.55, 0.25),
-            Self::Prowler => Color::srgb(0.85, 0.2, 0.35),
-            Self::TriggerOrb => Color::srgb(0.3, 0.9, 0.75),
-            Self::RelayGate => Color::srgb(0.45, 0.85, 0.45),
-            Self::Checkpoint => Color::srgb(0.95, 0.95, 1.0),
-            Self::Teleporter => Color::srgb(0.55, 0.35, 1.0),
-            Self::Fan => Color::srgb(0.65, 0.85, 1.0),
-            Self::Bumper => Color::srgb(1.0, 0.45, 0.75),
-            Self::Crate => Color::srgb(0.72, 0.5, 0.28),
-            Self::Key => Color::srgb(1.0, 0.84, 0.2),
-            Self::LockGate => Color::srgb(0.55, 0.55, 0.65),
-            Self::HealOrb => Color::srgb(1.0, 0.35, 0.45),
-            Self::SpeedRing => Color::srgb(0.2, 0.95, 0.55),
-            Self::CrumblePlate => Color::srgb(0.7, 0.65, 0.55),
-            Self::Cannon => Color::srgb(0.4, 0.45, 0.5),
-            Self::OnOffSwitch => Color::srgb(0.95, 0.6, 0.15),
-            Self::TossCrate => Color::srgb(0.6, 0.42, 0.25),
-            Self::Sign => Color::srgb(0.85, 0.72, 0.45),
-            Self::Wedge => Color::srgb(0.62, 0.58, 0.5),
+            Self::Glimmer => [1.0, 0.85, 0.25],
+            Self::LaunchPad => [0.35, 0.75, 1.0],
+            Self::Seal => [0.75, 0.35, 0.9],
+            Self::DriftPlate => [0.95, 0.55, 0.25],
+            Self::Prowler => [0.85, 0.2, 0.35],
+            Self::TriggerOrb => [0.3, 0.9, 0.75],
+            Self::RelayGate => [0.45, 0.85, 0.45],
+            Self::Checkpoint => [0.95, 0.95, 1.0],
+            Self::Teleporter => [0.55, 0.35, 1.0],
+            Self::Fan => [0.65, 0.85, 1.0],
+            Self::Bumper => [1.0, 0.45, 0.75],
+            Self::Crate => [0.72, 0.5, 0.28],
+            Self::Key => [1.0, 0.84, 0.2],
+            Self::LockGate => [0.55, 0.55, 0.65],
+            Self::HealOrb => [1.0, 0.35, 0.45],
+            Self::SpeedRing => [0.2, 0.95, 0.55],
+            Self::CrumblePlate => [0.7, 0.65, 0.55],
+            Self::Cannon => [0.4, 0.45, 0.5],
+            Self::OnOffSwitch => [0.95, 0.6, 0.15],
+            Self::TossCrate => [0.6, 0.42, 0.25],
+            Self::Sign => [0.85, 0.72, 0.45],
+            Self::Wedge => [0.62, 0.58, 0.5],
         }
     }
 }
 
 /// Link channel color (1-9). Channel 0 (unlinked) = grey.
-pub fn link_color(channel: u32) -> Color {
+pub fn link_color(channel: u32) -> [f32; 3] {
     match channel {
-        1 => Color::srgb(0.95, 0.35, 0.35),
-        2 => Color::srgb(0.35, 0.65, 0.95),
-        3 => Color::srgb(0.95, 0.85, 0.35),
-        4 => Color::srgb(0.45, 0.9, 0.45),
-        5 => Color::srgb(0.85, 0.45, 0.95),
-        6 => Color::srgb(0.95, 0.6, 0.3),
-        7 => Color::srgb(0.4, 0.9, 0.9),
-        8 => Color::srgb(0.95, 0.5, 0.75),
-        9 => Color::srgb(0.8, 0.8, 0.8),
-        _ => Color::srgb(0.5, 0.5, 0.5),
+        1 => [0.95, 0.35, 0.35],
+        2 => [0.35, 0.65, 0.95],
+        3 => [0.95, 0.85, 0.35],
+        4 => [0.45, 0.9, 0.45],
+        5 => [0.85, 0.45, 0.95],
+        6 => [0.95, 0.6, 0.3],
+        7 => [0.4, 0.9, 0.9],
+        8 => [0.95, 0.5, 0.75],
+        9 => [0.8, 0.8, 0.8],
+        _ => [0.5, 0.5, 0.5],
     }
 }
 
-/// Bevy-math helpers for entity data (the pure `EntityData` struct lives in
+/// Math helpers for entity data (the pure `EntityData` struct lives in
 /// `rustbox-format`; these need `IVec3`).
 pub trait EntityDataExt {
     fn cell_i(&self) -> IVec3;

@@ -5,6 +5,10 @@ use super::block::{ALL_BLOCK_SHAPES, BlockKind, BlockShape};
 use super::camera::WorldCamera;
 use super::collision::raycast_present;
 use super::commands::{CommandHistory, EditCommand};
+pub use super::commands::{
+    build_block_data, place_cmd_for_cell, place_cmd_for_cell_with_rot,
+    remove_cmd_for_cell, same_block,
+};
 use super::entity_data::{EntityData, EntityDataExt, EntityKind};
 use super::level::{BlockData, LevelDocument};
 use super::limits;
@@ -350,39 +354,6 @@ fn pointer_moved_since(last: Option<Vec2>, now: Option<Vec2>) -> bool {
     }
 }
 
-fn build_block_data(
-    kind: BlockKind,
-    shape: BlockShape,
-    rot: u8,
-    waterlogged: bool,
-    cell: IVec3,
-) -> BlockData {
-    // Water is always a full, unlogged cell fill.
-    let shape = if kind == BlockKind::Water {
-        BlockShape::Full
-    } else if kind.is_thin() {
-        BlockShape::Thin
-    } else {
-        shape
-    };
-    let waterlogged = if kind == BlockKind::Water {
-        false
-    } else {
-        waterlogged
-    };
-    BlockData {
-        position: cell.to_array(),
-        kind,
-        shape,
-        rot,
-        waterlogged,
-    }
-}
-
-fn same_block(a: &BlockData, b: &BlockData) -> bool {
-    (a.kind, a.shape, a.rot, a.waterlogged) == (b.kind, b.shape, b.rot, b.waterlogged)
-}
-
 fn next_variant(existing: &BlockData) -> BlockData {
     let mut next = existing.clone();
     if !existing.kind.is_thin() && existing.kind != BlockKind::Water {
@@ -398,51 +369,6 @@ fn next_variant(existing: &BlockData) -> BlockData {
     }
     next.rot = (next.rot + 1) % 4;
     next
-}
-
-fn place_cmd_for_cell(
-    level: &LevelDocument,
-    brush: &BlockBrush,
-    cell: IVec3,
-) -> Option<EditCommand> {
-    place_cmd_for_cell_with_rot(level, brush, cell, brush.rot)
-}
-
-fn place_cmd_for_cell_with_rot(
-    level: &LevelDocument,
-    brush: &BlockBrush,
-    cell: IVec3,
-    rot: u8,
-) -> Option<EditCommand> {
-    if level.boundary_solid(cell) {
-        return None;
-    }
-
-    let data = build_block_data(brush.kind, brush.shape, rot, brush.waterlogged, cell);
-    let previous = level.get_block(cell).cloned();
-
-    if previous
-        .as_ref()
-        .is_some_and(|prev| same_block(prev, &data))
-    {
-        return None;
-    }
-
-    Some(EditCommand::Place {
-        position: cell,
-        data,
-        previous,
-    })
-}
-
-fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {
-    level
-        .get_block(cell)
-        .cloned()
-        .map(|previous| EditCommand::Remove {
-            position: cell,
-            previous,
-        })
 }
 
 fn ctrl_pressed(keys: &ButtonInput<KeyCode>) -> bool {

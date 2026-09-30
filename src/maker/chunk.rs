@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use glam::IVec3;
 
 pub const CHUNK_SIZE: i32 = 16;
 

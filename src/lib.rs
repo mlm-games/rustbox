@@ -1,11 +1,16 @@
-use std::cell::Cell;
+pub mod maker;
+
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
+use glam::Vec3;
+use maker::level::LevelDocument;
+use maker::level_file::deserialize_level;
+use maker::level_view::LevelView;
 use repame_shell::{Sim, SimTime};
-use repame_view3d::{
-    BatchDesc, Frame3d, GeomHandle, MeshGroup, OrbitCamera, View3dEvent, Viewport3d,
-};
+use repame_view3d::{BatchDesc, Frame3d, GeomHandle, OrbitCamera, View3dEvent, Viewport3d};
+use repose_core::input::{PhysicalKey, PointerButton, PointerEvent, PointerEventKind};
 use repose_core::{Color, Dp, Modifier, RenderContext, Scheduler, Sp, View, request_frame};
 use repose_ui::{Column, Text, TextStyle, ViewExt, ZStack};
 use web_time::Instant;
@@ -13,30 +18,41 @@ use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+const BUNDLED_LEVEL: &str = include_str!("../assets/levels/01_first_steps.ron");
+
 struct App {
     sim: Sim,
     cam: Rc<Cell<OrbitCamera>>,
-    ground: MeshGroup,
+    world: Rc<RefCell<LevelView>>,
+    button: Rc<Cell<Option<PointerButton>>>,
+    undo_latched: bool,
+    redo_latched: bool,
     last: Instant,
 }
 
 impl App {
     fn new() -> Self {
+        let data = deserialize_level(BUNDLED_LEVEL).expect("bundled level parses");
+        let mut level = LevelDocument::default();
+        level.replace_data(data);
         Self {
             sim: Sim::with_default_step(),
             cam: Rc::new(Cell::new(OrbitCamera {
-                target: Default::default(),
+                target: Vec3::new(0.5, 1.0, 0.0),
                 yaw: -0.7,
-                pitch: 0.7,
-                dist: 34.0,
+                pitch: 0.62,
+                dist: 16.0,
                 fov_y_deg: 45.0,
             })),
-            ground: ground(),
+            world: Rc::new(RefCell::new(LevelView::new(level))),
+            button: Rc::new(Cell::new(None)),
+            undo_latched: false,
+            redo_latched: false,
             last: Instant::now(),
         }
     }
 
-    fn view(&mut self, _sched: &mut Scheduler, _ctx: &RenderContext) -> View {
+    fn view(&mut self, sched: &mut Scheduler, _ctx: &RenderContext) -> View {
         request_frame();
         let now = Instant::now();
         let dt = now
@@ -45,27 +61,46 @@ impl App {
         self.last = now;
         self.sim.step(dt);
 
+        let cam = self.cam.get();
+        let mut world = self.world.borrow_mut();
+        world.tick(cam.target);
         let mut frame = Frame3d {
-            cam: self.cam.get(),
+            cam,
             ..Frame3d::default()
         };
-        frame.push(self.ground.clone());
+        frame.push(ground());
+        world.draw(&mut frame);
 
-        let cam = self.cam.clone();
+        let name = world.name().to_string();
+        let blocks = world.block_count();
+        let chunks = world.chunk_count();
+        let action = world.last_action.clone();
+        drop(world);
+
+        self.hotkeys(sched);
+
+        let cam_rc = self.cam.clone();
+        let world_rc = self.world.clone();
+        let button_rc = self.button.clone();
         let viewport = Viewport3d(
             frame,
             GeomHandle::new(),
             "scene.main",
             BatchDesc::default(),
             move |ev| {
-                let mut c = cam.get();
+                let mut c = cam_rc.get();
                 match ev {
                     View3dEvent::Orbit { dx, dy } => c.orbit(dx, dy),
                     View3dEvent::Pan { dx, dy } => c.pan(dx, dy),
                     View3dEvent::Zoom { factor } => c.zoom(factor),
-                    _ => {}
+                    click => {
+                        let erase = matches!(button_rc.get(), Some(PointerButton::Secondary));
+                        if let Ok(mut world) = world_rc.try_borrow_mut() {
+                            world.click(&click, &c, erase);
+                        }
+                    }
                 }
-                cam.set(c);
+                cam_rc.set(c);
             },
         );
 
@@ -76,21 +111,54 @@ impl App {
                 .offset(Some(Dp(16.0)), Some(Dp(16.0)), None, None)
                 .hit_passthrough(),
         )
-        .child(
-            Text(format!("Rustbox · tick {elapsed:.2}s"))
-                .size(Sp(16.0))
-                .color(Color::from_rgba(255, 255, 255, 255))
-                .single_line(),
-        );
+        .child(vec![
+            line(format!("Rustbox · tick {elapsed:.2}s")),
+            line(format!("{name} · {blocks} blocks · {chunks} chunks")),
+            line("left place · right erase · ctrl+z undo · ctrl+shift+z redo"),
+            line(action),
+        ]);
 
-        ZStack(Modifier::new().fill_max_size()).child(vec![viewport, hud])
+        let button = self.button.clone();
+        ZStack(
+            Modifier::new()
+                .fill_max_size()
+                .on_pointer_down(move |ev: PointerEvent| {
+                    if let PointerEventKind::Down(b) = ev.event {
+                        button.set(Some(b));
+                    }
+                }),
+        )
+        .child(vec![viewport, hud])
+    }
+
+    fn hotkeys(&mut self, sched: &mut Scheduler) {
+        let held = |key: PhysicalKey| sched.held_keys.contains(&key);
+        let ctrl = held(PhysicalKey::ControlLeft) || held(PhysicalKey::ControlRight);
+        let shift = held(PhysicalKey::ShiftLeft) || held(PhysicalKey::ShiftRight);
+        let z = held(PhysicalKey::KeyZ);
+        let y = held(PhysicalKey::KeyY);
+        let undo = ctrl && z && !self.undo_latched;
+        let redo = ctrl && y && !self.redo_latched;
+        self.undo_latched = ctrl && z;
+        self.redo_latched = ctrl && y;
+        if !undo && !redo {
+            return;
+        }
+        let Ok(mut world) = self.world.try_borrow_mut() else {
+            return;
+        };
+        if redo || (undo && shift) {
+            world.redo();
+        } else {
+            world.undo();
+        }
     }
 }
 
-fn ground() -> MeshGroup {
-    let mut group = MeshGroup {
+fn ground() -> repame_view3d::MeshGroup {
+    let mut group = repame_view3d::MeshGroup {
         depth_test: true,
-        ..MeshGroup::default()
+        ..repame_view3d::MeshGroup::default()
     };
     const HALF: i32 = 12;
     for z in -HALF..HALF {
@@ -113,6 +181,13 @@ fn ground() -> MeshGroup {
         }
     }
     group
+}
+
+fn line(text: impl Into<String>) -> View {
+    Text(text.into())
+        .size(Sp(16.0))
+        .color(Color::from_rgba(255, 255, 255, 255))
+        .single_line()
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::prelude::*;
+use glam::{IVec3, Vec3};
 
 use super::block::BlockKind;
 use super::chunk::affected_chunks;
@@ -15,7 +15,7 @@ pub use rustbox_format::level::{
 const AUTO_SIZE_MIN: i32 = 8;
 const AUTO_SIZE_MAX: i32 = 64;
 
-#[derive(Resource, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct LevelDocument {
     pub data: LevelData,
     pub map: HashMap<IVec3, BlockData>,
@@ -550,4 +550,91 @@ fn auto_size(data: &LevelData) -> [i32; 3] {
     let r = (max_abs_xz + 6).clamp(AUTO_SIZE_MIN, AUTO_SIZE_MAX);
     let ry = (max_y + 8).clamp(AUTO_SIZE_MIN, AUTO_SIZE_MAX);
     [r, ry, r]
+}
+
+pub fn raycast_present(
+    level: &LevelDocument,
+    origin: Vec3,
+    dir: Vec3,
+    max_dist: f32,
+) -> Option<(IVec3, IVec3)> {
+    let dir = dir.normalize_or_zero();
+    if dir == Vec3::ZERO {
+        return None;
+    }
+
+    let mut cell = IVec3::new(
+        origin.x.floor() as i32,
+        origin.y.floor() as i32,
+        origin.z.floor() as i32,
+    );
+
+    if level.get_block(cell).is_some() || level.boundary_solid(cell) {
+        return Some((cell, IVec3::ZERO));
+    }
+
+    let step = IVec3::new(
+        dir.x.signum() as i32,
+        dir.y.signum() as i32,
+        dir.z.signum() as i32,
+    );
+
+    let boundary = |o: f32, d: f32, c: i32| -> f32 {
+        if d > 0.0 {
+            (c as f32 + 1.0 - o) / d
+        } else if d < 0.0 {
+            (c as f32 - o) / d
+        } else {
+            f32::INFINITY
+        }
+    };
+
+    let mut t_max = Vec3::new(
+        boundary(origin.x, dir.x, cell.x),
+        boundary(origin.y, dir.y, cell.y),
+        boundary(origin.z, dir.z, cell.z),
+    );
+    let t_delta = Vec3::new(
+        if dir.x != 0.0 {
+            (1.0 / dir.x).abs()
+        } else {
+            f32::INFINITY
+        },
+        if dir.y != 0.0 {
+            (1.0 / dir.y).abs()
+        } else {
+            f32::INFINITY
+        },
+        if dir.z != 0.0 {
+            (1.0 / dir.z).abs()
+        } else {
+            f32::INFINITY
+        },
+    );
+
+    let mut t = 0.0;
+    while t <= max_dist {
+        let normal;
+        if t_max.x < t_max.y && t_max.x < t_max.z {
+            cell.x += step.x;
+            t = t_max.x;
+            t_max.x += t_delta.x;
+            normal = IVec3::new(-step.x, 0, 0);
+        } else if t_max.y < t_max.z {
+            cell.y += step.y;
+            t = t_max.y;
+            t_max.y += t_delta.y;
+            normal = IVec3::new(0, -step.y, 0);
+        } else {
+            cell.z += step.z;
+            t = t_max.z;
+            t_max.z += t_delta.z;
+            normal = IVec3::new(0, 0, -step.z);
+        }
+
+        if level.get_block(cell).is_some() || level.boundary_solid(cell) {
+            return Some((cell, normal));
+        }
+    }
+    None
 }

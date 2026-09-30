@@ -1,7 +1,9 @@
-use bevy::prelude::*;
+use glam::IVec3;
 
+use super::block::{BlockKind, BlockShape};
 use super::entity_data::{ContainedItem, EntityData, LevelEntityId};
 use super::level::{BlockData, LevelDocument};
+use super::mode::BlockBrush;
 use super::track::{TrackData, TrackId, TrackMode};
 
 #[derive(Clone, Debug)]
@@ -99,7 +101,7 @@ pub enum EditCommand {
     },
 }
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct CommandHistory {
     pub undo: Vec<EditCommand>,
     pub redo: Vec<EditCommand>,
@@ -470,4 +472,82 @@ fn cmd_track_id(cmd: &EditCommand) -> TrackId {
         EditCommand::CreateTrack { track } => track.id,
         _ => 0,
     }
+}
+
+pub fn build_block_data(
+    kind: BlockKind,
+    shape: BlockShape,
+    rot: u8,
+    waterlogged: bool,
+    cell: IVec3,
+) -> BlockData {
+    // Water is always a full, unlogged cell fill.
+    let shape = if kind == BlockKind::Water {
+        BlockShape::Full
+    } else if kind.is_thin() {
+        BlockShape::Thin
+    } else {
+        shape
+    };
+    let waterlogged = if kind == BlockKind::Water {
+        false
+    } else {
+        waterlogged
+    };
+    BlockData {
+        position: cell.to_array(),
+        kind,
+        shape,
+        rot,
+        waterlogged,
+    }
+}
+
+pub fn same_block(a: &BlockData, b: &BlockData) -> bool {
+    (a.kind, a.shape, a.rot, a.waterlogged) == (b.kind, b.shape, b.rot, b.waterlogged)
+}
+
+pub fn place_cmd_for_cell(
+    level: &LevelDocument,
+    brush: &BlockBrush,
+    cell: IVec3,
+) -> Option<EditCommand> {
+    place_cmd_for_cell_with_rot(level, brush, cell, brush.rot)
+}
+
+pub fn place_cmd_for_cell_with_rot(
+    level: &LevelDocument,
+    brush: &BlockBrush,
+    cell: IVec3,
+    rot: u8,
+) -> Option<EditCommand> {
+    if level.boundary_solid(cell) {
+        return None;
+    }
+
+    let data = build_block_data(brush.kind, brush.shape, rot, brush.waterlogged, cell);
+    let previous = level.get_block(cell).cloned();
+
+    if previous
+        .as_ref()
+        .is_some_and(|prev| same_block(prev, &data))
+    {
+        return None;
+    }
+
+    Some(EditCommand::Place {
+        position: cell,
+        data,
+        previous,
+    })
+}
+
+pub fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCommand> {
+    level
+        .get_block(cell)
+        .cloned()
+        .map(|previous| EditCommand::Remove {
+            position: cell,
+            previous,
+        })
 }
