@@ -5,6 +5,7 @@ pub mod camera;
 pub mod chunk;
 pub mod collision;
 pub mod commands;
+pub mod entities_runtime;
 pub mod entity_data;
 pub mod interaction;
 pub mod interactive_blocks;
@@ -14,6 +15,7 @@ pub mod level_view;
 pub mod mode;
 pub mod player;
 pub mod props;
+pub mod rapier;
 pub mod track;
 pub mod win;
 

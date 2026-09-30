@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 
 use super::block::BlockKind;
 use super::collision::overlaps_kind;
+use super::entities_runtime::{LinkState, Prowler};
 use super::entity_data::{ContainedItem, EntityKind};
 use super::interaction::contact_he;
 use super::level::{ClearCondition, LevelDocument};
@@ -18,6 +19,9 @@ pub struct MakerUi {
     pub status_timer: f32,
     pub glimmers_collected: u32,
     pub glimmers_total: u32,
+    pub sign_dialog_open: bool,
+    pub sign_dialog_lines: Vec<String>,
+    pub score: u32,
 }
 
 impl MakerUi {
@@ -88,6 +92,10 @@ pub fn detect_goal(world: &mut World, mode: MakerMode) {
         if world.resource::<MakerUi>().goal_latched {
             return Decision::None;
         }
+        let remaining_prowlers = {
+            let mut q = world.query_filtered::<Entity, With<Prowler>>();
+            q.iter(world).count()
+        };
         let mut q = world.query::<(&PlayerTransform, &Player)>();
         let ui = world.resource::<MakerUi>();
         let mut decision = Decision::None;
@@ -96,7 +104,6 @@ pub fn detect_goal(world: &mut World, mode: MakerMode) {
                 continue;
             }
             let clear_ms = (ui.play_timer * 1000.0).round() as u32;
-            let remaining_prowlers = 0;
             if let Some(msg) = clear_condition_blocker(
                 level.data.clear_condition,
                 ui,
@@ -177,6 +184,11 @@ pub fn on_mode_changed(world: &mut World, prev_mode: MakerMode, mode: MakerMode)
         let mut level = world.resource_mut::<LevelDocument>();
         level.entities_dirty = true;
     }
+    {
+        let mut link = world.resource_mut::<LinkState>();
+        link.pulses.clear();
+        link.clock = 0.0;
+    }
     let mut ui = world.resource_mut::<MakerUi>();
     ui.play_timer = 0.0;
     ui.deaths = 0;
@@ -184,6 +196,9 @@ pub fn on_mode_changed(world: &mut World, prev_mode: MakerMode, mode: MakerMode)
     ui.clear_time_secs = 0.0;
     ui.glimmers_collected = 0;
     ui.glimmers_total = glimmers_total;
+    ui.score = 0;
+    ui.sign_dialog_open = false;
+    ui.sign_dialog_lines.clear();
 }
 
 pub fn retry_play(world: &mut World, mode: MakerMode) {
@@ -208,9 +223,12 @@ pub fn retry_play(world: &mut World, mode: MakerMode) {
             ui.play_timer = 0.0;
             ui.deaths = 0;
             ui.glimmers_collected = 0;
+            ui.score = 0;
             ui.clear_time_secs = 0.0;
             ui.status.clear();
             ui.status_timer = 0.0;
+            ui.sign_dialog_open = false;
+            ui.sign_dialog_lines.clear();
         }
         let ids: Vec<Entity> = world
             .query_filtered::<Entity, With<Player>>()

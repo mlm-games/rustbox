@@ -12,11 +12,12 @@ use super::collision::{
     move_and_collide_substepped, overlaps_kind, slope_slide, stand_headroom,
     support_height_footprint,
 };
+use super::entities_runtime::Transform;
 use super::entity_data::LevelEntityId;
 use super::interactive_blocks::OnOffState;
 use super::level::LevelDocument;
 use super::mode::MakerMode;
-use super::props::{ActivePlates, DriftPlate, RuntimeSolids};
+use super::props::{DriftPlate, RuntimeSolids, Velocity};
 
 /// Default jump impulse (shared with stomp bounce etc.).
 pub const JUMP_SPEED: f32 = 9.0;
@@ -611,10 +612,10 @@ pub fn clear_pressed_latch(mut latch: ResMut<PressedLatch>) {
 /// Per-physics-step displacement of a rideable platform. Rapier velocity is
 /// the frame-rate independent source; raw `carry` (per render frame) is only
 /// a fallback for the first frame before velocity exists.
-fn plate_step(drift: &DriftPlate, vel: Option<Vec3>, dt: f32) -> Vec3 {
+fn plate_step(drift: &DriftPlate, vel: Option<&Velocity>, dt: f32) -> Vec3 {
     if let Some(v) = vel {
-        if v.length_squared() > 1e-10 && dt > 0.0 {
-            return v * dt;
+        if v.linear.length_squared() > 1e-10 && dt > 0.0 {
+            return v.linear * dt;
         }
     }
     drift.carry
@@ -653,7 +654,7 @@ pub fn player_controller(
     solids: Res<RuntimeSolids>,
     tuning: Res<MoveTuning>,
     mut trauma: ResMut<Trauma>,
-    plates: Res<ActivePlates>,
+    plates: Query<(Entity, &Transform, &DriftPlate, Option<&Velocity>), Without<Player>>,
     onoff: Res<OnOffState>,
     squash_q: Query<Entity, With<SquashStretch>>,
     mut q: Query<(Entity, &mut PlayerTransform, &mut Player, &mut MoveState)>,
@@ -735,15 +736,15 @@ pub fn player_controller(
             && !player.gripping
             && let Some(ride_e) = player.ground_plate
         {
-            if let Some(ride) = plates.0.iter().find(|p| p.owner == ride_e) {
-                let step = plate_step(&ride.drift, ride.vel, dt);
+            if let Ok((_, ride_tf, ride_drift, ride_vel)) = plates.get(ride_e) {
+                let step = plate_step(ride_drift, ride_vel, dt);
                 if step.length_squared() > 1e-10 {
-                    let over = (transform.translation.x - ride.pos.x).abs()
+                    let over = (transform.translation.x - ride_tf.translation.x).abs()
                         < 0.7 + move_he.x + PLATE_OVER_SLACK
-                        && (transform.translation.z - ride.pos.z).abs()
+                        && (transform.translation.z - ride_tf.translation.z).abs()
                             < 0.7 + move_he.z + PLATE_OVER_SLACK;
                     let feet = transform.translation.y - move_he.y;
-                    let top = ride.pos.y + 0.12;
+                    let top = ride_tf.translation.y + 0.12;
                     if over && (feet - top).abs() <= PLATE_SNAP {
                         transform.translation += step;
                         player.plate_vel = if dt > 0.0 { step / dt } else { Vec3::ZERO };
@@ -1208,16 +1209,15 @@ pub fn player_controller(
         let fell = pos.y <= player.pre_move_pos.y + 0.02;
         let mut on_plate = false;
         let mut landed_plate: Option<(Entity, Vec3)> = None;
-        for plate in &plates.0 {
-            let plate_e = plate.owner;
-            let step = plate_step(&plate.drift, plate.vel, dt);
-            let top = plate.pos.y + 0.12;
+        for (plate_e, dtf, drift, pvel) in &plates {
+            let step = plate_step(drift, pvel, dt);
+            let top = dtf.translation.y + 0.12;
             let prev_top = top - step.y;
-            let over_now = (pos.x - plate.pos.x).abs() < 0.7 + move_he.x + PLATE_OVER_SLACK
-                && (pos.z - plate.pos.z).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
-            let over_prev = (player.pre_move_pos.x - (plate.pos.x - step.x)).abs()
+            let over_now = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x + PLATE_OVER_SLACK
+                && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
+            let over_prev = (player.pre_move_pos.x - (dtf.translation.x - step.x)).abs()
                 < 0.7 + move_he.x + PLATE_OVER_SLACK
-                && (player.pre_move_pos.z - (plate.pos.z - step.z)).abs()
+                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs()
                     < 0.7 + move_he.z + PLATE_OVER_SLACK;
             if !(over_now || over_prev) {
                 continue;
@@ -1621,7 +1621,6 @@ mod tests {
         sim.world.insert_resource(RuntimeSolids::default());
         sim.world.insert_resource(OnOffState::default());
         sim.world.insert_resource(Trauma::default());
-        sim.world.insert_resource(ActivePlates::default());
         sim.world.insert_resource(CameraRig::default());
         sim.add_chained_systems(
             (

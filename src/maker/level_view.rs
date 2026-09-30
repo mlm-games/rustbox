@@ -77,7 +77,7 @@ fn kind_tints() -> HashMap<u32, Rgb> {
         .collect()
 }
 
-fn srgb_to_linear(c: [f32; 3]) -> [f32; 3] {
+pub fn srgb_to_linear(c: [f32; 3]) -> [f32; 3] {
     [linear(c[0]), linear(c[1]), linear(c[2])]
 }
 

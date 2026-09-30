@@ -8,7 +8,18 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use glam::Vec3;
 use maker::camera::{CameraRig, play_camera_follow};
-use maker::interactive_blocks::{OnOffState, reset_onoff_state};
+use maker::entities_runtime::{
+    DropIdCounter, EntityEntities, LinkState, apply_fans, carry_crate_riders,
+    collect_dropped_glimmers, collect_glimmers, collect_heal_orbs, collect_keys,
+    despawn_drops_when_dirty, draw_props, move_prowlers, rebuild_runtime_solids,
+    reconcile_entities, tick_drift_plates, tick_track_followers, touch_checkpoints,
+    touch_speed_rings, update_crumble_plates, update_drops, update_lock_gates, update_relay_gates,
+    update_seals,
+};
+use maker::interaction::{DamageRequests, ForcedMotionRequests, InteractionMemory, UseSelection};
+use maker::interactive_blocks::{
+    OnOffState, PulseClock, reset_onoff_state, reset_pulse_clock, sync_pulse, touch_onoff_switches,
+};
 use maker::level::LevelDocument;
 use maker::level_file::deserialize_level;
 use maker::level_view::LevelView;
@@ -17,8 +28,8 @@ use maker::player::{
     MoveState, MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, Trauma,
     clear_pressed_latch, latch_play_presses, player_controller, spawn_player, sync_mode,
 };
-use maker::props::{ActivePlates, RuntimeSolids};
-use maker::{Paused, interaction, not_paused, win};
+use maker::props::RuntimeSolids;
+use maker::{Paused, interaction, not_paused, rapier, win};
 use repame_shell::{Sim, SimTime, Staging};
 use repame_view3d::{BatchDesc, Frame3d, GeomHandle, OrbitCamera, View3dEvent, Viewport3d};
 use repose_core::input::{KeyEvent, PhysicalKey, PointerButton, PointerEvent, PointerEventKind};
@@ -55,6 +66,7 @@ impl App {
         level.replace_data(data);
         let world = Rc::new(RefCell::new(LevelView::new(&level)));
         let mut sim = Sim::with_default_step();
+        repame_rapier3d::init_world(&mut sim.world, Vec3::new(0.0, -9.81, 0.0), 1.0);
         let player = spawn_player(&mut sim.world, &level);
         sim.world.insert_resource(level);
         sim.world.insert_resource(MakerMode::Edit);
@@ -65,20 +77,37 @@ impl App {
         sim.world.insert_resource(RuntimeSolids::default());
         sim.world.insert_resource(OnOffState::default());
         sim.world.insert_resource(Trauma::default());
-        sim.world.insert_resource(ActivePlates::default());
+        sim.world.insert_resource(EntityEntities::default());
+        sim.world.insert_resource(DropIdCounter::default());
         sim.world.insert_resource(CameraRig::default());
         sim.world.insert_resource(Paused(false));
         sim.world.insert_resource(win::MakerUi::default());
+        sim.world.insert_resource(PulseClock::default());
+        sim.world.insert_resource(InteractionMemory::default());
+        sim.world.insert_resource(ForcedMotionRequests::default());
+        sim.world.insert_resource(UseSelection::default());
+        sim.world.insert_resource(DamageRequests::default());
+        sim.world.insert_resource(LinkState::default());
         sim.add_chained_systems(
             (
                 sync_mode,
+                despawn_drops_when_dirty,
+                reconcile_entities,
                 reset_onoff_state,
+                reset_pulse_clock,
+                tick_drift_plates,
+                tick_track_followers,
+                move_prowlers,
+                carry_crate_riders,
+                rebuild_runtime_solids,
+                apply_fans,
                 player_controller,
                 clear_pressed_latch,
             )
                 .chain()
                 .run_if(not_paused),
         );
+        repame_rapier3d::register_rapier3d_systems(&mut sim);
         Self {
             sim: Rc::new(RefCell::new(sim)),
             cam: Rc::new(Cell::new(OrbitCamera {
@@ -127,14 +156,46 @@ impl App {
                 rig.pitch = cam.pitch;
                 rig.distance = cam.dist.clamp(5.0, 22.0);
             }
+            rapier::release_held_on_mode_change(&mut sim.world);
             win::on_mode_changed(&mut sim.world, self.prev_mode, mode);
             self.prev_mode = mode;
         }
         win::retry_play(&mut sim.world, mode);
+        let entities_rebuilt = sim.world.resource::<LevelDocument>().entities_dirty;
         sim.step(dt);
+        rapier::write_back_bodies(&mut sim.world);
+        rapier::move_held_objects(&mut sim.world);
+        rapier::pickup_throwables(&mut sim.world);
         let elapsed = sim.world.resource::<SimTime>().elapsed_secs;
         let dt_secs = dt.as_secs_f32();
+        sync_pulse(&mut sim.world, dt_secs);
+        interaction::begin_interaction_frame(&mut sim.world, entities_rebuilt);
+        interaction::gather_use_targets(&mut sim.world);
+        interaction::detect_contacts(&mut sim.world);
+        interaction::detect_damage(&mut sim.world);
+        interaction::resolve_use(&mut sim.world, dt_secs);
+        interaction::resolve_launch_pads(&mut sim.world);
+        interaction::resolve_bumpers(&mut sim.world);
+        interaction::resolve_cannons(&mut sim.world);
+        interaction::resolve_teleporters(&mut sim.world);
         interaction::play_hazard_goal(&mut sim.world);
+        touch_onoff_switches(&mut sim.world);
+        update_crumble_plates(&mut sim.world, dt_secs);
+        update_lock_gates(&mut sim.world, dt_secs);
+        update_relay_gates(&mut sim.world);
+        touch_speed_rings(&mut sim.world);
+        touch_checkpoints(&mut sim.world);
+        collect_glimmers(&mut sim.world);
+        collect_dropped_glimmers(&mut sim.world);
+        collect_keys(&mut sim.world);
+        collect_heal_orbs(&mut sim.world);
+        interaction::resolve_damage(&mut sim.world);
+        update_drops(&mut sim.world, dt_secs);
+        update_seals(&mut sim.world);
+        interaction::resolve_forced_motion(&mut sim.world);
+        if mode == MakerMode::Play && !sim.world.resource::<Paused>().0 {
+            rebuild_runtime_solids(&mut sim.world);
+        }
         let looking = self.looked.replace(false);
         play_camera_follow(&mut sim.world, dt_secs, looking, &mut cam);
         win::tick_play_timer(&mut sim.world, mode, dt_secs);
@@ -175,6 +236,11 @@ impl App {
             if !ui.status.is_empty() {
                 play_lines.push(line(ui.status.clone()));
             }
+            if ui.sign_dialog_open {
+                for sign_line in &ui.sign_dialog_lines {
+                    play_lines.push(line(sign_line.clone()));
+                }
+            }
         }
         if mode == MakerMode::Play
             && let (Some(p), Some(tf), Some(ms)) = (
@@ -194,6 +260,7 @@ impl App {
                 if ms.grounded { "grounded" } else { "air" }
             )));
         }
+        draw_props(&sim.world, &mut frame);
         drop(sim);
 
         self.hotkeys(sched);

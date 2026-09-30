@@ -33,6 +33,7 @@ dev_native = ["dev"]
 repame-sim = "0.3"
 repame-shell = "0.3"
 repame-view3d = "0.3"
+repame-rapier3d = "0.3"
 bevy_ecs = "0.19"
 repose-core = "0.31"
 repose-ui = "0.31"
@@ -94,3 +95,5 @@ strip = "debuginfo"
 
 [patch.crates-io]
 repame-view3d = { path = "../repame/crates/repame-view3d" }
+repame-rapier3d = { path = "../repame/crates/repame-rapier3d" }
+repame-sim = { path = "../repame/crates/repame-sim" }

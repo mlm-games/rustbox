@@ -1,4 +1,4 @@
-use bevy_ecs::prelude::{Entity, Resource};
+use bevy_ecs::prelude::{Component, Resource};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,7 @@ impl RuntimeSolids {
     }
 }
 
+#[derive(Component)]
 pub struct DriftPlate {
     pub a: Vec3,
     pub b: Vec3,
@@ -64,12 +65,17 @@ pub struct DriftPlate {
     pub carry: Vec3,
 }
 
-pub struct PlateView {
-    pub owner: Entity,
-    pub pos: Vec3,
-    pub drift: DriftPlate,
-    pub vel: Option<Vec3>,
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Velocity {
+    pub linear: Vec3,
+    pub angular: Vec3,
 }
 
-#[derive(Resource, Default)]
-pub struct ActivePlates(pub Vec<PlateView>);
+impl Velocity {
+    pub fn zero() -> Self {
+        Self {
+            linear: Vec3::ZERO,
+            angular: Vec3::ZERO,
+        }
+    }
+}

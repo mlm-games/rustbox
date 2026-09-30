@@ -1,37 +1,28 @@
 use std::collections::HashMap;
 
-use bevy::asset::RenderAssetUsages;
-use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::prelude::*;
-use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
-use bevy::{
-    animation::RepeatAnimation,
-    animation::prelude::{
-        AnimationClip, AnimationGraph, AnimationGraphHandle, AnimationNodeIndex, AnimationPlayer,
-    },
-    gltf::{Gltf, GltfAssetLabel},
-};
+use bevy_ecs::prelude::*;
+use glam::{IVec3, Quat, Vec3};
+use repame_shell::SimTime;
+use repame_view3d::{Frame3d, MeshGroup};
 
-use game_utils_bevy::juice::Juice;
-use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
-
-use super::MakerCleanup;
-use super::asset_manifest::{EntityModelManifest, SolidShape, TintMode};
-use super::collision::{is_solid, solid_floor_normal, solid_top_height};
+use super::Paused;
+use super::collision::is_solid;
 use super::entity_data::{
-    ALL_ENTITY_KINDS, ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId,
-    link_color,
+    ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId,
 };
 use super::interaction::{
     InteractionMemory, MAX_FAN_FORCE, cap_fan_force, contact_he, gateway_blocked, heal_allowed,
     player_overlaps_volume, solid_blocks,
 };
 use super::level::LevelDocument;
+use super::level_view::srgb_to_linear;
 use super::mode::MakerMode;
-use super::player::{ActionState, MoveState, Player};
+use super::player::{Player, PlayerTransform, Trauma};
+use super::props::{DriftPlate, RuntimeSolid, RuntimeSolids, SolidShape, Velocity};
+use super::rapier::crate_body;
 use super::track::{TrackDataExt, TrackId};
-use super::ui_bridge::MakerUi;
-use bevy_rapier3d::prelude::{Collider, RigidBody, Sensor, Velocity};
+use super::win::MakerUi;
+use repame_rapier3d::BodySnapshot3d;
 
 #[derive(Resource, Default)]
 pub struct EntityEntities(pub HashMap<LevelEntityId, Entity>);
@@ -40,6 +31,33 @@ pub struct EntityEntities(pub HashMap<LevelEntityId, Entity>);
 pub struct LevelEnt {
     pub id: LevelEntityId,
     pub kind: EntityKind,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Transform {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
+impl Transform {
+    pub fn from_translation(translation: Vec3) -> Self {
+        Self {
+            translation,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }
+    }
+
+    pub fn with_rotation(mut self, rotation: Quat) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    pub fn with_scale(mut self, scale: Vec3) -> Self {
+        self.scale = scale;
+        self
+    }
 }
 
 #[derive(Component)]
@@ -55,15 +73,6 @@ pub struct LaunchPad {
 pub struct Seal {
     pub need: u32,
     pub open: bool,
-}
-
-#[derive(Component)]
-pub struct DriftPlate {
-    pub a: Vec3,
-    pub b: Vec3,
-    pub period: f32,
-    pub t: f32,
-    pub carry: Vec3,
 }
 
 #[derive(Component)]
@@ -182,13 +191,7 @@ pub struct DropIdCounter(pub u32);
 
 /// Spawns the pickups a container releases when broken (Crate) or defeated
 /// (Prowler). Multiple items fan out in a circle; single items pop straight up.
-pub fn spawn_drops(
-    commands: &mut Commands,
-    assets: &EntityAssets,
-    counter: &mut DropIdCounter,
-    origin: Vec3,
-    contents: &Contents,
-) {
+pub fn spawn_drops(world: &mut World, origin: Vec3, contents: &Contents) {
     let items: Vec<(EntityKind, u32)> = match contents.item {
         ContainedItem::None => return,
         ContainedItem::Glimmers(n) => (0..n).map(|_| (EntityKind::Glimmer, 0)).collect(),
@@ -200,8 +203,11 @@ pub fn spawn_drops(
     let count = items.len().max(1) as f32;
 
     for (i, (kind, link)) in items.into_iter().enumerate() {
-        counter.0 += 1;
-        let id = DROP_ID_BASE + counter.0;
+        let id = {
+            let mut counter = world.resource_mut::<DropIdCounter>();
+            counter.0 += 1;
+            DROP_ID_BASE + counter.0
+        };
 
         // Fan drops out in a circle; single items pop straight up.
         let angle = (i as f32 / count) * std::f32::consts::TAU;
@@ -216,38 +222,37 @@ pub fn spawn_drops(
             _ => 0.3,
         };
 
-        let mut ecmds = commands.spawn((
-            Transform::from_translation(origin + Vec3::Y * 0.4).with_scale(Vec3::splat(scale)),
-            Mesh3d(assets.marker_mesh.clone()),
-            MeshMaterial3d(assets.mats[&kind].clone()),
-            LevelEnt { id, kind },
-            DroppedItem,
-            DropPop {
-                vel,
-                rest_y: origin.y + 0.4,
-            },
-            MakerCleanup,
-        ));
+        let eid = world
+            .spawn((
+                Transform::from_translation(origin + Vec3::Y * 0.4).with_scale(Vec3::splat(scale)),
+                LevelEnt { id, kind },
+                DroppedItem,
+                DropPop {
+                    vel,
+                    rest_y: origin.y + 0.4,
+                },
+            ))
+            .id();
 
         match kind {
             EntityKind::Glimmer => {
-                ecmds.insert(DropGlimmer);
+                world.entity_mut(eid).insert(DropGlimmer);
             }
             EntityKind::Key => {
-                ecmds.insert(KeyPickup {
+                world.entity_mut(eid).insert(KeyPickup {
                     link: link.clamp(1, 9),
                 });
             }
             EntityKind::HealOrb => {
-                ecmds.insert(HealOrb);
+                world.entity_mut(eid).insert(HealOrb);
             }
             EntityKind::SpeedRing => {
-                ecmds.insert(SpeedRing { duration: 2.5 });
+                world.entity_mut(eid).insert(SpeedRing { duration: 2.5 });
             }
             _ => {}
         }
 
-        ecmds.insert(Sensor);
+        world.entity_mut(eid).insert(Sensor);
     }
 }
 
@@ -305,207 +310,22 @@ pub struct LinkState {
     pub clock: f32,
 }
 
-/// A runtime dynamic solid (gate, seal, crate, crumble plate, wedge) used for
-/// collision. `rotation` keeps rotated visuals physically aligned; the shape
-/// (box or wedge) comes from the asset manifest, never from a render mesh.
-#[derive(Clone, Copy, Debug)]
-pub struct RuntimeSolid {
-    pub owner: Entity,
-    pub center: Vec3,
-    pub shape: SolidShape,
-    pub rotation: Quat,
-}
-
-#[derive(Resource, Default)]
-pub struct RuntimeSolids {
-    pub solids: Vec<RuntimeSolid>,
-}
-
-impl RuntimeSolids {
-    /// Highest solid top surface under the horizontal point `(wx, wz)`
-    /// (wedge tops slope; boxes are flat). `f32::NEG_INFINITY` over open void.
-    pub fn top_height(&self, wx: f32, wz: f32) -> f32 {
-        self.solids
-            .iter()
-            .filter_map(|s| solid_top_height(s, wx, wz))
-            .fold(f32::NEG_INFINITY, f32::max)
-    }
-
-    /// Floor normal underfoot when standing on an entity wedge (flat solids
-    /// report `Vec3::Y`).
-    pub fn floor_normal(&self, wx: f32, wz: f32) -> Vec3 {
-        self.solids
-            .iter()
-            .filter_map(|s| solid_floor_normal(s, wx, wz))
-            .find(|n| n.y < 0.999)
-            .unwrap_or(Vec3::Y)
-    }
-}
-
-#[derive(Resource)]
-pub struct EntityAssets {
-    pub scenes: HashMap<EntityKind, Handle<WorldAsset>>,
-    pub pad_mesh: Handle<Mesh>,
-    pub marker_mesh: Handle<Mesh>,
-    pub sign_board_mesh: Handle<Mesh>,
-    pub wedge_mesh: Handle<Mesh>,
-    pub mats: HashMap<EntityKind, Handle<StandardMaterial>>,
-    pub link_mats: HashMap<u32, Handle<StandardMaterial>>,
-}
-
-/// Marks a spawned glTF scene whose meshes need a material attached once they
-/// exist (the fork's glTF loader spawns meshes without `MeshMaterial3d`).
-#[derive(Component, Clone)]
-pub struct ModelMaterial {
-    pub handle: Handle<StandardMaterial>,
-    pub force: bool,
-}
-
-impl ModelMaterial {
-    /// Fill-only: attach only to meshes that still lack `MeshMaterial3d`.
-    pub fn fallback(handle: Handle<StandardMaterial>) -> Self {
-        Self {
-            handle,
-            force: false,
-        }
-    }
-
-    /// Force-tint: attach to every mesh in the scene, replacing whatever the
-    /// pack shipped (keeps the kind/link color language readable).
-    pub fn force_tint(handle: Handle<StandardMaterial>) -> Self {
-        Self {
-            handle,
-            force: true,
-        }
-    }
-}
-
-/// Requests that an animated model play named clips (looped) once its
-/// `AnimationPlayer` spawns inside the async-loaded scene.
+/// A physics crate (TossCrate) that can be picked up and thrown (F).
 #[derive(Component)]
-pub struct ModelAnim {
-    /// Key into the [`ClipLibrary`] (the model file).
-    pub source: &'static str,
-    pub idle: &'static str,
-    pub run: Option<&'static str>,
-    pub air: Option<&'static str>,
-    pub player: Option<Entity>,
-    pub started: bool,
-    /// clip name -> node index, filled when the graph is built.
-    pub nodes: HashMap<&'static str, AnimationNodeIndex>,
-    pub state: Option<&'static str>,
-}
+pub struct Throwable;
 
-pub fn setup_entity_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
-    manifest: Res<EntityModelManifest>,
-) {
-    let mut mats = HashMap::new();
-    for kind in ALL_ENTITY_KINDS {
-        let mut m = StandardMaterial::from_color(kind.color());
-        m.perceptual_roughness = 0.6;
-        m.metallic = 0.2;
-        if *kind == EntityKind::Glimmer || *kind == EntityKind::HealOrb {
-            m.emissive = LinearRgba::from(kind.color()) * 4.0;
-        }
-        if *kind == EntityKind::Key || *kind == EntityKind::TriggerOrb {
-            m.emissive = LinearRgba::from(kind.color()) * 2.0;
-        }
-        mats.insert(*kind, materials.add(m));
-    }
+/// Marks a crate currently held in front of the player (kinematic body).
+#[derive(Component)]
+pub struct Held;
 
-    let mut link_mats = HashMap::new();
-    for ch in 0..=9 {
-        let mut m = StandardMaterial::from_color(link_color(ch));
-        m.perceptual_roughness = 0.5;
-        m.metallic = 0.1;
-        m.emissive = LinearRgba::from(link_color(ch)) * 3.0;
-        link_mats.insert(ch, materials.add(m));
-    }
+#[derive(Component)]
+pub struct Sensor;
 
-    // Model scenes come from the manifest: every kind with a glTF model gets a
-    // scene handle here; kinds with `model: None` keep their procedural mesh.
-    let mut scenes = HashMap::new();
-    for kind in ALL_ENTITY_KINDS {
-        if let Some(path) = manifest.entry(*kind).and_then(|e| e.model.as_deref()) {
-            let file = path.split('#').next().unwrap_or(path);
-            scenes.insert(
-                *kind,
-                asset_server.load(GltfAssetLabel::Scene(0).from_asset(file.to_owned())),
-            );
-        }
-    }
-
-    let pad_mesh = meshes.add(Cylinder::new(0.45, 0.15));
-    let marker_mesh = meshes.add(Sphere::new(0.28).mesh().ico(3).unwrap());
-    let sign_board_mesh = meshes.add(Cuboid::new(0.9, 0.45, 0.08));
-    let wedge_mesh = meshes.add(build_wedge_mesh());
-
-    commands.insert_resource(EntityAssets {
-        scenes,
-        pad_mesh,
-        marker_mesh,
-        sign_board_mesh,
-        wedge_mesh,
-        mats,
-        link_mats,
-    });
-}
-
-fn build_wedge_mesh() -> Mesh {
-    let mut flat: Vec<([f32; 3], [f32; 3])> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    fn quad(out: &mut Vec<([f32; 3], [f32; 3])>, idx: &mut Vec<u32>, v: [Vec3; 4]) {
-        let n = (v[1] - v[0]).cross(v[2] - v[0]).normalize();
-        let base = out.len() as u32;
-        for p in v {
-            out.push((p.to_array(), n.to_array()));
-        }
-        idx.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
-    }
-    let a = Vec3::new(-0.5, -0.5, -0.5);
-    let b = Vec3::new(0.5, -0.5, -0.5);
-    let c = Vec3::new(0.5, 0.5, -0.5);
-    let d = Vec3::new(-0.5, -0.5, 0.5);
-    let e = Vec3::new(0.5, -0.5, 0.5);
-    let f = Vec3::new(0.5, 0.5, 0.5);
-    quad(&mut flat, &mut indices, [a, d, f, c]); // ramp
-    quad(&mut flat, &mut indices, [d, a, b, e]); // bottom
-    quad(&mut flat, &mut indices, [b, c, f, e]); // back (vertical wall)
-    quad(&mut flat, &mut indices, [a, c, b, b]); // front side (triangle)
-    quad(&mut flat, &mut indices, [e, f, d, d]); // back side (triangle)
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        flat.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        flat.iter().map(|(_, n)| *n).collect::<Vec<_>>(),
-    );
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
-}
-
-fn wedge_prism_points() -> Vec<Vec3> {
-    vec![
-        Vec3::new(-0.5, -0.5, -0.5),
-        Vec3::new(0.5, -0.5, -0.5),
-        Vec3::new(0.5, 0.5, -0.5),
-        Vec3::new(-0.5, -0.5, 0.5),
-        Vec3::new(0.5, -0.5, 0.5),
-        Vec3::new(0.5, 0.5, 0.5),
-    ]
-}
+#[derive(Component)]
+pub struct DriftEndMarker;
 
 /// Gameplay position of an entity's root transform (kept identical to the
-/// pre-model values so hitboxes and proximity checks are unchanged).
+/// pre-model values so hitboxes and proximity checks are unchanged.)
 fn root_y_off(kind: EntityKind) -> f32 {
     match kind {
         EntityKind::Glimmer => 1.0,
@@ -549,404 +369,12 @@ fn stack_offset(index: usize) -> Vec3 {
     ring[index.min(ring.len() - 1)]
 }
 
-fn spawn_sign_procedural(
-    commands: &mut Commands,
-    tf: Transform,
-    id: u32,
-    assets: &EntityAssets,
-) -> Entity {
-    let root = commands
-        .spawn((
-            tf,
-            LevelEnt {
-                id,
-                kind: EntityKind::Sign,
-            },
-            MakerCleanup,
-        ))
-        .id();
-    commands.entity(root).with_children(|p| {
-        p.spawn((
-            Transform::from_xyz(0.0, 0.25, 0.0).with_scale(Vec3::new(0.18, 0.5, 0.18)),
-            Mesh3d(assets.pad_mesh.clone()),
-            MeshMaterial3d(
-                assets
-                    .mats
-                    .get(&EntityKind::Sign)
-                    .cloned()
-                    .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
-            ),
-            MakerCleanup,
-        ));
-        p.spawn((
-            Transform::from_xyz(0.0, 0.55, 0.0),
-            Mesh3d(assets.sign_board_mesh.clone()),
-            MeshMaterial3d(
-                assets
-                    .mats
-                    .get(&EntityKind::Sign)
-                    .cloned()
-                    .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
-            ),
-            MakerCleanup,
-        ));
-    });
-    root
-}
-
-fn spawn_procedural_visual(
-    commands: &mut Commands,
-    kind: EntityKind,
-    tf: Transform,
-    id: u32,
-    assets: &EntityAssets,
-) -> Entity {
-    // Safe fallback for missing material
-    let mat = assets
-        .mats
-        .get(&kind)
-        .cloned()
-        .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone());
-    if kind == EntityKind::Sign {
-        return spawn_sign_procedural(commands, tf, id, assets);
-    }
-    let (mesh, scale) = match kind {
-        EntityKind::LaunchPad
-        | EntityKind::Teleporter
-        | EntityKind::CrumblePlate
-        | EntityKind::OnOffSwitch
-        | EntityKind::DriftPlate => (
-            assets.pad_mesh.clone(),
-            match kind {
-                EntityKind::Teleporter => Vec3::new(0.9, 0.15, 0.9),
-                EntityKind::CrumblePlate => Vec3::new(1.0, 0.12, 1.0),
-                EntityKind::OnOffSwitch => Vec3::new(0.6, 0.18, 0.6),
-                EntityKind::DriftPlate => Vec3::new(1.0, 0.15, 1.0),
-                _ => Vec3::ONE,
-            },
-        ),
-        EntityKind::Wedge => (assets.wedge_mesh.clone(), Vec3::ONE),
-        EntityKind::Seal | EntityKind::RelayGate | EntityKind::LockGate => (
-            assets.marker_mesh.clone(),
-            match kind {
-                EntityKind::LockGate => Vec3::new(1.0, 1.2, 0.25),
-                EntityKind::RelayGate => Vec3::new(1.0, 1.6, 0.25),
-                _ => Vec3::new(0.7, 1.4, 0.35),
-            },
-        ),
-        _ => {
-            let s = match kind {
-                EntityKind::Glimmer | EntityKind::Key | EntityKind::HealOrb => 0.35,
-                EntityKind::SpeedRing => 0.7,
-                EntityKind::Crate | EntityKind::TossCrate => 0.85,
-                EntityKind::Prowler => 0.8,
-                EntityKind::TriggerOrb => 0.4,
-                _ => 0.5,
-            };
-            (assets.marker_mesh.clone(), Vec3::splat(s))
-        }
-    };
-    commands
-        .spawn((
-            tf.with_scale(scale),
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
-            LevelEnt { id, kind },
-            MakerCleanup,
-        ))
-        .id()
-}
-
-/// Per-kind visual config: (scene, material, scene scale, child y-offset).
-/// The root transform keeps its current gameplay position; the glTF model is a
-/// child so gameplay hitboxes and transforms stay untouched. Reads the
-/// manifest, so a `model: None` kind falls back to its procedural mesh.
-/// `TintMode::Kind`/`Link` force the flat color over the pack's own kitbash
-/// materials (`force_tint`); `TintMode::Model` only fills meshes that lack one.
-fn visual_for(
-    kind: EntityKind,
-    link: u32,
-    assets: &EntityAssets,
-    manifest: &EntityModelManifest,
-) -> Option<(Handle<WorldAsset>, ModelMaterial, f32, f32)> {
-    let entry = manifest.entry(kind)?;
-    entry.model.as_deref()?;
-    let scene = assets.scenes.get(&kind)?.clone();
-    let material = match entry.tint {
-        TintMode::Kind => ModelMaterial::fallback(
-            assets
-                .mats
-                .get(&kind)
-                .cloned()
-                .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
-        ),
-        TintMode::Link => ModelMaterial::force_tint(assets.link_mats[&link.min(9)].clone()),
-        // Pack models ship their own multi-material colors; this is only an
-        // inert fill-in for any mesh node that still lacks a material.
-        TintMode::Model => ModelMaterial::fallback(
-            assets
-                .mats
-                .get(&kind)
-                .cloned()
-                .unwrap_or_else(|| assets.mats[&EntityKind::Glimmer].clone()),
-        ),
-    };
-    Some((scene, material, entry.scale, entry.y_offset))
-}
-
-/// glTF scenes instantiate asynchronously (a frame after the WorldAssetRoot is
-/// spawned). Mesh nodes get their materials from the fork's `bevy_pbr` glTF
-/// extension handler, but this runs every frame as a fallback so any mesh node
-/// that still lacks a `MeshMaterial3d` gets our model material attached.
-/// `force = true` materials (kind/link color language) replace whatever the
-/// pack attached; `force = false` only fills meshes that lack a material.
-pub fn apply_model_materials(
-    mut commands: Commands,
-    roots: Query<(Entity, &ModelMaterial)>,
-    children: Query<&Children>,
-    mesh_nodes: Query<(), With<Mesh3d>>,
-    matted: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
-) {
-    for (e, mat) in &roots {
-        let mut found = false;
-        let mut stack: Vec<Entity> = children
-            .get(e)
-            .map(|c| c.iter().collect())
-            .unwrap_or_default();
-        while let Some(ce) = stack.pop() {
-            if mesh_nodes.contains(ce) && (mat.force || !matted.contains(ce)) {
-                commands
-                    .entity(ce)
-                    .insert(MeshMaterial3d(mat.handle.clone()));
-                found = true;
-            }
-            if let Ok(grand) = children.get(ce) {
-                stack.extend(grand.iter());
-            }
-        }
-        if found {
-            commands.entity(e).remove::<ModelMaterial>();
-        }
-    }
-}
-
-/// Which animated model (if any) each entity kind maps to, and its clips.
-fn anim_for(kind: EntityKind) -> Option<ModelAnim> {
-    match kind {
-        EntityKind::Prowler => Some(ModelAnim {
-            source: "prowler",
-            idle: "Idle",
-            run: Some("Walk"),
-            air: None,
-            player: None,
-            started: false,
-            nodes: HashMap::new(),
-            state: None,
-        }),
-        _ => None,
-    }
-}
-
-/// Named animation clips per model, resolved from the loaded [`Gltf`] asset.
-#[derive(Resource, Default)]
-pub struct ClipLibrary {
-    pub pending: Vec<(&'static str, Handle<Gltf>)>,
-    pub clips: HashMap<&'static str, HashMap<Box<str>, Handle<AnimationClip>>>,
-}
-
-/// Kicks off the `Gltf` loads whose `named_animations` we want to resolve.
-pub fn init_clip_library(asset_server: Res<AssetServer>, mut lib: ResMut<ClipLibrary>) {
-    lib.pending = vec![
-        (
-            "player",
-            asset_server.load::<Gltf>("models/cubeworld/Character_Male_2.gltf"),
-        ),
-        (
-            "prowler",
-            asset_server.load::<Gltf>("models/cubeworld/Goblin.gltf"),
-        ),
-    ];
-}
-
-/// Copies `named_animations` from each loaded `Gltf` into the [`ClipLibrary`].
-pub fn collect_clips(mut lib: ResMut<ClipLibrary>, gltfs: Res<Assets<Gltf>>) {
-    let ready: Vec<_> = lib.pending.drain(..).collect();
-    for (key, handle) in ready {
-        if let Some(gltf) = gltfs.get(&handle) {
-            lib.clips.entry(key).or_default().extend(
-                gltf.named_animations
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone())),
-            );
-        } else {
-            lib.pending.push((key, handle));
-        }
-    }
-}
-
-/// Once a model's scene has spawned its `AnimationPlayer`, build an animation
-/// graph from its requested clips, attach it, and start the idle clip.
-pub fn apply_model_anims(
-    mut commands: Commands,
-    lib: Res<ClipLibrary>,
-    mut graphs: ResMut<Assets<AnimationGraph>>,
-    mut roots: Query<(Entity, &mut ModelAnim, &Children)>,
-    children: Query<&Children>,
-    mut anims: Query<(Entity, &mut AnimationPlayer)>,
-) {
-    for (_e, mut anim, root_children) in &mut roots {
-        let Some(player) = anim.player else {
-            let mut stack: Vec<Entity> = root_children.iter().collect();
-            while let Some(ce) = stack.pop() {
-                if anims.contains(ce) {
-                    anim.player = Some(ce);
-                    break;
-                }
-                if let Ok(grand) = children.get(ce) {
-                    stack.extend(grand.iter());
-                }
-            }
-            continue;
-        };
-        if anim.started {
-            continue;
-        }
-        let Some(clips) = lib.clips.get(anim.source) else {
-            continue;
-        };
-        let mut graph = AnimationGraph::new();
-        let root = graph.root;
-        let mut node_count = 0;
-        for name in [Some(anim.idle), anim.run, anim.air].into_iter().flatten() {
-            if let Some(handle) = clips.get(name) {
-                let node = graph.add_clip(handle.clone(), 1.0, root);
-                anim.nodes.insert(name, node);
-                node_count += 1;
-            }
-        }
-        if node_count == 0 {
-            continue;
-        }
-        let handle = graphs.add(graph);
-        commands.entity(player).insert(AnimationGraphHandle(handle));
-        if let Ok((_, mut p)) = anims.get_mut(player)
-            && let Some(node) = anim.nodes.get(anim.idle)
-        {
-            p.start(*node).set_repeat(RepeatAnimation::Forever);
-            anim.state = Some(anim.idle);
-        }
-        anim.started = true;
-    }
-}
-
-/// Switches looped clips at runtime: the player picks Idle/Run/Air from its
-/// velocity + ground state and faces its wish/move direction; the prowler
-/// walks while the game is in Play (its facing is driven by `move_prowlers`).
-pub fn tick_model_anims(
-    time: Res<Time>,
-    mode: Res<MakerMode>,
-    players: Query<(&Player, Option<&MoveState>, &Children)>,
-    level_ents: Query<(&LevelEnt, &Children)>,
-    mut anims: Query<&mut AnimationPlayer>,
-    mut model_anims: Query<(&mut ModelAnim, &mut Transform)>,
-) {
-    let dt = time.delta_secs();
-    let playing = *mode == MakerMode::Play;
-    for (player, move_state, children) in &players {
-        let horizontal = player.velocity.xz().length();
-        let action = move_state.map(|m| m.action).unwrap_or(ActionState::Run);
-        let airborne = matches!(
-            action,
-            ActionState::Air | ActionState::Slam | ActionState::Launch
-        ) || !player.on_ground;
-        // Prefer stick/wish so reverse and strafes face the input immediately
-        // (velocity lags during turnaround and caused moonwalk + "wrong face").
-        let wish = move_state.map(|m| m.wish_dir.xz()).unwrap_or(Vec2::ZERO);
-        let vel = player.velocity.xz();
-        let face = if wish.length_squared() > 1e-4 {
-            wish
-        } else if vel.length_squared() > 0.01 {
-            vel
-        } else {
-            Vec2::ZERO
-        };
-        for child in children.iter() {
-            let Ok((mut anim, mut tf)) = model_anims.get_mut(child) else {
-                continue;
-            };
-            if face.length_squared() > 1e-6 {
-                let d = face.normalize();
-                // Model forward = local -Z (pack convention, matches Prowler):
-                // Quat::from_rotation_y(yaw) * NEG_Z == (d.x, 0, d.y).
-                let target = Quat::from_rotation_y((-d.x).atan2(-d.y));
-                let turn = (1.0 - (-14.0 * dt).exp()).clamp(0.0, 1.0);
-                tf.rotation = tf.rotation.slerp(target, turn);
-            }
-            let target = if matches!(action, ActionState::Swim) {
-                if horizontal > 0.6 {
-                    anim.run.unwrap_or(anim.idle)
-                } else {
-                    anim.idle
-                }
-            } else if airborne && let Some(air) = anim.air {
-                air
-            } else if !airborne
-                && (horizontal > 1.0 || wish.length_squared() > 0.25)
-                && let Some(run) = anim.run
-            {
-                run
-            } else {
-                anim.idle
-            };
-            play_if_needed(&mut anim, target, &mut anims);
-        }
-    }
-    for (ent, children) in &level_ents {
-        if ent.kind != EntityKind::Prowler {
-            continue;
-        }
-        for child in children.iter() {
-            let Ok((mut anim, _tf)) = model_anims.get_mut(child) else {
-                continue;
-            };
-            let target = if playing && let Some(run) = anim.run {
-                run
-            } else {
-                anim.idle
-            };
-            play_if_needed(&mut anim, target, &mut anims);
-        }
-    }
-}
-
-fn play_if_needed(
-    anim: &mut ModelAnim,
-    target: &'static str,
-    anims: &mut Query<&mut AnimationPlayer>,
-) {
-    if anim.state == Some(target) {
-        return;
-    }
-    let (Some(pent), Some(node)) = (anim.player, anim.nodes.get(target).copied()) else {
-        return;
-    };
-    if let Ok(mut p) = anims.get_mut(pent) {
-        p.start(node).set_repeat(RepeatAnimation::Forever);
-        anim.state = Some(target);
-    }
-}
-
 pub fn reconcile_entities(
     mut commands: Commands,
     mut level: ResMut<LevelDocument>,
-    assets: Option<Res<EntityAssets>>,
-    manifest: Res<EntityModelManifest>,
     mut map: ResMut<EntityEntities>,
     mode: Res<MakerMode>,
 ) {
-    let Some(assets) = assets else {
-        return;
-    };
     if !level.entities_dirty && !mode.is_changed() {
         return;
     }
@@ -981,35 +409,15 @@ pub fn reconcile_entities(
             tf.translation = nearest;
         }
 
-        let eid = if let Some((scene, material, scale, y_off)) =
-            visual_for(data.kind, data.link, &assets, &manifest)
-        {
-            let root = commands
-                .spawn((
-                    tf,
-                    LevelEnt {
-                        id: data.id,
-                        kind: data.kind,
-                    },
-                    MakerCleanup,
-                ))
-                .id();
-            commands.entity(root).with_children(|p| {
-                let mut vis = p.spawn((
-                    WorldAssetRoot(scene),
-                    MakerCleanup,
-                    Visibility::default(),
-                    material,
-                    Transform::from_translation(Vec3::Y * y_off).with_scale(Vec3::splat(scale)),
-                ));
-                if let Some(anim) = anim_for(data.kind) {
-                    vis.insert(anim);
-                }
-            });
-            root
-        } else {
-            spawn_procedural_visual(&mut commands, data.kind, tf, data.id, &assets)
-        };
+        let eid = commands
+            .spawn((
+                tf,
+                LevelEnt {
+                    id: data.id,
+                    kind: data.kind,
+                },
+            ))
+            .id();
 
         let ecmds = &mut commands.entity(eid);
 
@@ -1029,12 +437,6 @@ pub fn reconcile_entities(
                     impulse: data.param,
                     yaw_rad: yaw,
                 });
-                if playing {
-                    ecmds.insert((
-                        RigidBody::KinematicPositionBased,
-                        Collider::cylinder(0.15, 0.45),
-                    ));
-                }
             }
             EntityKind::Seal => {
                 ecmds.insert(Seal {
@@ -1042,9 +444,6 @@ pub fn reconcile_entities(
                     open: false,
                 });
                 ecmds.insert(SealSolid);
-                if playing {
-                    ecmds.insert(Collider::cuboid(0.5, 1.0, 0.15));
-                }
             }
             EntityKind::DriftPlate => {
                 let a = data.cell_i().as_vec3() + Vec3::new(0.5, 0.15, 0.5);
@@ -1061,11 +460,7 @@ pub fn reconcile_entities(
                     carry: Vec3::ZERO,
                 });
                 if playing {
-                    ecmds.insert((
-                        RigidBody::KinematicPositionBased,
-                        Collider::cuboid(0.7, 0.12, 0.7),
-                        Velocity::default(),
-                    ));
+                    ecmds.insert(Velocity::zero());
                 }
             }
             EntityKind::Prowler => {
@@ -1104,9 +499,6 @@ pub fn reconcile_entities(
                     want_close: false,
                 });
                 ecmds.insert(GateSolid);
-                if playing {
-                    ecmds.insert((RigidBody::Fixed, Collider::cuboid(0.5, 1.0, 0.2)));
-                }
             }
             EntityKind::Checkpoint => {
                 let cell = data.cell_i();
@@ -1159,9 +551,6 @@ pub fn reconcile_entities(
                     item: data.contents,
                     link: data.link,
                 });
-                if playing {
-                    ecmds.insert((RigidBody::Fixed, Collider::cuboid(0.4, 0.4, 0.4)));
-                }
             }
             EntityKind::Key => {
                 ecmds.insert(KeyPickup {
@@ -1245,12 +634,6 @@ pub fn reconcile_entities(
             }
             EntityKind::Wedge => {
                 ecmds.insert(Wedge);
-                if playing {
-                    ecmds.insert((
-                        RigidBody::Fixed,
-                        Collider::convex_hull(&wedge_prism_points()).unwrap(),
-                    ));
-                }
             }
             EntityKind::TossCrate => {
                 ecmds.insert(CrateProp {
@@ -1261,12 +644,10 @@ pub fn reconcile_entities(
                     link: data.link,
                 });
                 if playing {
-                    ecmds.insert((
-                        RigidBody::Dynamic,
-                        Collider::cuboid(0.4, 0.4, 0.4),
-                        Velocity::default(),
-                        super::rapier::Throwable,
-                    ));
+                    ecmds.insert(Throwable);
+                    ecmds.insert(Velocity::zero());
+                    ecmds.insert(BodySnapshot3d::default());
+                    ecmds.insert(crate_body(tf.translation, tf.rotation));
                 }
             }
         }
@@ -1286,42 +667,97 @@ pub fn reconcile_entities(
         {
             let b = b.as_vec3() + Vec3::new(0.5, 0.15, 0.5);
             commands.spawn((
-                Mesh3d(assets.marker_mesh.clone()),
-                MeshMaterial3d(assets.mats[&EntityKind::Glimmer].clone()),
                 Transform::from_translation(b).with_scale(Vec3::splat(0.3)),
-                MakerCleanup,
+                DriftEndMarker,
             ));
         }
 
         map.0.insert(data.id, eid);
+    }
+}
 
-        if !playing {
-            Juice::pop_in(&mut commands, eid, 0.12);
+/// Drops are run-scoped: whenever the entity layer rebuilds (mode change,
+/// retry), clear them. Must run BEFORE `reconcile_entities` clears the flag.
+pub fn despawn_drops_when_dirty(
+    mut commands: Commands,
+    level: Res<LevelDocument>,
+    mode: Res<MakerMode>,
+    mut counter: ResMut<DropIdCounter>,
+    drops: Query<Entity, With<DroppedItem>>,
+) {
+    if !level.entities_dirty && !mode.is_changed() {
+        return;
+    }
+    for e in &drops {
+        commands.entity(e).despawn();
+    }
+    counter.0 = 0;
+}
+
+pub fn update_drops(world: &mut World, dt: f32) {
+    if world.resource::<Paused>().0 {
+        return;
+    }
+    if *world.resource::<MakerMode>() != MakerMode::Play {
+        return;
+    }
+    let mut finished: Vec<Entity> = Vec::new();
+    {
+        let mut q =
+            world.query_filtered::<(Entity, &mut Transform, &mut DropPop), With<DroppedItem>>();
+        for (e, mut tf, mut pop) in q.iter_mut(world) {
+            pop.vel.y -= 22.0 * dt;
+            tf.translation += pop.vel * dt;
+            if pop.vel.y < 0.0 && tf.translation.y <= pop.rest_y {
+                tf.translation.y = pop.rest_y;
+                finished.push(e);
+            }
         }
     }
-}
-
-pub fn bob_glimmers(time: Res<Time>, mut q: Query<(&mut Transform, &KitAnim), With<GlimmerTag>>) {
-    let t = time.elapsed_secs();
-    for (mut tf, anim) in &mut q {
-        tf.translation.y = anim.base_y + (t * 3.0 + anim.seed).sin() * anim.bob;
-        tf.rotate_y(time.delta_secs() * anim.spin);
+    for e in finished {
+        world.entity_mut(e).remove::<DropPop>();
     }
 }
 
-pub fn animate_kit(time: Res<Time>, mut q: Query<(&mut Transform, &KitAnim)>) {
-    let t = time.elapsed_secs();
-    let dt = time.delta_secs();
-    for (mut tf, anim) in &mut q {
-        if anim.bob > 0.0 {
-            tf.translation.y = anim.base_y + (t * 3.0 + anim.seed).sin() * anim.bob;
+pub fn collect_dropped_glimmers(world: &mut World) {
+    if world.resource::<Paused>().0 {
+        return;
+    }
+    if *world.resource::<MakerMode>() != MakerMode::Play {
+        return;
+    }
+    let pt = {
+        let mut q = world.query_filtered::<&PlayerTransform, With<Player>>();
+        let Ok(pt) = q.single(world) else {
+            return;
+        };
+        pt.translation
+    };
+    let mut to_despawn: Vec<Entity> = Vec::new();
+    {
+        let mut q =
+            world.query_filtered::<(Entity, &Transform), (With<DropGlimmer>, Without<DropPop>)>();
+        for (e, tf) in q.iter(world) {
+            if pt.distance(tf.translation) > 1.0 {
+                continue;
+            }
+            to_despawn.push(e);
         }
-        tf.rotate_y(dt * anim.spin);
+    }
+    for e in to_despawn {
+        world.despawn(e);
+        let (c, t) = {
+            let mut ui = world.resource_mut::<MakerUi>();
+            ui.glimmers_collected += 1;
+            ui.score += 100;
+            (ui.glimmers_collected, ui.glimmers_total)
+        };
+        world
+            .resource_mut::<MakerUi>()
+            .set_status(format!("Glimmer {c}/{t}"));
     }
 }
 
-/// Split sign text into dialog lines of at most 30 chars, honoring `\n`
-/// (mirrors MB64's 5x30 dialog buffer).
 pub fn wrap_sign_text(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for raw in text.split('\n') {
@@ -1340,28 +776,33 @@ pub fn wrap_sign_text(text: &str) -> Vec<String> {
     out
 }
 
-pub fn touch_checkpoints(
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut player_q: Query<(&Transform, &mut Player)>,
-    mut checkpoints: Query<(&LevelEnt, &Transform, &mut Checkpoint)>,
-) {
-    if *mode != MakerMode::Play {
+pub fn touch_checkpoints(world: &mut World) {
+    if world.resource::<Paused>().0 {
+        return;
+    }
+    if *world.resource::<MakerMode>() != MakerMode::Play {
         return;
     }
 
-    let Ok((pt, mut player)) = player_q.single_mut() else {
-        return;
+    let (pt, checkpoint_id) = {
+        let mut q = world.query_filtered::<(&PlayerTransform, &Player), With<Player>>();
+        let Ok((pt, player)) = q.single(world) else {
+            return;
+        };
+        (pt.translation, player.checkpoint_id)
     };
 
     let mut hit: Option<(LevelEntityId, Vec3)> = None;
 
-    for (ent, tf, cp) in &mut checkpoints {
-        if pt.translation.distance(tf.translation) < 1.2 {
-            if player.checkpoint_id != Some(ent.id) {
-                hit = Some((ent.id, cp.respawn));
+    {
+        let mut q = world.query::<(&LevelEnt, &Transform, &Checkpoint)>();
+        for (ent, tf, cp) in q.iter(world) {
+            if pt.distance(tf.translation) < 1.2 {
+                if checkpoint_id != Some(ent.id) {
+                    hit = Some((ent.id, cp.respawn));
+                }
+                break;
             }
-            break;
         }
     }
 
@@ -1369,165 +810,173 @@ pub fn touch_checkpoints(
         return;
     };
 
-    player.checkpoint_id = Some(new_id);
-    player.respawn_point = respawn;
-
-    for (ent, _, mut cp) in &mut checkpoints {
-        cp.active = ent.id == new_id;
+    {
+        let mut q = world.query_filtered::<&mut Player, With<Player>>();
+        let Ok(mut player) = q.single_mut(world) else {
+            return;
+        };
+        player.checkpoint_id = Some(new_id);
+        player.respawn_point = respawn;
     }
 
-    ui.set_status("Checkpoint reached!");
+    {
+        let mut q = world.query::<(&LevelEnt, &mut Checkpoint)>();
+        for (ent, mut cp) in q.iter_mut(world) {
+            cp.active = ent.id == new_id;
+        }
+    }
+
+    world
+        .resource_mut::<MakerUi>()
+        .set_status("Checkpoint reached!");
 }
 
-pub fn collect_glimmers(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    _level: Res<LevelDocument>,
-    mut ui: ResMut<MakerUi>,
-    mut trauma: ResMut<Trauma>,
-    player_q: Query<&Transform, With<Player>>,
-    glimmers: Query<(Entity, &Transform), With<GlimmerTag>>,
-) {
-    if *mode != MakerMode::Play {
+pub fn collect_glimmers(world: &mut World) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    let Ok(pt) = player_q.single() else {
+    if *world.resource::<MakerMode>() != MakerMode::Play {
         return;
+    }
+    let pt = {
+        let mut q = world.query_filtered::<&PlayerTransform, With<Player>>();
+        let Ok(pt) = q.single(world) else {
+            return;
+        };
+        pt.translation
     };
-    let mut to_despawn = Vec::new();
-    for (e, gt) in &glimmers {
-        if pt.translation.distance(gt.translation) < 1.0 {
-            to_despawn.push(e);
+    let mut to_despawn: Vec<Entity> = Vec::new();
+    {
+        let mut q = world.query_filtered::<(Entity, &Transform), With<GlimmerTag>>();
+        for (e, gt) in q.iter(world) {
+            if pt.distance(gt.translation) < 1.0 {
+                to_despawn.push(e);
+            }
         }
     }
     let count = to_despawn.len() as u32;
     for e in to_despawn {
-        commands.entity(e).despawn();
+        world.despawn(e);
     }
     if count > 0 {
+        let mut ui = world.resource_mut::<MakerUi>();
         let total = ui.glimmers_collected + count;
         ui.glimmers_collected = total;
         ui.set_status(format!("Glimmer x{total}"));
-        ScreenEffects::add_trauma(&mut trauma, 0.12 * count as f32);
+        drop(ui);
+        world.resource_mut::<Trauma>().add(0.12 * count as f32);
     }
 }
 
-pub fn update_seals(
-    mode: Res<MakerMode>,
-    ui: Res<MakerUi>,
-    mut commands: Commands,
-    mut q: Query<(Entity, &mut Seal, &mut Visibility, Option<&SealSolid>)>,
-) {
-    if *mode != MakerMode::Play {
+pub fn update_seals(world: &mut World) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    for (e, mut seal, mut vis, solid) in &mut q {
-        let should_open = ui.glimmers_collected >= seal.need;
-        if should_open && !seal.open {
+    if *world.resource::<MakerMode>() != MakerMode::Play {
+        return;
+    }
+    let to_open: Vec<Entity> = {
+        let mut q = world.query::<(Entity, &Seal)>();
+        let ui = world.resource::<MakerUi>();
+        q.iter(world)
+            .filter(|(_, seal)| ui.glimmers_collected >= seal.need && !seal.open)
+            .map(|(e, _)| e)
+            .collect()
+    };
+    for e in to_open {
+        if let Some(mut seal) = world.get_mut::<Seal>(e) {
             seal.open = true;
-            *vis = Visibility::Hidden;
-            if solid.is_some() {
-                commands.entity(e).remove::<SealSolid>();
-            }
-            // Remove the Rapier collider in the same system: previously it was
-            // dropped async in `rapier.rs` with undefined order, leaving a
-            // 1-frame visual-open / physics-solid window for thrown crates.
-            commands
-                .entity(e)
-                .remove::<bevy_rapier3d::prelude::Collider>();
+        }
+        if world.get::<SealSolid>(e).is_some() {
+            world.entity_mut(e).remove::<SealSolid>();
         }
     }
 }
 
 /// Gates open while (clock - last_pulse) < duration; close crush-safe, waiting
 /// for every body (player / crate / prowler) to clear the doorway.
-pub fn update_relay_gates(
-    mode: Res<MakerMode>,
-    link: Res<LinkState>,
-    solids: Res<RuntimeSolids>,
-    mut commands: Commands,
-    player_q: Query<(&Transform, &Player)>,
-    prowlers: Query<&Transform, With<Prowler>>,
-    crates: Query<&Transform, With<CrateProp>>,
-    mut gates: Query<(Entity, &Transform, &mut RelayGate, &mut Visibility), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
+pub fn update_relay_gates(world: &mut World) {
+    if world.resource::<Paused>().0 {
+        return;
+    }
+    if *world.resource::<MakerMode>() != MakerMode::Play {
         return;
     }
     let mut bodies: Vec<(Vec3, Vec3)> = Vec::new();
-    if let Ok((pt, p)) = player_q.single() {
-        bodies.push((pt.translation, contact_he(p)));
+    {
+        let mut q = world.query_filtered::<(&PlayerTransform, &Player), With<Player>>();
+        if let Ok((pt, p)) = q.single(world) {
+            bodies.push((pt.translation, contact_he(p)));
+        }
     }
-    for t in &prowlers {
-        bodies.push((t.translation, Vec3::splat(0.35)));
+    {
+        let mut q = world.query_filtered::<&Transform, With<Prowler>>();
+        for t in q.iter(world) {
+            bodies.push((t.translation, Vec3::splat(0.35)));
+        }
     }
-    for t in &crates {
-        bodies.push((t.translation, Vec3::splat(0.5)));
+    {
+        let mut q = world.query_filtered::<&Transform, With<CrateProp>>();
+        for t in q.iter(world) {
+            bodies.push((t.translation, Vec3::splat(0.5)));
+        }
     }
+    let (pulses, clock) = {
+        let link = world.resource::<LinkState>();
+        (link.pulses.clone(), link.clock)
+    };
+    let solids = RuntimeSolids {
+        solids: world.resource::<RuntimeSolids>().solids.clone(),
+    };
+    let mut actions: Vec<(Entity, bool)> = Vec::new();
+    {
+        let mut q = world.query::<(Entity, &LevelEnt, &Transform, &mut RelayGate)>();
+        for (e, le, gt, mut gate) in q.iter_mut(world) {
+            let powered = gate.channel != 0
+                && pulses
+                    .get(&gate.channel)
+                    .is_some_and(|t| clock - t < gate.duration);
 
-    for (e, gt, mut gate, mut vis) in &mut gates {
-        let powered = gate.channel != 0
-            && link
-                .pulses
-                .get(&gate.channel)
-                .is_some_and(|t| link.clock - t < gate.duration);
-
-        if powered && !gate.open {
-            gate.open = true;
-            gate.want_close = false;
-            *vis = Visibility::Hidden;
-            commands.entity(e).remove::<GateSolid>();
-            commands.entity(e).remove::<Collider>();
-        } else if !powered && gate.open {
-            // Crush-safe close: wait until nothing (body or solid) is in the
-            // doorway. A gate never blocks its own doorway.
-            if gateway_blocked(
-                bodies.iter().copied(),
-                gt.translation,
-                Vec3::new(0.5, 1.0, 0.2),
-            ) || solid_blocks(&solids, e, gt.translation, Vec3::new(0.5, 1.0, 0.2))
-            {
-                gate.want_close = true;
-            } else {
-                gate.open = false;
+            if powered && !gate.open {
+                gate.open = true;
                 gate.want_close = false;
-                *vis = Visibility::Visible;
-                commands.entity(e).insert(GateSolid);
-                commands.entity(e).insert(Collider::cuboid(0.5, 1.0, 0.2));
+                actions.push((e, true));
+            } else if !powered && gate.open {
+                // Crush-safe close: wait until nothing (body or solid) is in the
+                // doorway. A gate never blocks its own doorway.
+                if gateway_blocked(
+                    bodies.iter().copied(),
+                    gt.translation,
+                    Vec3::new(0.5, 1.0, 0.2),
+                ) || solid_blocks(&solids, le.id, gt.translation, Vec3::new(0.5, 1.0, 0.2))
+                {
+                    gate.want_close = true;
+                } else {
+                    gate.open = false;
+                    gate.want_close = false;
+                    actions.push((e, false));
+                }
             }
         }
     }
-}
-
-/// Edit-mode gizmos: dashed lines between same-channel linked entities.
-pub fn draw_link_gizmos(mode: Res<MakerMode>, level: Res<LevelDocument>, mut gizmos: Gizmos) {
-    if *mode != MakerMode::Edit {
-        return;
-    }
-    let linked: Vec<_> = level
-        .data
-        .entities
-        .iter()
-        .filter(|e| e.link != 0 && e.kind.uses_link())
-        .collect();
-    for a in &linked {
-        for b in linked.iter().filter(|g| g.link == a.link && g.id != a.id) {
-            let pa = a.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
-            let pb = b.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
-            gizmos.line(pa, pb, link_color(a.link));
+    for (e, open) in actions {
+        if open {
+            world.entity_mut(e).remove::<GateSolid>();
+        } else {
+            world.entity_mut(e).insert(GateSolid);
         }
     }
 }
 
 pub fn tick_drift_plates(
-    time: Res<Time<Fixed>>,
+    time: Res<SimTime>,
     _mode: Res<MakerMode>,
     mut plates: Query<
         (&mut Transform, &mut DriftPlate, Option<&mut Velocity>),
         Without<TrackFollower>,
     >,
 ) {
-    let dt = time.delta_secs();
+    let dt = time.delta_secs;
     for (mut tf, mut drift, vel) in &mut plates {
         let prev = tf.translation;
         drift.t = (drift.t + dt) % (drift.period * 2.0);
@@ -1550,7 +999,7 @@ pub fn tick_drift_plates(
 }
 
 pub fn tick_track_followers(
-    time: Res<Time<Fixed>>,
+    time: Res<SimTime>,
     level: Res<LevelDocument>,
     _mode: Res<MakerMode>,
     mut followers: Query<(
@@ -1560,7 +1009,7 @@ pub fn tick_track_followers(
         Option<&mut Velocity>,
     )>,
 ) {
-    let dt = time.delta_secs();
+    let dt = time.delta_secs;
     for (mut tf, mut follow, drift, vel) in &mut followers {
         let Some(track) = level.track(follow.track_id) else {
             continue;
@@ -1588,17 +1037,17 @@ pub fn tick_track_followers(
 }
 
 pub fn move_prowlers(
-    time: Res<Time<Fixed>>,
+    time: Res<SimTime>,
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
     solids: Res<RuntimeSolids>,
     plates: Query<(&Transform, &DriftPlate, Option<&Velocity>), Without<Prowler>>,
-    mut q: Query<(Entity, &mut Transform, &mut Prowler)>,
+    mut q: Query<(&LevelEnt, &mut Transform, &mut Prowler)>,
 ) {
     if *mode != MakerMode::Play {
         return;
     }
-    let dt = time.delta_secs();
+    let dt = time.delta_secs;
 
     let mut steps: Vec<(Vec3, Vec3, Vec3)> = Vec::new();
     if dt > 0.0 {
@@ -1626,7 +1075,7 @@ pub fn move_prowlers(
         Vec3::ZERO
     };
 
-    for (entity, mut tf, mut p) in &mut q {
+    for (le, mut tf, mut p) in &mut q {
         if p.on_track {
             let delta = tf.translation - p.prev;
             let flat = Vec3::new(delta.x, 0.0, delta.z);
@@ -1659,8 +1108,7 @@ pub fn move_prowlers(
         let ledge = !is_solid(&level, ahead_cell - IVec3::Y);
         // Closed gates/seals/crates are entity solids, not level cells:
         // without this prowlers walk straight through them.
-        let blocked_by_prop =
-            crate::maker::interaction::solid_blocks(&solids, entity, next, Vec3::splat(0.35));
+        let blocked_by_prop = solid_blocks(&solids, le.id, next, Vec3::splat(0.35));
         let headroom = is_solid(&level, ahead_cell + IVec3::Y);
 
         if wall || ledge || blocked_by_prop || headroom {
@@ -1676,23 +1124,15 @@ pub fn move_prowlers(
 /// Dynamic (thrown/held) crates ride through Rapier friction via the platform
 /// velocity instead and are skipped here.
 pub fn carry_crate_riders(
-    time: Res<Time<Fixed>>,
+    time: Res<SimTime>,
     mode: Res<MakerMode>,
     plates: Query<(&Transform, &DriftPlate, Option<&Velocity>), Without<CrateProp>>,
-    mut crates: Query<
-        &mut Transform,
-        (
-            With<CrateProp>,
-            Without<Prowler>,
-            Without<super::rapier::Throwable>,
-            Without<super::rapier::Held>,
-        ),
-    >,
+    mut crates: Query<&mut Transform, (With<CrateProp>, Without<Prowler>, Without<Held>)>,
 ) {
     if *mode != MakerMode::Play {
         return;
     }
-    let dt = time.delta_secs();
+    let dt = time.delta_secs;
     if dt <= 0.0 {
         return;
     }
@@ -1724,70 +1164,80 @@ pub fn carry_crate_riders(
     }
 }
 
-pub fn rebuild_runtime_solids(
-    mut solids: ResMut<RuntimeSolids>,
-    seals: Query<(Entity, &Transform, &Seal), With<SealSolid>>,
-    gates: Query<(Entity, &Transform, &RelayGate), With<GateSolid>>,
-    lock_gates: Query<(Entity, &Transform, &LockGate)>,
-    crates: Query<(Entity, &Transform, &CrateProp), Without<super::rapier::Held>>,
-    plates: Query<(Entity, &Transform, &CrumblePlate)>,
-    wedges: Query<(Entity, &Transform), With<Wedge>>,
-    pads: Query<(Entity, &Transform), With<LaunchPad>>,
-    drift: Query<(Entity, &Transform), With<DriftPlate>>,
-) {
-    let mut out = build_solids(
-        seals
-            .iter()
-            .map(|(e, t, s)| (e, t.translation, t.rotation, s.open))
-            .collect(),
-        gates
-            .iter()
-            .map(|(e, t, g)| (e, t.translation, t.rotation, g.open))
-            .collect(),
-        lock_gates
-            .iter()
-            .map(|(e, t, l)| (e, t.translation, t.rotation, l.open))
-            .collect(),
-        crates
-            .iter()
-            .map(|(e, t, _)| (e, t.translation, t.rotation))
-            .collect(),
-        plates
-            .iter()
-            .map(|(e, t, p)| (e, t.translation, t.rotation, p.gone))
-            .collect(),
-        wedges
-            .iter()
-            .map(|(e, t)| (e, t.translation, t.rotation))
-            .collect(),
-        pads.iter()
-            .map(|(e, t)| (e, t.translation, t.rotation))
-            .collect(),
-    );
+pub fn rebuild_runtime_solids(world: &mut World) {
+    let seals: Vec<(LevelEntityId, Vec3, Quat, bool)> = {
+        let mut q = world.query_filtered::<(&LevelEnt, &Transform, &Seal), With<SealSolid>>();
+        q.iter(world)
+            .map(|(le, t, s)| (le.id, t.translation, t.rotation, s.open))
+            .collect()
+    };
+    let gates: Vec<(LevelEntityId, Vec3, Quat, bool)> = {
+        let mut q = world.query_filtered::<(&LevelEnt, &Transform, &RelayGate), With<GateSolid>>();
+        q.iter(world)
+            .map(|(le, t, g)| (le.id, t.translation, t.rotation, g.open))
+            .collect()
+    };
+    let lock_gates: Vec<(LevelEntityId, Vec3, Quat, bool)> = {
+        let mut q = world.query::<(&LevelEnt, &Transform, &LockGate)>();
+        q.iter(world)
+            .map(|(le, t, l)| (le.id, t.translation, t.rotation, l.open))
+            .collect()
+    };
+    let crates: Vec<(LevelEntityId, Vec3, Quat)> = {
+        let mut q = world.query_filtered::<(&LevelEnt, &Transform, &CrateProp), Without<Held>>();
+        q.iter(world)
+            .map(|(le, t, _)| (le.id, t.translation, t.rotation))
+            .collect()
+    };
+    let plates: Vec<(LevelEntityId, Vec3, Quat, bool)> = {
+        let mut q = world.query::<(&LevelEnt, &Transform, &CrumblePlate)>();
+        q.iter(world)
+            .map(|(le, t, p)| (le.id, t.translation, t.rotation, p.gone))
+            .collect()
+    };
+    let wedges: Vec<(LevelEntityId, Vec3, Quat)> = {
+        let mut q = world.query_filtered::<(&LevelEnt, &Transform), With<Wedge>>();
+        q.iter(world)
+            .map(|(le, t)| (le.id, t.translation, t.rotation))
+            .collect()
+    };
+    let pads: Vec<(LevelEntityId, Vec3, Quat)> = {
+        let mut q = world.query_filtered::<(&LevelEnt, &Transform), With<LaunchPad>>();
+        q.iter(world)
+            .map(|(le, t)| (le.id, t.translation, t.rotation))
+            .collect()
+    };
+    let drift: Vec<(LevelEntityId, Vec3, Quat)> = {
+        let mut q = world.query_filtered::<(&LevelEnt, &Transform), With<DriftPlate>>();
+        q.iter(world)
+            .map(|(le, t)| (le.id, t.translation, t.rotation))
+            .collect()
+    };
+    let mut out = build_solids(seals, gates, lock_gates, crates, plates, wedges, pads);
     // Drift plates are moving platforms: give the custom collider their real
     // footprint so the player lands on / is stopped by them, not just the
     // special-case ride. Matches the rapier cuboid(0.7, 0.12, 0.7).
-    for (e, t) in &drift {
+    for (le, center, rotation) in &drift {
         out.push(RuntimeSolid {
-            owner: e,
-            center: t.translation,
+            owner: *le,
+            center: *center,
             shape: SolidShape::Box(0.7, 0.12, 0.7),
-            rotation: t.rotation,
+            rotation: *rotation,
         });
     }
-    solids.solids = out;
+    world.resource_mut::<RuntimeSolids>().solids = out;
 }
 
 /// Pure solid-table builder (shared with tests). Collision state derives from
 /// authoritative open/gone flags, never from visibility.
 pub fn build_solids(
-    seals: Vec<(Entity, Vec3, Quat, bool)>,
-    gates: Vec<(Entity, Vec3, Quat, bool)>,
-    lock_gates: Vec<(Entity, Vec3, Quat, bool)>,
-    crates: Vec<(Entity, Vec3, Quat)>,
-    plates: Vec<(Entity, Vec3, Quat, bool)>,
-    wedges: Vec<(Entity, Vec3, Quat)>,
-    pads: Vec<(Entity, Vec3, Quat)>,
+    seals: Vec<(LevelEntityId, Vec3, Quat, bool)>,
+    gates: Vec<(LevelEntityId, Vec3, Quat, bool)>,
+    lock_gates: Vec<(LevelEntityId, Vec3, Quat, bool)>,
+    crates: Vec<(LevelEntityId, Vec3, Quat)>,
+    plates: Vec<(LevelEntityId, Vec3, Quat, bool)>,
+    wedges: Vec<(LevelEntityId, Vec3, Quat)>,
+    pads: Vec<(LevelEntityId, Vec3, Quat)>,
 ) -> Vec<RuntimeSolid> {
     let mut out = Vec::new();
     for (e, center, rotation, open) in seals {
@@ -1865,9 +1315,9 @@ pub fn build_solids(
 /// PlayerMotion (before the controller), independent of forced-motion state
 /// (which `begin_interaction_frame` clears each frame).
 pub fn apply_fans(
-    time: Res<Time<Fixed>>,
+    time: Res<SimTime>,
     mode: Res<MakerMode>,
-    mut player_q: Query<(&Transform, &mut Player)>,
+    mut player_q: Query<(&PlayerTransform, &mut Player)>,
     fans: Query<(&Transform, &Fan), Without<Player>>,
 ) {
     if *mode != MakerMode::Play {
@@ -1876,7 +1326,7 @@ pub fn apply_fans(
     let Ok((pt, mut player)) = player_q.single_mut() else {
         return;
     };
-    let dt = time.delta_secs();
+    let dt = time.delta_secs;
 
     let mut force = Vec3::ZERO;
     for (tf, fan) in &fans {
@@ -1902,93 +1352,52 @@ pub fn apply_fans(
     player.velocity += cap_fan_force(force, MAX_FAN_FORCE * dt.max(1e-4));
 }
 
-pub fn update_drops(
-    time: Res<Time>,
-    mut commands: Commands,
-    mut q: Query<(Entity, &mut Transform, &mut DropPop), With<DroppedItem>>,
-) {
-    let dt = time.delta_secs();
-    for (e, mut tf, mut pop) in &mut q {
-        pop.vel.y -= 22.0 * dt;
-        tf.translation += pop.vel * dt;
-        if pop.vel.y < 0.0 && tf.translation.y <= pop.rest_y {
-            tf.translation.y = pop.rest_y;
-            commands.entity(e).remove::<DropPop>();
-        }
-    }
-}
-
-pub fn collect_dropped_glimmers(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    player_q: Query<(&Transform, &Player)>,
-    drops: Query<(Entity, &Transform), (With<DropGlimmer>, Without<DropPop>)>,
-) {
-    if *mode != MakerMode::Play {
+pub fn collect_keys(world: &mut World) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    let Ok((pt, _)) = player_q.single() else {
+    if *world.resource::<MakerMode>() != MakerMode::Play {
         return;
+    }
+    let (pt, he, player_e) = {
+        let mut q = world.query_filtered::<(Entity, &PlayerTransform, &Player), With<Player>>();
+        let Ok((e, pt, player)) = q.single(world) else {
+            return;
+        };
+        (pt.translation, player.half_extents, e)
     };
-
-    for (e, tf) in &drops {
-        if pt.translation.distance(tf.translation) > 1.0 {
-            continue;
+    let mut hits: Vec<(Entity, LevelEntityId, usize)> = Vec::new();
+    {
+        let mut q = world.query_filtered::<
+            (Entity, &Transform, &LevelEnt, &KeyPickup),
+            (Without<Player>, Without<DropPop>),
+        >();
+        for (e, tf, ent, key) in q.iter(world) {
+            if !player_overlaps_volume(pt, he, tf.translation, Vec3::splat(0.5)) {
+                continue;
+            }
+            hits.push((e, ent.id, key.link as usize));
         }
-        commands.entity(e).despawn();
-        ui.glimmers_collected += 1;
-        ui.score += 100;
-        let (c, t) = (ui.glimmers_collected, ui.glimmers_total);
-        ui.set_status(format!("Glimmer {c}/{t}"));
     }
-}
-
-/// Drops are run-scoped: whenever the entity layer rebuilds (mode change,
-/// retry), clear them. Must run BEFORE `reconcile_entities` clears the flag.
-pub fn despawn_drops_when_dirty(
-    mut commands: Commands,
-    level: Res<LevelDocument>,
-    mode: Res<MakerMode>,
-    mut counter: ResMut<DropIdCounter>,
-    drops: Query<Entity, With<DroppedItem>>,
-) {
-    if !level.entities_dirty && !mode.is_changed() {
+    if hits.is_empty() {
         return;
     }
-    for e in &drops {
-        commands.entity(e).despawn();
-    }
-    counter.0 = 0;
-}
-
-pub fn collect_keys(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut map: ResMut<EntityEntities>,
-    mut player_q: Query<(&Transform, &mut Player)>,
-    keys: Query<(Entity, &Transform, &LevelEnt, &KeyPickup), (Without<Player>, Without<DropPop>)>,
-) {
-    if *mode != MakerMode::Play {
-        return;
-    }
-    let Ok((pt, mut player)) = player_q.single_mut() else {
-        return;
-    };
-    let he = player.half_extents;
-
-    for (e, tf, ent, key) in &keys {
-        if !player_overlaps_volume(pt.translation, he, tf.translation, Vec3::splat(0.5)) {
-            continue;
+    {
+        let mut q = world.query::<&mut Player>();
+        if let Ok(mut player) = q.get_mut(world, player_e) {
+            for (_, _, ch) in &hits {
+                if *ch < player.keys.len() {
+                    player.keys[*ch] = player.keys[*ch].saturating_add(1);
+                }
+            }
         }
-        let ch = key.link as usize;
-        if ch < player.keys.len() {
-            player.keys[ch] = player.keys[ch].saturating_add(1);
-        }
-        commands.entity(e).despawn();
-        map.0.remove(&ent.id);
-        ui.set_status(format!("Key (ch {ch})"));
+    }
+    for (e, id, ch) in hits {
+        world.despawn(e);
+        world.resource_mut::<EntityEntities>().0.remove(&id);
+        world
+            .resource_mut::<MakerUi>()
+            .set_status(format!("Key (ch {ch})"));
     }
 }
 
@@ -1996,32 +1405,38 @@ pub fn collect_keys(
 /// (`interaction::resolve_use`). This system handles timed closing and re-arms
 /// the gate; closing waits until the doorway is clear, so it never consumes a
 /// second key merely because a timed gate closed while the player stayed near.
-pub fn update_lock_gates(
-    time: Res<Time>,
-    mode: Res<MakerMode>,
-    solids: Res<RuntimeSolids>,
-    player_q: Query<(&Transform, &Player)>,
-    prowlers: Query<&Transform, With<Prowler>>,
-    crates: Query<&Transform, With<CrateProp>>,
-    mut gates: Query<(Entity, &mut LockGate, &mut Visibility, &Transform), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
+pub fn update_lock_gates(world: &mut World, dt: f32) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    let dt = time.delta_secs();
-
+    if *world.resource::<MakerMode>() != MakerMode::Play {
+        return;
+    }
     let mut bodies: Vec<(Vec3, Vec3)> = Vec::new();
-    if let Ok((pt, p)) = player_q.single() {
-        bodies.push((pt.translation, contact_he(p)));
+    {
+        let mut q = world.query_filtered::<(&PlayerTransform, &Player), With<Player>>();
+        if let Ok((pt, p)) = q.single(world) {
+            bodies.push((pt.translation, contact_he(p)));
+        }
     }
-    for t in &prowlers {
-        bodies.push((t.translation, Vec3::splat(0.35)));
+    {
+        let mut q = world.query_filtered::<&Transform, With<Prowler>>();
+        for t in q.iter(world) {
+            bodies.push((t.translation, Vec3::splat(0.35)));
+        }
     }
-    for t in &crates {
-        bodies.push((t.translation, Vec3::splat(0.5)));
+    {
+        let mut q = world.query_filtered::<&Transform, With<CrateProp>>();
+        for t in q.iter(world) {
+            bodies.push((t.translation, Vec3::splat(0.5)));
+        }
     }
+    let solids = RuntimeSolids {
+        solids: world.resource::<RuntimeSolids>().solids.clone(),
+    };
 
-    for (e, mut gate, mut vis, tf) in &mut gates {
+    let mut q = world.query::<(&LevelEnt, &Transform, &mut LockGate)>();
+    for (le, tf, mut gate) in q.iter_mut(world) {
         if !gate.open {
             continue;
         }
@@ -2035,126 +1450,411 @@ pub fn update_lock_gates(
                 tf.translation,
                 Vec3::new(0.55, 1.2, 0.3),
             )
-            && !solid_blocks(&solids, e, tf.translation, Vec3::new(0.55, 1.2, 0.3))
+            && !solid_blocks(&solids, le.id, tf.translation, Vec3::new(0.55, 1.2, 0.3))
         {
             gate.open = false;
-            *vis = Visibility::Visible;
         }
     }
 }
 
 /// Heal orbs use shape overlap and are only consumed when armor is below the
 /// cap. Drop-pop animation still blocks pickup via `Without<DropPop>`.
-pub fn collect_heal_orbs(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut map: ResMut<EntityEntities>,
-    mut player_q: Query<(&Transform, &mut Player)>,
-    orbs: Query<
-        (Entity, &Transform, &LevelEnt),
-        (With<HealOrb>, Without<Player>, Without<DropPop>),
-    >,
-) {
-    if *mode != MakerMode::Play {
+pub fn collect_heal_orbs(world: &mut World) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    let Ok((pt, mut player)) = player_q.single_mut() else {
+    if *world.resource::<MakerMode>() != MakerMode::Play {
         return;
+    }
+    let (pt, he, player_e) = {
+        let mut q = world.query_filtered::<(Entity, &PlayerTransform, &Player), With<Player>>();
+        let Ok((e, pt, player)) = q.single(world) else {
+            return;
+        };
+        (pt.translation, player.half_extents, e)
     };
-    let he = player.half_extents;
-
-    for (e, tf, ent) in &orbs {
-        if !player_overlaps_volume(pt.translation, he, tf.translation, Vec3::splat(0.5)) {
+    let mut hits: Vec<(Entity, LevelEntityId)> = Vec::new();
+    {
+        let mut q = world.query_filtered::<
+            (Entity, &Transform, &LevelEnt),
+            (With<HealOrb>, Without<Player>, Without<DropPop>),
+        >();
+        for (e, tf, ent) in q.iter(world) {
+            if !player_overlaps_volume(pt, he, tf.translation, Vec3::splat(0.5)) {
+                continue;
+            }
+            hits.push((e, ent.id));
+        }
+    }
+    if hits.is_empty() {
+        return;
+    }
+    let mut armor = {
+        let mut q = world.query::<&mut Player>();
+        let Ok(player) = q.get_mut(world, player_e) else {
+            return;
+        };
+        player.armor
+    };
+    let mut status: Option<String> = None;
+    for (e, id) in hits {
+        if !heal_allowed(armor) {
+            status = Some("Armor full".to_string());
             continue;
         }
-        if !heal_allowed(player.armor) {
-            ui.set_status("Armor full");
-            continue;
+        armor += 1;
+        world.despawn(e);
+        world.resource_mut::<EntityEntities>().0.remove(&id);
+        status = Some(format!("Armor {}", armor));
+    }
+    {
+        let mut q = world.query::<&mut Player>();
+        if let Ok(mut player) = q.get_mut(world, player_e) {
+            player.armor = armor;
         }
-        player.armor += 1;
-        commands.entity(e).despawn();
-        map.0.remove(&ent.id);
-        ui.set_status(format!("Armor {}", player.armor));
+    }
+    if let Some(status) = status {
+        world.resource_mut::<MakerUi>().set_status(status);
     }
 }
 
 /// Speed rings apply their boost without touching any shared cooldown, so they
 /// cannot suppress bumpers, teleporters, or cannons.
-pub fn touch_speed_rings(
-    mut commands: Commands,
-    mode: Res<MakerMode>,
-    mut ui: ResMut<MakerUi>,
-    mut player_q: Query<(&Transform, &mut Player)>,
-    rings: Query<
-        (Entity, &Transform, &SpeedRing, Option<&DroppedItem>),
-        (Without<Player>, Without<DropPop>),
-    >,
-) {
-    if *mode != MakerMode::Play {
+pub fn touch_speed_rings(world: &mut World) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    let Ok((pt, mut player)) = player_q.single_mut() else {
+    if *world.resource::<MakerMode>() != MakerMode::Play {
+        return;
+    }
+    let (pt, he, player_e) = {
+        let mut q = world.query_filtered::<(Entity, &PlayerTransform, &Player), With<Player>>();
+        let Ok((e, pt, player)) = q.single(world) else {
+            return;
+        };
+        (pt.translation, player.half_extents, e)
+    };
+    let mut hit: Option<(Entity, bool, f32)> = None;
+    {
+        let mut q = world.query_filtered::<
+            (Entity, &Transform, &SpeedRing, Option<&DroppedItem>),
+            (Without<Player>, Without<DropPop>),
+        >();
+        for (e, tf, ring, dropped) in q.iter(world) {
+            if !player_overlaps_volume(pt, he, tf.translation, Vec3::splat(0.6)) {
+                continue;
+            }
+            hit = Some((e, dropped.is_some(), ring.duration));
+            break;
+        }
+    }
+    let Some((e, dropped, duration)) = hit else {
         return;
     };
-    let he = player.half_extents;
-
-    for (e, tf, ring, dropped) in &rings {
-        if !player_overlaps_volume(pt.translation, he, tf.translation, Vec3::splat(0.6)) {
-            continue;
+    {
+        let mut q = world.query::<&mut Player>();
+        if let Ok(mut player) = q.get_mut(world, player_e) {
+            player.speed_boost = player.speed_boost.max(duration);
         }
-        player.speed_boost = player.speed_boost.max(ring.duration);
-
-        if dropped.is_some() {
-            commands.entity(e).despawn();
-        }
-
-        ui.set_status("Speed boost!");
-        break;
     }
+
+    if dropped {
+        world.despawn(e);
+    }
+
+    world.resource_mut::<MakerUi>().set_status("Speed boost!");
 }
 
 /// Crumble plates trigger on top contact (via `InteractionMemory`) with a
 /// short warning delay, then stay gone for the run.
-pub fn update_crumble_plates(
-    time: Res<Time>,
-    mode: Res<MakerMode>,
-    memory: Res<InteractionMemory>,
-    mut plates: Query<(&LevelEnt, &mut CrumblePlate, &mut Visibility), Without<Player>>,
-) {
-    if *mode != MakerMode::Play {
+pub fn update_crumble_plates(world: &mut World, dt: f32) {
+    if world.resource::<Paused>().0 {
         return;
     }
-    let dt = time.delta_secs();
+    if *world.resource::<MakerMode>() != MakerMode::Play {
+        return;
+    }
+    let mut updates: Vec<(Entity, bool, bool, f32)> = Vec::new();
+    {
+        let mut q = world.query_filtered::<(Entity, &LevelEnt, &CrumblePlate), Without<Player>>();
+        let memory = world.resource::<InteractionMemory>();
+        for (e, ent, plate) in q.iter(world) {
+            if plate.gone {
+                continue;
+            }
 
-    for (ent, mut plate, mut vis) in &mut plates {
-        if plate.gone {
-            *vis = Visibility::Hidden;
+            let mut triggered = plate.triggered;
+            let mut timer = plate.timer;
+            if !triggered && memory.any_entered_target(ent.id) {
+                triggered = true;
+                timer = plate.delay;
+            }
+
+            let mut gone = false;
+            if triggered {
+                timer -= dt;
+                if timer <= 0.0 {
+                    gone = true;
+                }
+            }
+            updates.push((e, gone, triggered, timer));
+        }
+    }
+    for (e, gone, triggered, timer) in updates {
+        if let Some(mut plate) = world.get_mut::<CrumblePlate>(e) {
+            plate.gone = gone;
+            plate.triggered = triggered;
+            plate.timer = timer;
+        }
+    }
+}
+
+fn placeholder_y_off(kind: EntityKind) -> f32 {
+    match kind {
+        EntityKind::Glimmer => 0.0,
+        EntityKind::LaunchPad => -0.1,
+        EntityKind::Seal => -0.55,
+        EntityKind::DriftPlate => -0.15,
+        EntityKind::Prowler => -0.35,
+        EntityKind::TriggerOrb => 0.0,
+        EntityKind::RelayGate => -1.0,
+        EntityKind::Checkpoint => -0.55,
+        EntityKind::Teleporter => -0.15,
+        EntityKind::Fan => -0.5,
+        EntityKind::Bumper => -0.35,
+        EntityKind::Crate => -0.5,
+        EntityKind::Key => 0.0,
+        EntityKind::LockGate => -0.55,
+        EntityKind::HealOrb => 0.0,
+        EntityKind::SpeedRing => 0.0,
+        EntityKind::CrumblePlate => -0.08,
+        EntityKind::Cannon => 0.0,
+        EntityKind::OnOffSwitch => -0.15,
+        EntityKind::TossCrate => -0.5,
+        EntityKind::Sign => -0.1,
+        EntityKind::Wedge => 0.0,
+    }
+}
+
+fn wedge_prism_points() -> Vec<Vec3> {
+    vec![
+        Vec3::new(-0.5, -0.5, -0.5),
+        Vec3::new(0.5, -0.5, -0.5),
+        Vec3::new(0.5, 0.5, -0.5),
+        Vec3::new(-0.5, -0.5, 0.5),
+        Vec3::new(0.5, -0.5, 0.5),
+        Vec3::new(0.5, 0.5, 0.5),
+    ]
+}
+
+fn push_box_rotated(group: &mut MeshGroup, center: Vec3, rotation: Quat, he: Vec3, tint: [f32; 3]) {
+    let p = |x: f32, y: f32, z: f32| {
+        (center + rotation * Vec3::new(x * he.x, y * he.y, z * he.z)).to_array()
+    };
+    let n = |v: Vec3| (rotation * v).to_array();
+    group.push_quad_lit(
+        p(-1.0, 1.0, -1.0),
+        p(-1.0, 1.0, 1.0),
+        p(1.0, 1.0, 1.0),
+        p(1.0, 1.0, -1.0),
+        tint,
+        n(Vec3::Y),
+    );
+    group.push_quad_lit(
+        p(-1.0, -1.0, -1.0),
+        p(1.0, -1.0, -1.0),
+        p(1.0, -1.0, 1.0),
+        p(-1.0, -1.0, 1.0),
+        tint,
+        n(Vec3::NEG_Y),
+    );
+    group.push_quad_lit(
+        p(1.0, -1.0, -1.0),
+        p(1.0, 1.0, -1.0),
+        p(1.0, 1.0, 1.0),
+        p(1.0, -1.0, 1.0),
+        tint,
+        n(Vec3::X),
+    );
+    group.push_quad_lit(
+        p(-1.0, -1.0, -1.0),
+        p(-1.0, -1.0, 1.0),
+        p(-1.0, 1.0, 1.0),
+        p(-1.0, 1.0, -1.0),
+        tint,
+        n(Vec3::NEG_X),
+    );
+    group.push_quad_lit(
+        p(-1.0, -1.0, 1.0),
+        p(1.0, -1.0, 1.0),
+        p(1.0, 1.0, 1.0),
+        p(-1.0, 1.0, 1.0),
+        tint,
+        n(Vec3::Z),
+    );
+    group.push_quad_lit(
+        p(-1.0, -1.0, -1.0),
+        p(-1.0, 1.0, -1.0),
+        p(1.0, 1.0, -1.0),
+        p(1.0, -1.0, -1.0),
+        tint,
+        n(Vec3::NEG_Z),
+    );
+}
+
+fn push_wedge(group: &mut MeshGroup, center: Vec3, rotation: Quat, tint: [f32; 3]) {
+    let pts: Vec<Vec3> = wedge_prism_points()
+        .into_iter()
+        .map(|p| center + rotation * p)
+        .collect();
+    let [a, b, c, d, e, f] = [pts[0], pts[1], pts[2], pts[3], pts[4], pts[5]];
+    let n = |v: Vec3| (rotation * v).to_array();
+    group.push_quad_lit(
+        a.to_array(),
+        d.to_array(),
+        f.to_array(),
+        c.to_array(),
+        tint,
+        n(Vec3::new(-1.0, 1.0, 0.0).normalize()),
+    );
+    group.push_quad_lit(
+        d.to_array(),
+        a.to_array(),
+        b.to_array(),
+        e.to_array(),
+        tint,
+        n(Vec3::NEG_Y),
+    );
+    group.push_quad_lit(
+        b.to_array(),
+        c.to_array(),
+        f.to_array(),
+        e.to_array(),
+        tint,
+        n(Vec3::X),
+    );
+    group.push_tri_lit(
+        a.to_array(),
+        c.to_array(),
+        b.to_array(),
+        tint,
+        n(Vec3::NEG_Z),
+    );
+    group.push_tri_lit(e.to_array(), f.to_array(), d.to_array(), tint, n(Vec3::Z));
+}
+
+fn push_prop(group: &mut MeshGroup, kind: EntityKind, center: Vec3, rotation: Quat) {
+    let tint = srgb_to_linear(kind.color());
+    match kind {
+        EntityKind::Seal => {
+            push_box_rotated(group, center, rotation, Vec3::new(0.5, 1.0, 0.15), tint)
+        }
+        EntityKind::RelayGate => {
+            push_box_rotated(group, center, rotation, Vec3::new(0.5, 1.0, 0.2), tint)
+        }
+        EntityKind::LockGate => {
+            push_box_rotated(group, center, rotation, Vec3::new(0.55, 1.2, 0.3), tint)
+        }
+        EntityKind::Crate | EntityKind::TossCrate => {
+            push_box_rotated(group, center, rotation, Vec3::new(0.4, 0.4, 0.4), tint)
+        }
+        EntityKind::CrumblePlate => {
+            push_box_rotated(group, center, rotation, Vec3::new(0.5, 0.12, 0.5), tint)
+        }
+        EntityKind::LaunchPad => push_box_rotated(
+            group,
+            center + Vec3::Y * 0.05,
+            rotation,
+            Vec3::new(0.45, 0.1, 0.45),
+            tint,
+        ),
+        EntityKind::DriftPlate => {
+            push_box_rotated(group, center, rotation, Vec3::new(0.7, 0.12, 0.7), tint)
+        }
+        EntityKind::Wedge => push_wedge(group, center, rotation, tint),
+        _ => push_box_rotated(
+            group,
+            center + Vec3::Y * (placeholder_y_off(kind) + 0.4),
+            rotation,
+            Vec3::splat(0.4),
+            tint,
+        ),
+    }
+}
+
+pub fn draw_props(world: &World, frame: &mut Frame3d) {
+    let elapsed = world.resource::<SimTime>().elapsed_secs as f32;
+    let mut group = MeshGroup {
+        depth_test: true,
+        ..MeshGroup::default()
+    };
+    let mut drew = false;
+    for e in world.iter_entities() {
+        let Some(tf) = e.get::<Transform>() else {
+            continue;
+        };
+        if e.get::<DriftEndMarker>().is_some() {
+            push_box_rotated(
+                &mut group,
+                tf.translation,
+                tf.rotation,
+                Vec3::splat(0.28) * tf.scale,
+                srgb_to_linear(EntityKind::Glimmer.color()),
+            );
+            drew = true;
             continue;
         }
-
-        if !plate.triggered && memory.any_entered_target(ent.id) {
-            plate.triggered = true;
-            plate.timer = plate.delay;
+        let Some(ent) = e.get::<LevelEnt>() else {
+            continue;
+        };
+        if e.get::<DroppedItem>().is_some() {
+            let tint = if e.get::<DropGlimmer>().is_some() {
+                srgb_to_linear(EntityKind::Glimmer.color())
+            } else {
+                srgb_to_linear(ent.kind.color())
+            };
+            push_box_rotated(
+                &mut group,
+                tf.translation,
+                tf.rotation,
+                Vec3::splat(0.4) * tf.scale,
+                tint,
+            );
+            drew = true;
+            continue;
         }
-
-        if plate.triggered {
-            plate.timer -= dt;
-            if plate.timer <= 0.0 {
-                plate.gone = true;
-                *vis = Visibility::Hidden;
+        if e.get::<Seal>().is_some_and(|s| s.open)
+            || e.get::<RelayGate>().is_some_and(|g| g.open)
+            || e.get::<LockGate>().is_some_and(|g| g.open)
+            || e.get::<CrumblePlate>().is_some_and(|p| p.gone)
+        {
+            continue;
+        }
+        let mut center = tf.translation;
+        let mut rotation = tf.rotation;
+        if let Some(anim) = e.get::<KitAnim>() {
+            if anim.bob > 0.0 {
+                center.y += (elapsed * 3.0 + anim.seed).sin() * anim.bob;
             }
+            rotation = rotation * Quat::from_rotation_y(anim.spin * elapsed);
         }
+        push_prop(&mut group, ent.kind, center, rotation);
+        drew = true;
+    }
+    if drew {
+        frame.push(group);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::maker::collision::rotated_box_aabb;
 
-    fn e() -> Entity {
-        Entity::from_raw_u32(1).unwrap()
+    fn e() -> LevelEntityId {
+        1
     }
 
     #[test]
@@ -2247,5 +1947,70 @@ mod tests {
         assert_eq!(solids[0].center, Vec3::new(3.0, 0.15, 5.0));
         let top = solids[0].center.y + 0.1;
         assert!((top - 0.25).abs() < 1e-5, "pad top at {top}");
+    }
+
+    #[test]
+    fn reconcile_then_rebuild_builds_expected_solids() {
+        let mut sim = repame_shell::Sim::with_default_step();
+        sim.world.insert_resource(MakerMode::Edit);
+        sim.world.insert_resource(LevelDocument::default());
+        sim.world.insert_resource(EntityEntities::default());
+        sim.world.insert_resource(RuntimeSolids::default());
+        sim.add_chained_systems((reconcile_entities, rebuild_runtime_solids).chain());
+        sim.step(Duration::from_millis(17));
+
+        assert_eq!(sim.world.resource::<EntityEntities>().0.len(), 6);
+
+        let solids = &sim.world.resource::<RuntimeSolids>().solids;
+        assert_eq!(solids.len(), 3);
+        assert_eq!(solids[0].shape, SolidShape::Box(0.5, 1.0, 0.15));
+        assert_eq!(solids[0].center, Vec3::new(0.5, 2.0, -3.5));
+        assert_eq!(solids[1].shape, SolidShape::Box(0.45, 0.1, 0.45));
+        assert_eq!(solids[1].center, Vec3::new(3.5, 1.15, -2.5));
+        assert_eq!(solids[2].shape, SolidShape::Box(0.7, 0.12, 0.7));
+        assert_eq!(solids[2].center, Vec3::new(-3.5, 2.15, -1.5));
+    }
+
+    #[test]
+    fn tick_drift_plates_advances_phase_carry_and_velocity() {
+        let mut sim = repame_shell::Sim::with_default_step();
+        sim.world.insert_resource(MakerMode::Edit);
+        let a = Vec3::new(0.5, 0.15, 0.5);
+        let b = Vec3::new(4.5, 0.15, 0.5);
+        sim.world.spawn((
+            Transform::from_translation(a),
+            DriftPlate {
+                a,
+                b,
+                period: 1.0,
+                t: 0.0,
+                carry: Vec3::ZERO,
+            },
+            Velocity::zero(),
+        ));
+        sim.add_chained_systems(tick_drift_plates);
+        sim.step(Duration::from_millis(17));
+
+        let dt = 1.0f32 / 60.0;
+        let phase = dt;
+        let s = phase * phase * (3.0 - 2.0 * phase);
+        let want = a.lerp(b, s);
+        let carry = want - a;
+
+        let mut q = sim.world.query::<(&Transform, &DriftPlate, &Velocity)>();
+        let (tf, drift, vel) = q.single(&sim.world).unwrap();
+        assert!(
+            (tf.translation - want).length() < 1e-5,
+            "{:?}",
+            tf.translation
+        );
+        assert!((drift.carry - carry).length() < 1e-5, "{:?}", drift.carry);
+        assert!((drift.t - dt).abs() < 1e-6, "{}", drift.t);
+        assert!(
+            (vel.linear - carry / dt).length() < 1e-4,
+            "{:?}",
+            vel.linear
+        );
+        assert_eq!(vel.angular, Vec3::ZERO);
     }
 }
