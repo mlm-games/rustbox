@@ -28,80 +28,20 @@ exclude = ["crates/rustbox-worker"]
 default = ["dev_native"]
 dev = []
 dev_native = ["dev"]
-# Big-game optional crates (check note below)
-# Keep commented until compatible to avoid breakage.
-# input_manager = ["dep:leafwing-input-manager"]
-# hanabi = ["dep:bevy_hanabi"]
-# pkv = ["dep:bevy_pkv"]
-# asset_loader = ["dep:bevy_asset_loader"]
-# inspector = ["dep:bevy-inspector-egui"]
-# kira_audio = ["dep:bevy_kira_audio"]
 
 [dependencies]
-bevy = { git = "https://github.com/bevyengine/bevy", rev = "fb89a8649d9b359e53ffb6e5492ebb7c059ac8af", default-features = false, features = [
-    "bevy_asset",
-    "bevy_audio",
-    "bevy_color",
-    "bevy_core_pipeline",
-    "bevy_render",
-    "bevy_sprite",
-    "bevy_sprite_render",
-    "bevy_state",
-    "bevy_text",
-    "bevy_ui",
-    "bevy_ui_render",
-    "bevy_camera",
-    "bevy_mesh",
-    "bevy_shader",
-    "bevy_material",
-    "bevy_animation",
-    "bevy_image",
-    "bevy_window",
-    "bevy_winit",
-    "x11",
-    "wayland",
-    "png",
-    "vorbis",
-    "multi_threaded",
-    "default_font",
-    "bevy_log",
-    "async_executor",
-    "reflect_auto_register",
-    "bevy_clipboard",
-    "custom_cursor",
-    "webgpu",
-    "android-native-activity",
-    "bevy_pbr",
-    "bevy_scene",
-    "bevy_gltf",
-    "gltf_animation",
-    "tonemapping_luts",
-    "zstd_rust",
-    "bevy_gizmos",
-    "bevy_gizmos_render",
-    "debug",
-] }
-repose-bevy = { git = "https://github.com/mlm-games/repose-bevy", rev = "8124dabaedfe16a2e90fd9f4bbd008ce7abceabc", default-features = false, features = [
-    "shared-device",
-] }
-wgpu = { version = "30", features = ["webgpu", "webgl"] }
-repose-core = "=0.29.0"
-repose-ui = "=0.29.0"
-repose-app = "=0.29.0"
-repose-material = "=0.29.0"
-repose-render-wgpu = "=0.29.0"
-repose-text = "=0.29.0"
+repame-sim = "0.3"
+repame-shell = "0.3"
+repame-view3d = "0.3"
+repose-core = "0.31"
+repose-ui = "0.31"
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ron = "0.12"
 directories = "6"
 anyhow = "1"
-game-utils = { git = "https://github.com/mlm-games/game-utils", rev = "3b097868f46243e6a806fffebca288b934fe22d0" }
-game-utils-bevy = { git = "https://github.com/mlm-games/game-utils", rev = "3b097868f46243e6a806fffebca288b934fe22d0", features = ["render"] }
-bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", default-features = false, features = [
-    "dim3",
-] }
+web-time = "1"
 rustbox-format = { path = "crates/rustbox-format" }
 rustbox-voxel = { path = "crates/rustbox-voxel" }
 rustbox-mesh = { path = "crates/rustbox-mesh" }
@@ -112,13 +52,6 @@ sha2 = "0.11"
 hex = "0.4"
 base64 = "0.23"
 getrandom = "0.4"
-# Optional big-game crates (pull in bevy-0.19)
-# leafwing-input-manager = { version = "0.14", optional = true, default-features = false, features = [] }
-# bevy_hanabi = { version = "0.14", optional = true, default-features = false, features = ["2d"] }
-# bevy_pkv = { version = "0.13", optional = true }
-# bevy_asset_loader = { version = "0.22", optional = true, default-features = false, features = ["standard"] }
-# bevy-inspector-egui = { version = "0.28", optional = true }
-# bevy_kira_audio = { version = "0.18", optional = true }
 
 [target.'cfg(all(target_family = "wasm", any(target_os = "unknown", target_os = "none")))'.dependencies]
 wasm-bindgen = "0.2"
@@ -128,15 +61,6 @@ getrandom_03 = { version = "0.3", features = [
     "wasm_js",
 ], package = "getrandom" }
 getrandom_02 = { version = "0.2", features = ["js"], package = "getrandom" }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bevy_rapier3d = { git = "https://github.com/mlm-games/bevy_rapier", default-features = false, features = [
-    "dim3",
-    "parallel",
-] }
-
-[package.metadata.android]
-features = ["bevy/android-native-activity"]
 
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
@@ -166,9 +90,5 @@ inherits = "release"
 opt-level = "s"
 strip = "debuginfo"
 
-# [patch.crates-io]
-# repose-core = { path = "../repose/crates/repose-core" }
-# repose-app = { path = "../repose/crates/repose-app" }
-# repose-ui = { path = "../repose/crates/repose-ui" }
-# repose-material = { path = "../repose/crates/repose-material" }
-# repose-render-wgpu = { path = "../repose/crates/repose-render-wgpu" }
+[patch.crates-io]
+repame-view3d = { path = "../repame/crates/repame-view3d" }
