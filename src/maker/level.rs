@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use bevy_ecs::prelude::Resource;
 use glam::{IVec3, Vec3};
 
 use super::block::BlockKind;
@@ -15,7 +16,7 @@ pub use rustbox_format::level::{
 const AUTO_SIZE_MIN: i32 = 8;
 const AUTO_SIZE_MAX: i32 = 64;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Resource)]
 pub struct LevelDocument {
     pub data: LevelData,
     pub map: HashMap<IVec3, BlockData>,

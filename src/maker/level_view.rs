@@ -90,7 +90,6 @@ fn linear(v: f32) -> f32 {
 }
 
 pub struct LevelView {
-    pub level: LevelDocument,
     pub history: CommandHistory,
     pub brush: BlockBrush,
     pub last_action: String,
@@ -100,7 +99,7 @@ pub struct LevelView {
 }
 
 impl LevelView {
-    pub fn new(level: LevelDocument) -> Self {
+    pub fn new(level: &LevelDocument) -> Self {
         let input: ChunkMeshInput<Classify, Solidity> = ChunkMeshInput {
             classify,
             is_solid,
@@ -111,7 +110,6 @@ impl LevelView {
         };
         Self {
             streamer: ChunkStreamer::new(level.clone(), input, 2, 512),
-            level,
             history: CommandHistory::default(),
             brush: BlockBrush::default(),
             last_action: String::new(),
@@ -120,20 +118,12 @@ impl LevelView {
         }
     }
 
-    pub fn name(&self) -> &str {
-        &self.level.data.name
-    }
-
-    pub fn block_count(&self) -> usize {
-        self.level.map.len()
-    }
-
     pub fn chunk_count(&self) -> usize {
         self.cache.chunk_count()
     }
 
-    pub fn tick(&mut self, focus: Vec3) {
-        let dirty = self.level.drain_dirty_sorted(focus);
+    pub fn tick(&mut self, level: &mut LevelDocument, focus: Vec3) {
+        let dirty = level.drain_dirty_sorted(focus);
         if !dirty.is_empty() {
             self.generation += 1;
             for (rank, chunk) in dirty.iter().enumerate() {
@@ -154,7 +144,13 @@ impl LevelView {
         frame.extend_chunks(self.cache.draws());
     }
 
-    pub fn click(&mut self, ev: &View3dEvent, cam: &OrbitCamera, erase: bool) {
+    pub fn click(
+        &mut self,
+        level: &mut LevelDocument,
+        ev: &View3dEvent,
+        cam: &OrbitCamera,
+        erase: bool,
+    ) {
         let eye = cam.eye();
         let point = match ev {
             View3dEvent::MeshClick { point, .. } => Vec3::from_array(*point),
@@ -165,63 +161,63 @@ impl LevelView {
         if dir == Vec3::ZERO {
             return;
         }
-        let hit = raycast_present(&self.level, eye, dir, 200.0)
+        let hit = raycast_present(level, eye, dir, 200.0)
             .filter(|(_, normal)| *normal != IVec3::ZERO)
             .or_else(|| {
-                raycast_present(&self.level, point - dir.normalize() * 0.5, dir, 4.0)
+                raycast_present(level, point - dir.normalize() * 0.5, dir, 4.0)
                     .filter(|(_, normal)| *normal != IVec3::ZERO)
             });
         let Some((cell, normal)) = hit else {
             return;
         };
         if erase {
-            self.erase(cell);
+            self.erase(level, cell);
         } else {
-            self.place(cell + normal);
+            self.place(level, cell + normal);
         }
     }
 
-    pub fn undo(&mut self) {
+    pub fn undo(&mut self, level: &mut LevelDocument) {
         if self.history.undo.is_empty() {
             return;
         }
-        self.history.undo(&mut self.level);
-        self.sync_source();
+        self.history.undo(level);
+        self.sync_source(level);
         self.last_action = "undo".to_string();
     }
 
-    pub fn redo(&mut self) {
+    pub fn redo(&mut self, level: &mut LevelDocument) {
         if self.history.redo.is_empty() {
             return;
         }
-        self.history.redo(&mut self.level);
-        self.sync_source();
+        self.history.redo(level);
+        self.sync_source(level);
         self.last_action = "redo".to_string();
     }
 
-    fn place(&mut self, cell: IVec3) {
-        let Some(cmd) = place_cmd_for_cell(&self.level, &self.brush, cell) else {
+    fn place(&mut self, level: &mut LevelDocument, cell: IVec3) {
+        let Some(cmd) = place_cmd_for_cell(level, &self.brush, cell) else {
             return;
         };
-        self.history.apply(&mut self.level, cmd);
-        self.sync_source();
+        self.history.apply(level, cmd);
+        self.sync_source(level);
         self.last_action = format!(
             "place {:?} at {}, {}, {}",
             self.brush.kind, cell.x, cell.y, cell.z
         );
     }
 
-    fn erase(&mut self, cell: IVec3) {
-        let Some(cmd) = remove_cmd_for_cell(&self.level, cell) else {
+    fn erase(&mut self, level: &mut LevelDocument, cell: IVec3) {
+        let Some(cmd) = remove_cmd_for_cell(level, cell) else {
             return;
         };
-        self.history.apply(&mut self.level, cmd);
-        self.sync_source();
+        self.history.apply(level, cmd);
+        self.sync_source(level);
         self.last_action = format!("erase at {}, {}, {}", cell.x, cell.y, cell.z);
     }
 
-    fn sync_source(&mut self) {
-        self.streamer.set_source(self.level.clone());
+    fn sync_source(&mut self, level: &LevelDocument) {
+        self.streamer.set_source(level.clone());
     }
 }
 

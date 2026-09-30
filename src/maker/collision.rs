@@ -1,9 +1,8 @@
-use bevy::prelude::*;
+use glam::{IVec2, IVec3, Quat, Vec2, Vec3};
 
-use super::asset_manifest::SolidShape;
 use super::block::BlockKind;
-use super::entities_runtime::RuntimeSolid;
 use super::level::{BlockData, LevelDocument};
+use super::props::{RuntimeSolid, SolidShape};
 use rustbox_format::BlockShape;
 
 pub fn is_solid(level: &LevelDocument, cell: IVec3) -> bool {
@@ -1790,7 +1789,7 @@ mod tests {
     /// z=10 keeps it out of the default level's starter blocks near the spawn.
     fn gate_extra() -> RuntimeSolid {
         RuntimeSolid {
-            owner: Entity::from_raw_u32(99).unwrap(),
+            owner: 99,
             center: Vec3::new(4.0, 2.0, 10.0),
             shape: SolidShape::Box(0.5, 1.0, 0.2),
             rotation: Quat::IDENTITY,
@@ -1957,7 +1956,7 @@ mod tests {
 
     fn wedge_solid(center: Vec3) -> RuntimeSolid {
         RuntimeSolid {
-            owner: Entity::from_raw_u32(99).unwrap(),
+            owner: 99,
             center,
             shape: SolidShape::Wedge(0.5, 0.5, 0.5),
             rotation: Quat::IDENTITY,
@@ -2058,7 +2057,7 @@ mod tests {
         let level = wall_level();
         // Small box raised above the floor (top 1.5), xz span [1.15, 1.55].
         let extras = [RuntimeSolid {
-            owner: Entity::from_raw_u32(1).unwrap(),
+            owner: 1,
             center: Vec3::new(1.35, 1.0, 1.35),
             shape: SolidShape::Box(0.2, 0.5, 0.2),
             rotation: Quat::IDENTITY,
@@ -2292,7 +2291,7 @@ mod tests {
         let level = wall_level();
         // Half-height crate on the floor: top at y=1.5, within STEP_HEIGHT.
         let crate_s = RuntimeSolid {
-            owner: Entity::from_raw_u32(1).unwrap(),
+            owner: 1,
             center: Vec3::new(2.0, 1.0, 10.0),
             shape: SolidShape::Box(0.5, 0.5, 0.5),
             rotation: Quat::IDENTITY,

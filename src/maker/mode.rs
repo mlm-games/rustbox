@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
+use bevy_ecs::prelude::Resource;
 use glam::{IVec3, Vec2};
 
 use super::block::{BlockKind, BlockShape};
 use super::entity_data::{EntityData, EntityKind, LevelEntityId};
 use super::level::BlockData;
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MakerMode {
     #[default]
     Edit,
@@ -60,7 +61,7 @@ impl Default for PlaceYaw {
     }
 }
 
-#[derive(Default)]
+#[derive(Resource, Default)]
 pub struct InputCapture {
     pub ui_wants_pointer: bool,
     pub ui_wants_keyboard: bool,

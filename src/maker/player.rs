@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
-use bevy::prelude::*;
-use bevy::world_serialization::WorldAssetRoot;
+use bevy_ecs::prelude::*;
+use glam::{IVec3, Quat, Vec2, Vec3};
+use repame_shell::SimTime;
+use repose_core::input::PhysicalKey;
 
-use super::MakerCleanup;
 use super::block::BlockKind;
 use super::camera::CameraRig;
 use super::collision::{
@@ -11,16 +12,11 @@ use super::collision::{
     move_and_collide_substepped, overlaps_kind, slope_slide, stand_headroom,
     support_height_footprint,
 };
-use super::entities_runtime::{DriftPlate, ModelAnim, ModelMaterial, RuntimeSolids};
 use super::entity_data::LevelEntityId;
 use super::interactive_blocks::OnOffState;
 use super::level::LevelDocument;
-use super::mode::{InputCapture, MakerMode};
-use super::rendering::MakerAssets;
-
-use bevy_rapier3d::prelude::Velocity;
-use game_utils_bevy::juice::{Juice, SquashStretch};
-use game_utils_bevy::screen_effects::{ScreenEffects, Trauma};
+use super::mode::MakerMode;
+use super::props::{ActivePlates, DriftPlate, RuntimeSolids};
 
 /// Default jump impulse (shared with stomp bounce etc.).
 pub const JUMP_SPEED: f32 = 9.0;
@@ -286,6 +282,13 @@ impl Default for Player {
     }
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PlayerTransform {
+    pub translation: Vec3,
+    pub scale: Vec3,
+    pub visible: bool,
+}
+
 pub fn spawn_center(level: &LevelDocument) -> Vec3 {
     let s = level.data.spawn;
     Vec3::new(s[0] as f32 + 0.5, s[1] as f32 + 0.9, s[2] as f32 + 0.5)
@@ -363,13 +366,12 @@ fn find_hang_surface(level: &LevelDocument, pos: Vec3, he: Vec3) -> Option<(IVec
 }
 
 pub fn respawn_player(
-    transform: &mut Transform,
+    transform: &mut PlayerTransform,
     player: &mut Player,
     move_state: &mut MoveState,
-    vis: &mut Visibility,
     level: &LevelDocument,
 ) {
-    *vis = Visibility::Visible;
+    transform.visible = true;
     let spawn = if player.checkpoint_id.is_some() {
         player.respawn_point
     } else {
@@ -406,10 +408,9 @@ pub fn respawn_player(
 }
 
 pub fn reset_player_run(
-    transform: &mut Transform,
+    transform: &mut PlayerTransform,
     player: &mut Player,
     move_state: &mut MoveState,
-    vis: &mut Visibility,
     level: &LevelDocument,
 ) {
     player.keys = [0; 10];
@@ -418,38 +419,21 @@ pub fn reset_player_run(
     player.speed_boost = 0.0;
     player.respawn_point = spawn_center(level);
     player.checkpoint_id = None;
-    respawn_player(transform, player, move_state, vis, level);
+    respawn_player(transform, player, move_state, level);
 }
 
-pub fn spawn_player(commands: &mut Commands, assets: &MakerAssets, level: &LevelDocument) {
-    let root = commands
+pub fn spawn_player(world: &mut World, level: &LevelDocument) -> Entity {
+    world
         .spawn((
-            Transform::from_translation(spawn_center(level)),
-            Visibility::Hidden,
+            PlayerTransform {
+                translation: spawn_center(level),
+                scale: Vec3::ONE,
+                visible: false,
+            },
             Player::default(),
             MoveState::default(),
-            MakerCleanup,
         ))
-        .id();
-    commands.entity(root).with_children(|p| {
-        p.spawn((
-            WorldAssetRoot(assets.player_scene.clone()),
-            MakerCleanup,
-            Visibility::default(),
-            ModelMaterial::fallback(assets.player_material.clone()),
-            ModelAnim {
-                source: "player",
-                idle: "Idle",
-                run: Some("Run"),
-                air: Some("Jump"),
-                player: None,
-                started: false,
-                nodes: HashMap::new(),
-                state: None,
-            },
-            Transform::from_translation(Vec3::Y * -0.9).with_scale(Vec3::splat(0.6)),
-        ));
-    });
+        .id()
 }
 
 /// Platformer-style move on XZ: approach wish velocity while steering; friction
@@ -504,82 +488,10 @@ fn apply_accel_friction(
     vel.z = h.z;
 }
 
-fn pad_pressed(gamepads: &Query<&Gamepad>, btn: GamepadButton) -> bool {
-    gamepads.iter().any(|g| g.pressed(btn))
-}
-
-fn pad_just_pressed(gamepads: &Query<&Gamepad>, btn: GamepadButton) -> bool {
-    gamepads.iter().any(|g| g.just_pressed(btn))
-}
-
-/// Combined keyboard + gamepad move wish (camera-relative, applied by caller).
-fn read_move_wish(keys: &ButtonInput<KeyCode>, kb_ok: bool, gamepads: &Query<&Gamepad>) -> Vec2 {
-    let mut wish = Vec2::ZERO;
-    if kb_ok {
-        if keys.pressed(KeyCode::KeyW) {
-            wish.y += 1.0;
-        }
-        if keys.pressed(KeyCode::KeyS) {
-            wish.y -= 1.0;
-        }
-        if keys.pressed(KeyCode::KeyA) {
-            wish.x -= 1.0;
-        }
-        if keys.pressed(KeyCode::KeyD) {
-            wish.x += 1.0;
-        }
-    }
-    for pad in gamepads {
-        let v = pad.left_stick();
-        if v.length() > 0.2 {
-            wish += v;
-        }
-    }
-    if wish.length_squared() > 1.0 {
-        wish = wish.normalize();
-    }
-    wish
-}
-
-/// Latched edge-triggered presses sampled in `Update` and consumed in
-/// `FixedUpdate`. `ButtonInput::just_pressed` is cleared per-`Update`, so a
-/// tap on a frame with zero `FixedUpdate` runs would otherwise be lost, and
-/// on a frame with two runs it would double-latch.
-#[derive(Resource, Default, Debug, Clone, Copy)]
-pub struct PressedLatch {
-    pub jump: bool,
-    pub crouch: bool,
-    pub interact: bool,
-    pub throw: bool,
-    pub reset: bool,
-}
-
-/// Sample edge presses in `Update` (where `just_pressed` is valid) and OR
-/// them into the latch for the next `FixedUpdate` chain.
-pub fn latch_play_presses(
-    keys: Res<ButtonInput<KeyCode>>,
-    gamepads: Query<&Gamepad>,
-    capture: Res<InputCapture>,
-    mut latch: ResMut<PressedLatch>,
-) {
-    let kb = !capture.ui_wants_keyboard;
-    let input = read_play_input(&keys, &gamepads, kb);
-    latch.jump |= input.jump_pressed;
-    latch.crouch |= input.crouch_pressed;
-    latch.interact |= input.interact_pressed;
-    latch.throw |= input.throw_pressed;
-    latch.reset |= input.reset_pressed;
-}
-
-/// Clear the latch after the `FixedUpdate` motion chain consumed it.
-pub fn clear_pressed_latch(mut latch: ResMut<PressedLatch>) {
-    *latch = PressedLatch::default();
-}
-
 /// Single source of truth for Play-mode buttons. Keyboard respects input
 /// capture (dialogs / overlays); gamepad is always live while playing.
-#[derive(Clone, Copy, Debug)]
-pub struct PlayInput {
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct PlayIntent {
     /// Camera-relative move wish (2D: x = right, y = forward).
     pub wish: Vec2,
     pub jump_pressed: bool,
@@ -596,120 +508,170 @@ pub struct PlayInput {
     pub drop_through: bool,
 }
 
+/// Latched edge-triggered presses sampled in `Update` and consumed in
+/// `FixedUpdate`. `ButtonInput::just_pressed` is cleared per-`Update`, so a
+/// tap on a frame with zero `FixedUpdate` runs would otherwise be lost, and
+/// on a frame with two runs it would double-latch.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct PressedLatch {
+    pub jump: bool,
+    pub crouch: bool,
+    pub interact: bool,
+    pub throw: bool,
+    pub reset: bool,
+}
+
+pub struct PlayKeys<'a> {
+    pub held: &'a HashSet<PhysicalKey>,
+    pub edges: &'a [PhysicalKey],
+    pub kb_ok: bool,
+}
+
+impl PlayKeys<'_> {
+    fn keyboard_down(&self, key: PhysicalKey) -> bool {
+        self.kb_ok && self.held.contains(&key)
+    }
+
+    fn keyboard_pressed(&self, key: PhysicalKey) -> bool {
+        self.kb_ok && self.edges.contains(&key)
+    }
+
+    /// Combined keyboard + gamepad move wish (camera-relative, applied by caller).
+    pub fn read_move_wish(&self) -> Vec2 {
+        let mut wish = Vec2::ZERO;
+        if self.kb_ok {
+            if self.held.contains(&PhysicalKey::KeyW) {
+                wish.y += 1.0;
+            }
+            if self.held.contains(&PhysicalKey::KeyS) {
+                wish.y -= 1.0;
+            }
+            if self.held.contains(&PhysicalKey::KeyA) {
+                wish.x -= 1.0;
+            }
+            if self.held.contains(&PhysicalKey::KeyD) {
+                wish.x += 1.0;
+            }
+        }
+        if wish.length_squared() > 1.0 {
+            wish = wish.normalize();
+        }
+        wish
+    }
+
+    /// Combine keyboard + gamepad into one Play-mode input snapshot. All systems
+    /// that read Play controls must use this (or a field of it) so input can never
+    /// drift between keyboard and pad paths.
+    pub fn read_play_input(&self) -> PlayIntent {
+        let wish = self.read_move_wish();
+
+        let shift_down = self.keyboard_down(PhysicalKey::ShiftLeft)
+            || self.keyboard_down(PhysicalKey::ShiftRight);
+        let shift_pressed = self.keyboard_pressed(PhysicalKey::ShiftLeft)
+            || self.keyboard_pressed(PhysicalKey::ShiftRight);
+
+        let up_down = wish.y > 0.5 || self.keyboard_down(PhysicalKey::KeyW);
+
+        let down_down = wish.y < -0.5 || self.keyboard_down(PhysicalKey::KeyS);
+
+        let crouch_down = shift_down;
+
+        PlayIntent {
+            wish,
+            jump_pressed: self.keyboard_pressed(PhysicalKey::Space),
+            jump_down: self.keyboard_down(PhysicalKey::Space),
+            crouch_down,
+            crouch_pressed: shift_pressed,
+            hang_down: self.keyboard_down(PhysicalKey::KeyE),
+            interact_pressed: self.keyboard_pressed(PhysicalKey::KeyI),
+            throw_pressed: self.keyboard_pressed(PhysicalKey::KeyF),
+            reset_pressed: self.keyboard_pressed(PhysicalKey::KeyR),
+            up_down,
+            down_down,
+            drop_through: crouch_down && down_down,
+        }
+    }
+}
+
+/// Sample edge presses in `Update` (where `just_pressed` is valid) and OR
+/// them into the latch for the next `FixedUpdate` chain.
+pub fn latch_play_presses(input: &PlayIntent, latch: &mut PressedLatch) {
+    latch.jump |= input.jump_pressed;
+    latch.crouch |= input.crouch_pressed;
+    latch.interact |= input.interact_pressed;
+    latch.throw |= input.throw_pressed;
+    latch.reset |= input.reset_pressed;
+}
+
+/// Clear the latch after the `FixedUpdate` motion chain consumed it.
+pub fn clear_pressed_latch(mut latch: ResMut<PressedLatch>) {
+    *latch = PressedLatch::default();
+}
+
 /// Per-physics-step displacement of a rideable platform. Rapier velocity is
 /// the frame-rate independent source; raw `carry` (per render frame) is only
 /// a fallback for the first frame before velocity exists.
-fn plate_step(drift: &DriftPlate, vel: Option<&Velocity>, dt: f32) -> Vec3 {
+fn plate_step(drift: &DriftPlate, vel: Option<Vec3>, dt: f32) -> Vec3 {
     if let Some(v) = vel {
-        if v.linear.length_squared() > 1e-10 && dt > 0.0 {
-            return v.linear * dt;
+        if v.length_squared() > 1e-10 && dt > 0.0 {
+            return v * dt;
         }
     }
     drift.carry
 }
+
+#[derive(Resource, Default)]
+pub struct Trauma(pub f32);
+
+impl Trauma {
+    pub fn add(&mut self, amount: f32) {
+        self.0 = (self.0 + amount).clamp(0.0, 1.0);
+    }
+}
+
+#[derive(Component)]
+pub struct SquashStretch;
 
 /// Squash/stretch overwrites any active effect and captures the mid-effect
 /// scale as the new base, so a jump pop overlapping a landing pop drifts the
 /// base scale taller every short hop (e.g. bonking under a low platform).
 /// Skip retriggers while one is active; the visual pop is expendable, a
 /// permanent height change is not.
-fn squash_guarded(
-    commands: &mut Commands,
-    entity: Entity,
-    has_active: bool,
-    amount: Vec2,
-    duration: f32,
-) {
+fn squash_guarded(has_active: bool, _amount: Vec2, _duration: f32) {
     if has_active {
         return;
-    }
-    Juice::squash_stretch(commands, entity, amount, duration);
-}
-
-fn keyboard_down(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
-    kb_ok && keys.pressed(key)
-}
-
-fn keyboard_pressed(keys: &ButtonInput<KeyCode>, kb_ok: bool, key: KeyCode) -> bool {
-    kb_ok && keys.just_pressed(key)
-}
-
-/// Combine keyboard + gamepad into one Play-mode input snapshot. All systems
-/// that read Play controls must use this (or a field of it) so input can never
-/// drift between keyboard and pad paths.
-pub fn read_play_input(
-    keys: &ButtonInput<KeyCode>,
-    gamepads: &Query<&Gamepad>,
-    kb_ok: bool,
-) -> PlayInput {
-    let wish = read_move_wish(keys, kb_ok, gamepads);
-
-    let shift_down = keyboard_down(keys, kb_ok, KeyCode::ShiftLeft)
-        || keyboard_down(keys, kb_ok, KeyCode::ShiftRight);
-    let shift_pressed = keyboard_pressed(keys, kb_ok, KeyCode::ShiftLeft)
-        || keyboard_pressed(keys, kb_ok, KeyCode::ShiftRight);
-
-    let up_down = wish.y > 0.5
-        || keyboard_down(keys, kb_ok, KeyCode::KeyW)
-        || gamepads.iter().any(|g| g.dpad().y > 0.5);
-
-    let down_down = wish.y < -0.5
-        || keyboard_down(keys, kb_ok, KeyCode::KeyS)
-        || gamepads.iter().any(|g| g.dpad().y < -0.5);
-
-    let crouch_down = shift_down || pad_pressed(gamepads, GamepadButton::East);
-
-    PlayInput {
-        wish,
-        jump_pressed: keyboard_pressed(keys, kb_ok, KeyCode::Space)
-            || pad_just_pressed(gamepads, GamepadButton::South),
-        jump_down: keyboard_down(keys, kb_ok, KeyCode::Space)
-            || pad_pressed(gamepads, GamepadButton::South),
-        crouch_down,
-        crouch_pressed: shift_pressed || pad_just_pressed(gamepads, GamepadButton::East),
-        hang_down: keyboard_down(keys, kb_ok, KeyCode::KeyE)
-            || pad_pressed(gamepads, GamepadButton::West),
-        interact_pressed: keyboard_pressed(keys, kb_ok, KeyCode::KeyI)
-            || pad_just_pressed(gamepads, GamepadButton::North),
-        throw_pressed: keyboard_pressed(keys, kb_ok, KeyCode::KeyF)
-            || pad_just_pressed(gamepads, GamepadButton::RightTrigger),
-        reset_pressed: keyboard_pressed(keys, kb_ok, KeyCode::KeyR)
-            || pad_just_pressed(gamepads, GamepadButton::Select),
-        up_down,
-        down_down,
-        drop_through: crouch_down && down_down,
     }
 }
 
 pub fn player_controller(
-    time: Res<Time<Fixed>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    gamepads: Query<&Gamepad>,
-    capture: Res<InputCapture>,
+    time: Res<SimTime>,
+    mode: Res<MakerMode>,
+    intent: Res<PlayIntent>,
     latch: Res<PressedLatch>,
     level: Res<LevelDocument>,
     rig: Res<CameraRig>,
     solids: Res<RuntimeSolids>,
     tuning: Res<MoveTuning>,
-    mut commands: Commands,
     mut trauma: ResMut<Trauma>,
-    plates: Query<(Entity, &Transform, &DriftPlate, Option<&Velocity>), Without<Player>>,
+    plates: Res<ActivePlates>,
     onoff: Res<OnOffState>,
     squash_q: Query<Entity, With<SquashStretch>>,
-    mut q: Query<(Entity, &mut Transform, &mut Player, &mut MoveState)>,
+    mut q: Query<(Entity, &mut PlayerTransform, &mut Player, &mut MoveState)>,
 ) {
-    let dt = time.delta_secs();
+    if *mode != MakerMode::Play {
+        return;
+    }
+    let dt = time.delta_secs;
     if dt <= 0.0 {
         return;
     }
-    let kb = !capture.ui_wants_keyboard;
     let tuning = &*tuning;
 
     for (entity, mut transform, mut player, mut move_state) in &mut q {
         if !squash_q.contains(entity) && transform.scale != Vec3::ONE {
             transform.scale = Vec3::ONE;
         }
-        let mut input = read_play_input(&keys, &gamepads, kb);
+        let mut input = *intent;
         // Merge Update-sampled edges: `just_pressed` is per-Update, but this
         // runs in FixedUpdate (0..N times per frame).
         input.jump_pressed |= latch.jump;
@@ -773,15 +735,15 @@ pub fn player_controller(
             && !player.gripping
             && let Some(ride_e) = player.ground_plate
         {
-            if let Ok((_, ride_tf, ride_drift, ride_vel)) = plates.get(ride_e) {
-                let step = plate_step(ride_drift, ride_vel, dt);
+            if let Some(ride) = plates.0.iter().find(|p| p.owner == ride_e) {
+                let step = plate_step(&ride.drift, ride.vel, dt);
                 if step.length_squared() > 1e-10 {
-                    let over = (transform.translation.x - ride_tf.translation.x).abs()
+                    let over = (transform.translation.x - ride.pos.x).abs()
                         < 0.7 + move_he.x + PLATE_OVER_SLACK
-                        && (transform.translation.z - ride_tf.translation.z).abs()
+                        && (transform.translation.z - ride.pos.z).abs()
                             < 0.7 + move_he.z + PLATE_OVER_SLACK;
                     let feet = transform.translation.y - move_he.y;
-                    let top = ride_tf.translation.y + 0.12;
+                    let top = ride.pos.y + 0.12;
                     if over && (feet - top).abs() <= PLATE_SNAP {
                         transform.translation += step;
                         player.plate_vel = if dt > 0.0 { step / dt } else { Vec3::ZERO };
@@ -1018,14 +980,8 @@ pub fn player_controller(
             player.plate_vel = Vec3::ZERO;
             player.jump_held = true;
             let squashing = squash_q.contains(entity);
-            squash_guarded(
-                &mut commands,
-                entity,
-                squashing,
-                Vec2::new(0.72, 1.35),
-                0.10,
-            );
-            ScreenEffects::add_trauma(&mut trauma, 0.04);
+            squash_guarded(squashing, Vec2::new(0.72, 1.35), 0.10);
+            trauma.add(0.04);
         }
 
         if !underwater
@@ -1252,15 +1208,16 @@ pub fn player_controller(
         let fell = pos.y <= player.pre_move_pos.y + 0.02;
         let mut on_plate = false;
         let mut landed_plate: Option<(Entity, Vec3)> = None;
-        for (plate_e, dtf, drift, pvel) in &plates {
-            let step = plate_step(drift, pvel, dt);
-            let top = dtf.translation.y + 0.12;
+        for plate in &plates.0 {
+            let plate_e = plate.owner;
+            let step = plate_step(&plate.drift, plate.vel, dt);
+            let top = plate.pos.y + 0.12;
             let prev_top = top - step.y;
-            let over_now = (pos.x - dtf.translation.x).abs() < 0.7 + move_he.x + PLATE_OVER_SLACK
-                && (pos.z - dtf.translation.z).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
-            let over_prev = (player.pre_move_pos.x - (dtf.translation.x - step.x)).abs()
+            let over_now = (pos.x - plate.pos.x).abs() < 0.7 + move_he.x + PLATE_OVER_SLACK
+                && (pos.z - plate.pos.z).abs() < 0.7 + move_he.z + PLATE_OVER_SLACK;
+            let over_prev = (player.pre_move_pos.x - (plate.pos.x - step.x)).abs()
                 < 0.7 + move_he.x + PLATE_OVER_SLACK
-                && (player.pre_move_pos.z - (dtf.translation.z - step.z)).abs()
+                && (player.pre_move_pos.z - (plate.pos.z - step.z)).abs()
                     < 0.7 + move_he.z + PLATE_OVER_SLACK;
             if !(over_now || over_prev) {
                 continue;
@@ -1397,30 +1354,15 @@ pub fn player_controller(
             let squashing = squash_q.contains(entity);
             if player.slamming {
                 let amount = (impact / 40.0).clamp(0.15, 0.45);
-                squash_guarded(
-                    &mut commands,
-                    entity,
-                    squashing,
-                    Vec2::new(1.45, 0.55),
-                    0.16,
-                );
-                ScreenEffects::add_trauma(&mut trauma, amount);
+                squash_guarded(squashing, Vec2::new(1.45, 0.55), 0.16);
+                trauma.add(amount);
             } else if impact > tuning.land_squash_min_impact {
                 let t = ((impact - tuning.land_squash_min_impact) / 18.0).clamp(0.0, 1.0);
                 let sx = 1.0 + 0.28 * t;
                 let sy = 1.0 - 0.32 * t;
-                squash_guarded(
-                    &mut commands,
-                    entity,
-                    squashing,
-                    Vec2::new(sx, sy),
-                    0.08 + 0.06 * t,
-                );
+                squash_guarded(squashing, Vec2::new(sx, sy), 0.08 + 0.06 * t);
                 if impact > 8.0 {
-                    ScreenEffects::add_trauma(
-                        &mut trauma,
-                        ((impact - 8.0) / 40.0).clamp(0.04, 0.30),
-                    );
+                    trauma.add(((impact - 8.0) / 40.0).clamp(0.04, 0.30));
                 }
             }
             player.slamming = false;
@@ -1482,14 +1424,8 @@ pub fn player_controller(
         {
             player.velocity.y = tuning.jump_speed * 1.55;
             let squashing = squash_q.contains(entity);
-            squash_guarded(
-                &mut commands,
-                entity,
-                squashing,
-                Vec2::new(0.65, 1.45),
-                0.12,
-            );
-            ScreenEffects::add_trauma(&mut trauma, 0.08);
+            squash_guarded(squashing, Vec2::new(0.65, 1.45), 0.12);
+            trauma.add(0.08);
             player.on_ground = false;
             player.coyote = 0.0;
             player.was_on_ground = false;
@@ -1502,22 +1438,18 @@ pub fn player_controller(
 pub fn sync_mode(
     mode: Res<MakerMode>,
     level: Res<LevelDocument>,
-    mut q: Query<(&mut Transform, &mut Player, &mut MoveState, &mut Visibility)>,
+    mut q: Query<(&mut PlayerTransform, &mut Player, &mut MoveState)>,
 ) {
     if !mode.is_changed() {
         return;
     }
-    for (mut transform, mut player, mut move_state, mut vis) in &mut q {
+    for (mut transform, mut player, mut move_state) in &mut q {
         match *mode {
-            MakerMode::Play => reset_player_run(
-                &mut transform,
-                &mut player,
-                &mut move_state,
-                &mut vis,
-                &level,
-            ),
+            MakerMode::Play => {
+                reset_player_run(&mut transform, &mut player, &mut move_state, &level)
+            }
             MakerMode::Edit => {
-                *vis = Visibility::Hidden;
+                transform.visible = false;
             }
         }
     }
@@ -1545,6 +1477,20 @@ mod tests {
             );
         }
         level
+    }
+
+    #[test]
+    fn move_wish_normalizes_diagonal() {
+        let held: HashSet<PhysicalKey> = [PhysicalKey::KeyW, PhysicalKey::KeyA].into();
+        let keys = PlayKeys {
+            held: &held,
+            edges: &[],
+            kb_ok: true,
+        };
+        let wish = keys.read_move_wish();
+        assert!((wish.length_squared() - 1.0).abs() < 1e-6);
+        assert!(wish.x < 0.0);
+        assert!(wish.y > 0.0);
     }
 
     #[test]
@@ -1653,6 +1599,52 @@ mod tests {
         assert!(
             peak_cut < peak_full && peak_cut > 1.0,
             "cut peak {peak_cut:.2} should be < full {peak_full:.2} and >1.0"
+        );
+    }
+
+    #[test]
+    fn frame_phase_mode_flip_reaches_sim_systems() {
+        use std::time::Duration;
+
+        use crate::maker::interactive_blocks::reset_onoff_state;
+        use crate::maker::{Paused, not_paused};
+
+        let mut sim = repame_shell::Sim::with_default_step();
+        let level = LevelDocument::default();
+        let player = spawn_player(&mut sim.world, &level);
+        sim.world.insert_resource(level);
+        sim.world.insert_resource(MakerMode::Edit);
+        sim.world.insert_resource(Paused(false));
+        sim.world.insert_resource(PlayIntent::default());
+        sim.world.insert_resource(PressedLatch::default());
+        sim.world.insert_resource(MoveTuning::default());
+        sim.world.insert_resource(RuntimeSolids::default());
+        sim.world.insert_resource(OnOffState::default());
+        sim.world.insert_resource(Trauma::default());
+        sim.world.insert_resource(ActivePlates::default());
+        sim.world.insert_resource(CameraRig::default());
+        sim.add_chained_systems(
+            (
+                sync_mode,
+                reset_onoff_state,
+                player_controller,
+                clear_pressed_latch,
+            )
+                .chain()
+                .run_if(not_paused),
+        );
+        sim.step(Duration::from_millis(17));
+        assert!(!sim.world.get::<PlayerTransform>(player).unwrap().visible);
+        sim.world.resource_mut::<OnOffState>().on = false;
+        *sim.world.resource_mut::<MakerMode>() = MakerMode::Play;
+        sim.step(Duration::from_millis(17));
+        assert!(
+            sim.world.get::<PlayerTransform>(player).unwrap().visible,
+            "sync_mode did not observe the frame-phase MakerMode change"
+        );
+        assert!(
+            sim.world.resource::<OnOffState>().on,
+            "reset_onoff_state did not observe the frame-phase MakerMode change"
         );
     }
 }
