@@ -2,14 +2,17 @@ use std::collections::HashMap;
 
 use glam::{IVec3, Vec3};
 use repame_view3d::{
-    Cell, ChunkCache, ChunkMeshInput, ChunkStreamer, FaceKind, Frame3d, MeshGroup, OrbitCamera,
-    Rgb, View3dEvent, VoxelShape, VoxelSource,
+    CHUNK_SIZE, Cell, ChunkCache, ChunkMeshInput, ChunkMeshOutput, ChunkStreamer, FaceKind,
+    Frame3d, MeshGroup, OrbitCamera, Rgb, View3dEvent, VoxelShape, VoxelSource, build_chunk_mesh,
 };
 
 use super::block::{BlockKind, BlockKindColor, BlockShape};
-use super::commands::{CommandHistory, place_cmd_for_cell, remove_cmd_for_cell};
-use super::level::{LevelDocument, raycast_present};
-use super::mode::BlockBrush;
+use super::commands::{
+    CommandHistory, EditCommand, apply_commands_immediate, build_block_data, mirror_cells,
+    mirror_rot_for, place_cmd_for_cell_with_rot, remove_cmd_for_cell,
+};
+use super::level::{BlockData, LevelDocument, raycast_present};
+use super::mode::{BlockBrush, BlockPlaced, BoxFillStart, PlaceGhost};
 
 const PULSE_ON: bool = true;
 const TERRAIN_PICK: u32 = 1;
@@ -89,10 +92,16 @@ fn linear(v: f32) -> f32 {
     }
 }
 
+const POP_IN_SECS: f32 = 0.18;
+const GHOST_LIFE_SECS: f32 = 0.25;
+
 pub struct LevelView {
     pub history: CommandHistory,
     pub brush: BlockBrush,
     pub last_action: String,
+    pub place_events: Vec<BlockPlaced>,
+    pub ghosts: Vec<PlaceGhost>,
+    stroke: BoxFillStart,
     streamer: ChunkStreamer<LevelDocument, Classify, Solidity>,
     cache: ChunkCache,
     generation: u64,
@@ -113,6 +122,9 @@ impl LevelView {
             history: CommandHistory::default(),
             brush: BlockBrush::default(),
             last_action: String::new(),
+            place_events: Vec::new(),
+            ghosts: Vec::new(),
+            stroke: BoxFillStart::default(),
             cache: ChunkCache::new(),
             generation: 0,
         }
@@ -140,8 +152,36 @@ impl LevelView {
         }
     }
 
-    pub fn draw(&self, frame: &mut Frame3d) {
+    pub fn draw(
+        &self,
+        frame: &mut Frame3d,
+        level: &LevelDocument,
+        preview: Option<IVec3>,
+        in_edit: bool,
+    ) {
         frame.extend_chunks(self.cache.draws());
+        if !in_edit {
+            return;
+        }
+        if let Some(cell) = preview {
+            let data = build_block_data(
+                self.brush.kind,
+                self.brush.shape,
+                self.brush.rot,
+                self.brush.waterlogged,
+                cell,
+            );
+            let scale = if level.boundary_solid(cell) {
+                0.98
+            } else {
+                1.02
+            };
+            frame.push(shaped_group(&data, scale));
+        }
+        for ghost in &self.ghosts {
+            let data = build_block_data(ghost.kind, ghost.shape, ghost.rot, false, ghost.cell);
+            frame.push(shaped_group(&data, pop_in_scale(ghost.age)));
+        }
     }
 
     pub fn click(
@@ -150,7 +190,11 @@ impl LevelView {
         ev: &View3dEvent,
         cam: &OrbitCamera,
         erase: bool,
+        mirror: u8,
     ) {
+        if self.stroke.last_paint.is_some() || self.stroke.last_erase.is_some() {
+            return;
+        }
         let eye = cam.eye();
         let point = match ev {
             View3dEvent::MeshClick { point, .. } => Vec3::from_array(*point),
@@ -171,9 +215,9 @@ impl LevelView {
             return;
         };
         if erase {
-            self.erase(level, cell);
+            self.stroke_erase(level, mirror, cell);
         } else {
-            self.place(level, cell + normal);
+            self.stroke_paint(level, mirror, cell + normal);
         }
     }
 
@@ -195,30 +239,155 @@ impl LevelView {
         self.last_action = "redo".to_string();
     }
 
-    fn place(&mut self, level: &mut LevelDocument, cell: IVec3) {
-        let Some(cmd) = place_cmd_for_cell(level, &self.brush, cell) else {
+    pub fn stroke_paint(&mut self, level: &mut LevelDocument, mirror: u8, place_cell: IVec3) {
+        if self.stroke.last_paint == Some(place_cell) {
             return;
-        };
-        self.history.apply(level, cmd);
-        self.sync_source(level);
-        self.last_action = format!(
-            "place {:?} at {}, {}, {}",
-            self.brush.kind, cell.x, cell.y, cell.z
-        );
+        }
+        let cmds: Vec<EditCommand> = mirror_cells(place_cell, mirror)
+            .into_iter()
+            .filter_map(|cell| {
+                let rot = mirror_rot_for(place_cell, cell, self.brush.rot);
+                place_cmd_for_cell_with_rot(level, &self.brush, cell, rot)
+            })
+            .collect();
+        for cmd in &cmds {
+            if let EditCommand::Place { position, data, .. } = cmd {
+                self.place_events.push(BlockPlaced {
+                    cell: *position,
+                    kind: data.kind,
+                    shape: data.shape,
+                    rot: data.rot,
+                });
+            }
+        }
+        if !cmds.is_empty() {
+            apply_commands_immediate(level, &cmds);
+            self.stroke.stroke.extend(cmds);
+            self.sync_source(level);
+            self.last_action = format!(
+                "place {:?} at {}, {}, {}",
+                self.brush.kind, place_cell.x, place_cell.y, place_cell.z
+            );
+        }
+        self.stroke.last_paint = Some(place_cell);
     }
 
-    fn erase(&mut self, level: &mut LevelDocument, cell: IVec3) {
-        let Some(cmd) = remove_cmd_for_cell(level, cell) else {
+    pub fn stroke_erase(&mut self, level: &mut LevelDocument, mirror: u8, hit_cell: IVec3) {
+        if self.stroke.last_erase == Some(hit_cell) {
             return;
-        };
-        self.history.apply(level, cmd);
-        self.sync_source(level);
-        self.last_action = format!("erase at {}, {}, {}", cell.x, cell.y, cell.z);
+        }
+        let cmds: Vec<EditCommand> = mirror_cells(hit_cell, mirror)
+            .into_iter()
+            .filter_map(|cell| remove_cmd_for_cell(level, cell))
+            .collect();
+        if !cmds.is_empty() {
+            apply_commands_immediate(level, &cmds);
+            self.stroke.stroke.extend(cmds);
+            self.sync_source(level);
+            self.last_action = format!("erase at {}, {}, {}", hit_cell.x, hit_cell.y, hit_cell.z);
+        }
+        self.stroke.last_erase = Some(hit_cell);
+    }
+
+    pub fn release_stroke(&mut self, level: &mut LevelDocument) {
+        self.stroke.last_paint = None;
+        self.stroke.last_erase = None;
+        self.stroke.last_pointer = None;
+        if !self.stroke.stroke.is_empty() {
+            let cmds = std::mem::take(&mut self.stroke.stroke);
+            self.history.apply_many(level, cmds);
+        }
+    }
+
+    pub fn take_place_events(&mut self) -> Vec<BlockPlaced> {
+        std::mem::take(&mut self.place_events)
+    }
+
+    pub fn pump_ghosts(&mut self, dt: f32) {
+        for ev in self.take_place_events() {
+            self.ghosts.push(PlaceGhost {
+                cell: ev.cell,
+                kind: ev.kind,
+                shape: ev.shape,
+                rot: ev.rot,
+                age: 0.0,
+            });
+        }
+        for ghost in &mut self.ghosts {
+            ghost.age += dt;
+        }
+        self.ghosts.retain(|ghost| ghost.age < GHOST_LIFE_SECS);
     }
 
     fn sync_source(&mut self, level: &LevelDocument) {
         self.streamer.set_source(level.clone());
     }
+}
+
+fn pop_in_scale(age: f32) -> f32 {
+    if age >= POP_IN_SECS {
+        return 1.0;
+    }
+    let t = (age / POP_IN_SECS).clamp(0.0, 1.0);
+    let t2 = t - 1.0;
+    t2 * t2 * ((1.70158 + 1.0) * t2 + 1.70158) + 1.0
+}
+
+fn shaped_group(data: &BlockData, scale: f32) -> MeshGroup {
+    let cell = IVec3::from_array(data.position);
+    let mut grid = HashMap::new();
+    grid.insert(
+        data.position,
+        Cell {
+            kind: kind_id(data.kind),
+            shape: voxel_shape(data.shape),
+            rot: data.rot & 3,
+            waterlogged: false,
+        },
+    );
+    let input: ChunkMeshInput<Classify, Solidity> = ChunkMeshInput {
+        classify,
+        is_solid,
+        kind_tint: kind_tints(),
+        water_level: None,
+        lit: true,
+        ..Default::default()
+    };
+    let mut output = ChunkMeshOutput::default();
+    build_chunk_mesh(
+        &grid,
+        cell.div_euclid(IVec3::splat(CHUNK_SIZE)).to_array(),
+        &input,
+        &mut output,
+    );
+    let center = cell.as_vec3() + Vec3::splat(0.5);
+    let water = output.water;
+    let mut merged = MeshGroup {
+        depth_test: true,
+        transparent: true,
+        alpha: 0.45,
+        ..MeshGroup::default()
+    };
+    for group in output
+        .opaque
+        .into_values()
+        .chain((!water.is_empty()).then_some(water))
+    {
+        let base = merged.positions.len() as u32;
+        for pos in &group.positions {
+            let v = Vec3::from_array(*pos);
+            merged
+                .positions
+                .push((center + (v - center) * scale).to_array());
+        }
+        merged.colors.extend_from_slice(&group.colors);
+        merged.normals.extend_from_slice(&group.normals);
+        merged.uvs.extend_from_slice(&group.uvs);
+        merged
+            .indices
+            .extend(group.indices.iter().map(|i| base + i));
+    }
+    merged
 }
 
 fn stamp_pick_id(cache: &mut ChunkCache) {
@@ -246,5 +415,60 @@ fn stamp_pick_id(cache: &mut ChunkCache) {
     };
     for (chunk, generation, groups) in fixes {
         cache.store(chunk, generation, &groups);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn place_queues_ghost_events_and_ghost_expires_at_quarter_second() {
+        let mut level = LevelDocument::default();
+        let mut view = LevelView::new(&level);
+        view.stroke_paint(&mut level, 0, IVec3::new(0, 1, 0));
+        let events = view.take_place_events();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0].cell, IVec3::new(0, 1, 0));
+        assert_eq!(events[0].kind, BlockKind::Grass);
+        assert_eq!(events[0].shape, BlockShape::Full);
+        assert_eq!(events[0].rot, 0);
+        assert!(view.take_place_events().is_empty());
+
+        assert_eq!(pop_in_scale(0.0), 0.0);
+        let mid = pop_in_scale(0.09);
+        assert!(mid > 1.08 && mid < 1.09, "{mid}");
+        assert_eq!(pop_in_scale(0.18), 1.0);
+        assert_eq!(pop_in_scale(0.3), 1.0);
+
+        view.place_events = events;
+        view.pump_ghosts(0.0);
+        assert_eq!(view.ghosts.len(), 1);
+        assert_eq!(view.ghosts[0].age, 0.0);
+        view.pump_ghosts(0.24);
+        assert_eq!(view.ghosts.len(), 1, "alive at 0.24s");
+        view.pump_ghosts(0.02);
+        assert!(view.ghosts.is_empty(), "dead past 0.25s");
+    }
+
+    #[test]
+    fn two_cell_stroke_is_one_undo_step() {
+        let mut level = LevelDocument::default();
+        let mut view = LevelView::new(&level);
+        view.stroke_paint(&mut level, 0, IVec3::new(0, 1, 0));
+        view.stroke_paint(&mut level, 0, IVec3::new(1, 1, 0));
+        assert!(view.history.undo.is_empty(), "stroke defers the undo entry");
+        assert!(level.get_block(IVec3::new(0, 1, 0)).is_some());
+        assert!(level.get_block(IVec3::new(1, 1, 0)).is_some());
+        assert!(view.stroke.last_paint.is_some());
+
+        view.release_stroke(&mut level);
+        assert_eq!(view.history.undo.len(), 1, "one undo per stroke");
+        assert!(view.stroke.last_paint.is_none());
+        assert!(view.stroke.stroke.is_empty());
+
+        view.undo(&mut level);
+        assert!(level.get_block(IVec3::new(0, 1, 0)).is_none());
+        assert!(level.get_block(IVec3::new(1, 1, 0)).is_none());
     }
 }

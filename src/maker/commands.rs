@@ -551,3 +551,43 @@ pub fn remove_cmd_for_cell(level: &LevelDocument, cell: IVec3) -> Option<EditCom
             previous,
         })
 }
+
+/// Cells affected by a placement at `cell` under the given mirror mode
+/// (bit 0 = X mirror, bit 1 = Z mirror).
+pub fn mirror_cells(cell: IVec3, mode: u8) -> Vec<IVec3> {
+    let mut out = vec![cell];
+    if mode & 1 != 0 {
+        out.push(IVec3::new(-cell.x, cell.y, cell.z));
+    }
+    if mode & 2 != 0 {
+        out.push(IVec3::new(cell.x, cell.y, -cell.z));
+    }
+    if mode & 3 == 3 {
+        out.push(IVec3::new(-cell.x, cell.y, -cell.z));
+    }
+    out.sort_by_key(|c| (c.x, c.y, c.z));
+    out.dedup();
+    out
+}
+
+/// Yaw for a mirrored copy: X-mirror flips 0<->2, Z-mirror flips 1<->3,
+/// both adds 180°. Derived per-cell from origin vs mirrored position so
+/// `Slope`/`Conveyor`/`Corner` keep facing the mirrored direction.
+pub fn mirror_rot_for(origin: IVec3, mirrored: IVec3, rot: u8) -> u8 {
+    let mx = mirrored.x != origin.x;
+    let mz = mirrored.z != origin.z;
+    match (mx, mz) {
+        (true, false) => match rot % 4 {
+            0 => 2,
+            2 => 0,
+            r => r,
+        },
+        (false, true) => match rot % 4 {
+            1 => 3,
+            3 => 1,
+            r => r,
+        },
+        (true, true) => (rot + 2) % 4,
+        _ => rot % 4,
+    }
+}

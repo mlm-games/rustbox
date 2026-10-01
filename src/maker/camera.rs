@@ -140,3 +140,33 @@ pub fn play_camera_follow(world: &mut World, dt: f32, looking: bool, cam: &mut O
     }
     cam.dist = cam.dist.clamp(NEAR, 22.0);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edit_orbit_matches_main_rig_under_same_delta() {
+        let mut rig = CameraRig::default();
+        rig.focus = Vec3::new(3.0, 1.0, -2.0);
+        rig.yaw = 0.8;
+        rig.pitch = 0.7;
+        let mut cam = OrbitCamera {
+            target: rig.focus,
+            yaw: std::f32::consts::FRAC_PI_2 - rig.yaw,
+            pitch: rig.pitch,
+            dist: rig.distance,
+            fov_y_deg: 45.0,
+        };
+        let (dx, dy) = (37.0, -11.0);
+
+        rig.yaw -= dx * 0.005;
+        rig.pitch = (rig.pitch + dy * 0.005).clamp(0.05, 1.5);
+        cam.yaw += dx * 0.005;
+        cam.pitch = (cam.pitch + dy * 0.005).clamp(0.05, 1.5);
+
+        assert!((cam.yaw - (std::f32::consts::FRAC_PI_2 - rig.yaw)).abs() < 1e-6);
+        assert!((cam.pitch - rig.pitch).abs() < 1e-6);
+        assert!((cam.eye() - rig_eye(&rig)).length() < 1e-5);
+    }
+}

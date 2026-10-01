@@ -20,10 +20,10 @@ use maker::interaction::{DamageRequests, ForcedMotionRequests, InteractionMemory
 use maker::interactive_blocks::{
     OnOffState, PulseClock, reset_onoff_state, reset_pulse_clock, sync_pulse, touch_onoff_switches,
 };
-use maker::level::LevelDocument;
+use maker::level::{LevelDocument, raycast_present};
 use maker::level_file::deserialize_level;
 use maker::level_view::LevelView;
-use maker::mode::{InputCapture, MakerMode};
+use maker::mode::{EditorCursor, InputCapture, MakerMode, MirrorMode};
 use maker::player::{
     MoveState, MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, Trauma,
     clear_pressed_latch, latch_play_presses, player_controller, spawn_player, sync_mode,
@@ -50,6 +50,7 @@ struct App {
     cam: Rc<Cell<OrbitCamera>>,
     world: Rc<RefCell<LevelView>>,
     button: Rc<Cell<Option<PointerButton>>>,
+    ctrl: Rc<Cell<bool>>,
     staging: Rc<RefCell<Staging>>,
     player: Entity,
     undo_latched: bool,
@@ -71,6 +72,8 @@ impl App {
         sim.world.insert_resource(level);
         sim.world.insert_resource(MakerMode::Edit);
         sim.world.insert_resource(InputCapture::default());
+        sim.world.insert_resource(EditorCursor::default());
+        sim.world.insert_resource(MirrorMode::default());
         sim.world.insert_resource(PlayIntent::default());
         sim.world.insert_resource(PressedLatch::default());
         sim.world.insert_resource(MoveTuning::default());
@@ -119,6 +122,7 @@ impl App {
             })),
             world,
             button: Rc::new(Cell::new(None)),
+            ctrl: Rc::new(Cell::new(false)),
             staging: Staging::shared(),
             player,
             undo_latched: false,
@@ -142,6 +146,10 @@ impl App {
             staging.feed_polled(sched);
             staging.take_edges()
         };
+        self.ctrl.set(
+            sched.held_keys.contains(&PhysicalKey::ControlLeft)
+                || sched.held_keys.contains(&PhysicalKey::ControlRight),
+        );
 
         let mut cam = self.cam.get();
         self.sample_input(sched, &edges);
@@ -210,15 +218,82 @@ impl App {
         } else {
             None
         };
+        let in_edit = mode == MakerMode::Edit;
+        let mut preview_cell = None;
+        if in_edit {
+            let ui_wants_pointer = sim.world.resource::<InputCapture>().ui_wants_pointer;
+            let ui_wants_keyboard = sim.world.resource::<InputCapture>().ui_wants_keyboard;
+            let ray = if ui_wants_pointer {
+                None
+            } else {
+                sim.world.resource::<EditorCursor>().ray
+            };
+            let hit = ray.and_then(|(eye, dir)| {
+                raycast_present(
+                    sim.world.resource::<LevelDocument>(),
+                    Vec3::from_array(eye),
+                    Vec3::from_array(dir),
+                    200.0,
+                )
+            });
+            {
+                let mut cursor = sim.world.resource_mut::<EditorCursor>();
+                cursor.hit = hit.map(|(cell, _)| cell);
+                cursor.place = hit.map(|(cell, normal)| cell + normal);
+                preview_cell = cursor.place;
+            }
+            if self.button.get().is_none()
+                && let Ok(mut world) = self.world.try_borrow_mut()
+            {
+                let mut level = sim.world.resource_mut::<LevelDocument>();
+                world.release_stroke(&mut level);
+            }
+            if !ui_wants_keyboard {
+                let held = |key: PhysicalKey| sched.held_keys.contains(&key);
+                let yaw = cam.yaw;
+                let forward = Vec3::new(-yaw.cos(), 0.0, -yaw.sin());
+                let right = Vec3::new(yaw.sin(), 0.0, -yaw.cos());
+                let mut pan = Vec3::ZERO;
+                if held(PhysicalKey::KeyW) {
+                    pan += forward;
+                }
+                if held(PhysicalKey::KeyS) {
+                    pan -= forward;
+                }
+                if held(PhysicalKey::KeyD) {
+                    pan += right;
+                }
+                if held(PhysicalKey::KeyA) {
+                    pan -= right;
+                }
+                if held(PhysicalKey::KeyE) {
+                    pan += Vec3::Y;
+                }
+                if held(PhysicalKey::KeyQ) {
+                    pan -= Vec3::Y;
+                }
+                cam.target += pan * 12.0 * dt_secs;
+                if let Some((min, max)) = sim.world.resource::<LevelDocument>().content_bounds() {
+                    const PAD: f32 = 4.0;
+                    let (min, max) = (min.as_vec3(), max.as_vec3() + Vec3::ONE);
+                    cam.target.x = cam.target.x.clamp(min.x - PAD, max.x + PAD);
+                    cam.target.z = cam.target.z.clamp(min.z - PAD, max.z + PAD);
+                }
+                self.cam.set(cam);
+            }
+        } else {
+            *sim.world.resource_mut::<EditorCursor>() = EditorCursor::default();
+        }
         let mut level = sim.world.resource_mut::<LevelDocument>();
         let mut world = self.world.borrow_mut();
         world.tick(&mut level, cam.target);
+        world.pump_ghosts(dt_secs);
         let mut frame = Frame3d {
             cam,
             ..Frame3d::default()
         };
         frame.push(ground());
-        world.draw(&mut frame);
+        world.draw(&mut frame, &level, preview_cell, in_edit);
 
         let name = level.data.name.clone();
         let blocks = level.map.len();
@@ -263,12 +338,13 @@ impl App {
         draw_props(&sim.world, &mut frame);
         drop(sim);
 
-        self.hotkeys(sched);
+        self.hotkeys(sched, &edges);
 
         let cam_rc = self.cam.clone();
         let world_rc = self.world.clone();
         let sim_rc = self.sim.clone();
         let button_rc = self.button.clone();
+        let ctrl_rc = self.ctrl.clone();
         let looked_rc = self.looked.clone();
         let viewport = Viewport3d(
             frame,
@@ -277,13 +353,19 @@ impl App {
             BatchDesc::default(),
             move |ev| {
                 let mut c = cam_rc.get();
-                let (play_live, in_edit) = {
+                let (play_live, in_edit, ui_wants_pointer, ctrl) = {
                     let Ok(sim) = sim_rc.try_borrow() else {
                         return;
                     };
                     let m = *sim.world.resource::<MakerMode>();
                     let paused = sim.world.resource::<Paused>().0;
-                    (m == MakerMode::Play && !paused, m == MakerMode::Edit)
+                    let ui_wants_pointer = sim.world.resource::<InputCapture>().ui_wants_pointer;
+                    (
+                        m == MakerMode::Play && !paused,
+                        m == MakerMode::Edit,
+                        ui_wants_pointer,
+                        ctrl_rc.get(),
+                    )
                 };
                 match ev {
                     View3dEvent::Orbit { dx, dy } => {
@@ -298,15 +380,9 @@ impl App {
                                     (rig.pitch + dy * rig.look_sensitivity).clamp(0.08, 1.25);
                                 looked_rc.set(true);
                             }
-                        } else if in_edit {
-                            c.orbit(dx, dy);
                         }
                     }
-                    View3dEvent::Pan { dx, dy } => {
-                        if in_edit {
-                            c.pan(dx, dy);
-                        }
-                    }
+                    View3dEvent::Pan { .. } => {}
                     View3dEvent::Zoom { factor } => {
                         if play_live {
                             let scroll = (1.0 - factor) / 0.002;
@@ -315,23 +391,85 @@ impl App {
                             };
                             let mut rig = sim.world.resource_mut::<CameraRig>();
                             rig.distance = (rig.distance - scroll * 0.9).clamp(5.0, 22.0);
-                        } else if in_edit {
-                            c.zoom(factor);
+                        } else if in_edit && !ui_wants_pointer {
+                            let scroll = (1.0 - factor) / 0.002;
+                            c.dist = (c.dist - scroll * 1.5).clamp(4.0, 60.0);
                         }
                     }
-                    click => {
-                        let erase = matches!(button_rc.get(), Some(PointerButton::Secondary));
-                        let Ok(mut sim) = sim_rc.try_borrow_mut() else {
-                            return;
-                        };
-                        if *sim.world.resource::<MakerMode>() != MakerMode::Edit {
-                            return;
+                    View3dEvent::HoverRay { eye, dir } => {
+                        if in_edit {
+                            if let Ok(mut sim) = sim_rc.try_borrow_mut() {
+                                sim.world.resource_mut::<EditorCursor>().ray = Some((eye, dir));
+                            }
                         }
-                        let Ok(mut world) = world_rc.try_borrow_mut() else {
-                            return;
-                        };
-                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                        world.click(&mut level, &click, &c, erase);
+                    }
+                    View3dEvent::Hover { .. } | View3dEvent::HoverMesh { .. } => {}
+                    View3dEvent::Drag { button, dx, dy } => {
+                        if in_edit && !ui_wants_pointer && !ctrl {
+                            match button {
+                                PointerButton::Secondary => {
+                                    c.yaw += dx * 0.005;
+                                    c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
+                                    if let Ok(mut sim) = sim_rc.try_borrow_mut() {
+                                        let ray = sim.world.resource::<EditorCursor>().ray;
+                                        let mirror = sim.world.resource::<MirrorMode>().0;
+                                        let hit = ray.and_then(|(eye, dir)| {
+                                            raycast_present(
+                                                sim.world.resource::<LevelDocument>(),
+                                                Vec3::from_array(eye),
+                                                Vec3::from_array(dir),
+                                                200.0,
+                                            )
+                                        });
+                                        if let Some((cell, _)) = hit
+                                            && let Ok(mut world) = world_rc.try_borrow_mut()
+                                        {
+                                            let mut level =
+                                                sim.world.resource_mut::<LevelDocument>();
+                                            world.stroke_erase(&mut level, mirror, cell);
+                                        }
+                                    }
+                                }
+                                PointerButton::Primary => {
+                                    if let Ok(mut sim) = sim_rc.try_borrow_mut() {
+                                        let ray = sim.world.resource::<EditorCursor>().ray;
+                                        let mirror = sim.world.resource::<MirrorMode>().0;
+                                        let hit = ray.and_then(|(eye, dir)| {
+                                            raycast_present(
+                                                sim.world.resource::<LevelDocument>(),
+                                                Vec3::from_array(eye),
+                                                Vec3::from_array(dir),
+                                                200.0,
+                                            )
+                                        });
+                                        if let Some((cell, normal)) = hit
+                                            && let Ok(mut world) = world_rc.try_borrow_mut()
+                                        {
+                                            let mut level =
+                                                sim.world.resource_mut::<LevelDocument>();
+                                            world.stroke_paint(&mut level, mirror, cell + normal);
+                                        }
+                                    }
+                                }
+                                PointerButton::Tertiary => {}
+                            }
+                        }
+                    }
+                    click @ (View3dEvent::GroundClick { .. } | View3dEvent::MeshClick { .. }) => {
+                        let button = button_rc.get();
+                        let erase = matches!(button, Some(PointerButton::Secondary));
+                        let place = matches!(button, Some(PointerButton::Primary));
+                        if in_edit && !ui_wants_pointer && !ctrl && (erase || place) {
+                            let Ok(mut sim) = sim_rc.try_borrow_mut() else {
+                                return;
+                            };
+                            let mirror = sim.world.resource::<MirrorMode>().0;
+                            let Ok(mut world) = world_rc.try_borrow_mut() else {
+                                return;
+                            };
+                            let mut level = sim.world.resource_mut::<LevelDocument>();
+                            world.click(&mut level, &click, &c, erase, mirror);
+                        }
                     }
                 }
                 cam_rc.set(c);
@@ -366,6 +504,8 @@ impl App {
         let focus_staging = self.staging.clone();
         let key_staging = self.staging.clone();
         let button = self.button.clone();
+        let button_up = self.button.clone();
+        let button_cancel = self.button.clone();
         ZStack(
             Modifier::new()
                 .fill_max_size()
@@ -385,6 +525,14 @@ impl App {
                     if let PointerEventKind::Down(b) = ev.event {
                         button.set(Some(b));
                     }
+                })
+                .on_pointer_up(move |ev: PointerEvent| {
+                    if matches!(ev.event, PointerEventKind::Up(_)) {
+                        button_up.set(None);
+                    }
+                })
+                .on_pointer_cancel(move |_| {
+                    button_cancel.set(None);
                 }),
         )
         .child(vec![viewport, hud])
@@ -426,7 +574,7 @@ impl App {
         };
     }
 
-    fn hotkeys(&mut self, sched: &mut Scheduler) {
+    fn hotkeys(&mut self, sched: &mut Scheduler, edges: &[PhysicalKey]) {
         {
             let sim = self.sim.borrow();
             if *sim.world.resource::<MakerMode>() != MakerMode::Edit {
@@ -435,6 +583,30 @@ impl App {
         }
         let held = |key: PhysicalKey| sched.held_keys.contains(&key);
         let ctrl = held(PhysicalKey::ControlLeft) || held(PhysicalKey::ControlRight);
+        if edges.contains(&PhysicalKey::KeyV) && !ctrl {
+            let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                return;
+            };
+            if !sim.world.resource::<InputCapture>().ui_wants_keyboard {
+                let label = {
+                    let mut mirror = sim.world.resource_mut::<MirrorMode>();
+                    mirror.0 = (mirror.0 + 1) % 4;
+                    match mirror.0 {
+                        0 => "Off",
+                        1 => "X",
+                        2 => "Z",
+                        _ => "X+Z",
+                    }
+                    .to_string()
+                };
+                sim.world
+                    .resource_mut::<win::MakerUi>()
+                    .set_status(format!("Mirror: {label}"));
+                if let Ok(mut world) = self.world.try_borrow_mut() {
+                    world.last_action = format!("Mirror: {label}");
+                }
+            }
+        }
         let shift = held(PhysicalKey::ShiftLeft) || held(PhysicalKey::ShiftRight);
         let z = held(PhysicalKey::KeyZ);
         let y = held(PhysicalKey::KeyY);

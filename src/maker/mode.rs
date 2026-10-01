@@ -72,7 +72,7 @@ pub struct InputCapture {
 pub struct SelectedEntity(pub Option<LevelEntityId>);
 
 /// Mirror brush mode: bit 0 = X mirror, bit 1 = Z mirror.
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct MirrorMode(pub u8);
 
 /// Editor paint state: `start` is the first corner of an in-progress
@@ -100,12 +100,14 @@ impl Default for ActiveLinkChannel {
 }
 
 /// Cell the edit cursor is currently aiming at (Edit mode only).
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct EditorCursor {
     pub hit: Option<IVec3>,
     pub place: Option<IVec3>,
     /// Current screen-space cursor position (for drag-paint gating).
     pub pointer: Option<Vec2>,
+    /// Latest `View3dEvent::HoverRay` (eye, dir); raycast per frame.
+    pub ray: Option<([f32; 3], [f32; 3])>,
 }
 
 /// Emitted when a block is placed so the pop-in ghost can spawn.
@@ -115,6 +117,16 @@ pub struct BlockPlaced {
     pub kind: BlockKind,
     pub shape: BlockShape,
     pub rot: u8,
+}
+
+/// Live place ghost: pops in over 0.18s, despawns at 0.25s.
+#[derive(Clone, Copy, Debug)]
+pub struct PlaceGhost {
+    pub cell: IVec3,
+    pub kind: BlockKind,
+    pub shape: BlockShape,
+    pub rot: u8,
+    pub age: f32,
 }
 
 #[derive(Default)]
