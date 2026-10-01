@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy_ecs::prelude::Resource;
 use game_utils::save::Versioned;
 use serde::{Deserialize, Serialize};
 

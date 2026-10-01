@@ -247,6 +247,7 @@ fn toolbar_row(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_redo = actions.clone();
     let a_load = actions.clone();
     let a_save = actions.clone();
+    let a_info = actions.clone();
     Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER)).children(vec![
         rail_pill(vec![
             icon_button(Symbols::UNDO, st.can_undo, move || {
@@ -263,6 +264,9 @@ fn toolbar_row(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             }),
             icon_button(Symbols::SAVE, true, move || {
                 push(&a_save, UiAction::MakerSave)
+            }),
+            icon_button(Symbols::SETTINGS, true, move || {
+                push(&a_info, UiAction::LevelInfoOpen)
             }),
         ]),
     ])

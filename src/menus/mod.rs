@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::maker::catalog::{LevelSummary, filter_catalog};
 use crate::maker::entity_data::EntityData;
-use crate::maker::level::LevelTag;
+use crate::maker::level::{BoundaryPreset, ClearCondition, LevelTag};
 use crate::maker::track::TrackData;
 
 pub use action::UiAction;
@@ -39,6 +39,10 @@ pub enum OverlayMenu {
     Browse,
     LoadLevel,
     PartPicker,
+    Settings,
+    Credits,
+    LevelInfo,
+    Share,
 }
 
 /// Menu-facing app snapshot: phase, overlays, the local level browser and the
@@ -53,6 +57,30 @@ pub struct MenuState {
     pub sign_dialog_open: bool,
     pub sign_dialog_lines: Vec<String>,
     pub translations: HashMap<String, String>,
+    // Settings / i18n
+    pub master_vol: f32,
+    pub sfx_vol: f32,
+    pub music_vol: f32,
+    pub language: String,
+    pub saved_language: String,
+    pub available_languages: Vec<String>,
+    // Share overlay
+    pub level_verified: bool,
+    pub export_code: String,
+    pub export_error: Option<String>,
+    // Level info scratch (edited in the panel, applied on Save)
+    pub info_name: String,
+    pub info_author: String,
+    pub info_description: String,
+    pub info_tags: Vec<LevelTag>,
+    pub info_clear_condition: ClearCondition,
+    pub info_preset: Option<BoundaryPreset>,
+    pub info_water: Option<i32>,
+    pub info_size: [i32; 3],
+    pub info_size_auto: bool,
+    pub info_height: i32,
+    pub info_blocks: u32,
+    pub info_entities: u32,
     // Maker toolbar / HUD
     pub maker_status: String,
     pub level_name: String,

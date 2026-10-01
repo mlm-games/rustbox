@@ -4,11 +4,11 @@ use repose_core::View;
 use repose_core::prelude::{AlignItems, AlignSelf, Dp, JustifyContent, Modifier, Sp};
 use repose_material::Icon;
 use repose_material::material3::{ButtonConfig, CardConfig, FilledTonalButton};
-use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt};
+use repose_ui::{Column, Row, Text as RText, TextStyle, ViewExt, ZStack};
 
 use crate::menus::MenuState;
 use crate::menus::action::UiAction;
-use crate::menus::components::{Symbols, clickable_outlined_card, push, spacer};
+use crate::menus::components::{Symbols, clickable_outlined_card, mk_icon_button, push, spacer};
 use crate::menus::style::{radius, sp, t, tok};
 
 pub fn splash_ui() -> View {
@@ -74,6 +74,8 @@ pub fn title_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let a_new = actions.clone();
     let a_browse = actions.clone();
     let a_quit = actions.clone();
+    let a_settings = actions.clone();
+    let a_credits = actions.clone();
 
     let mut hero: Vec<View> = Vec::new();
     hero.push(
@@ -107,16 +109,34 @@ pub fn title_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         || RText("Quit").size(Sp(14.0)).color(tok::text_mute()),
     ));
 
-    Column(
-        Modifier::new()
-            .fill_max_size()
-            .padding(Dp(sp::XL))
-            .gap(Dp(sp::SM))
-            .align_items(AlignItems::CENTER)
-            .justify_content(JustifyContent::CENTER)
-            .background(tok::bg_deep()),
-    )
-    .children(hero)
+    ZStack(Modifier::new().fill_max_size().background(tok::bg_deep()))
+        .child(
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .padding(Dp(sp::XL))
+                    .gap(Dp(sp::SM))
+                    .align_items(AlignItems::CENTER)
+                    .justify_content(JustifyContent::CENTER),
+            )
+            .children(hero),
+        )
+        .child(
+            Column(
+                Modifier::new()
+                    .fill_max_size()
+                    .align_items(AlignItems::FLEX_END)
+                    .padding(Dp(sp::MD)),
+            )
+            .child(Row(Modifier::new().gap(Dp(8.0))).children(vec![
+                mk_icon_button(Symbols::SETTINGS, true, move || {
+                    push(&a_settings, UiAction::OpenSettings)
+                }),
+                mk_icon_button(Symbols::INFO, true, move || {
+                    push(&a_credits, UiAction::OpenCredits)
+                }),
+            ])),
+        )
 }
 
 fn half_card(title: &str, icon: repose_material::Symbol, on_click: impl Fn() + 'static) -> View {

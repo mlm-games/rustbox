@@ -2,16 +2,26 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use repose_core::prelude::{AlignItems, AlignSelf, Color as RColor, Dp, Modifier, Sp, remember};
+use repose_core::prelude::{
+    AlignItems, AlignSelf, Color as RColor, Dp, Modifier, Sp, remember, remember_with_key,
+};
 use repose_core::{ImeAction, KeyboardOptions, KeyboardType, TextFieldLineLimits, View};
+use repose_material::material3::{Slider, SliderConfig};
+use repose_ui::scroll::{ScrollArea, remember_scroll_state};
 use repose_ui::{
-    BasicTextField, Column, Text as RText, TextFieldConfig, TextFieldState, TextStyle, ViewExt,
+    BasicTextField, Column, FlowRow, FlowRowConfig, Row, Text as RText, TextFieldConfig,
+    TextFieldState, TextStyle, ViewExt,
 };
 
+use crate::maker::level::{BoundaryPreset, ClearCondition, LevelTag};
 use crate::menus::MenuState;
+use crate::menus::OverlayMenu;
 use crate::menus::action::UiAction;
-use crate::menus::components::{mk_button, mk_pill_button, modal_shell, push, spacer};
-use crate::menus::style::{col, t};
+use crate::menus::components::{
+    Symbols, icon_label, mk_button, mk_button_sm, mk_chip, mk_pill_button, mk_primary_button,
+    modal_shell, push, spacer,
+};
+use crate::menus::style::{col, t, tag_color};
 
 /// Play-mode dialog showing a sign's text (mirrors MB64's message panel).
 /// Dismissed by pressing I / Space / Escape (handled in the interaction
@@ -53,15 +63,19 @@ pub(crate) fn pause_overlay(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) 
     let a1 = actions.clone();
     let a3 = actions.clone();
     let a_retry = actions.clone();
+    let a_settings = actions.clone();
+    let a_share = actions.clone();
     let tr = &st.translations;
 
-    modal_shell(pause_panel(tr, st, a1, a3, a_retry))
+    modal_shell(pause_panel(tr, st, a1, a_settings, a_share, a3, a_retry))
 }
 
 fn pause_panel(
     tr: &std::collections::HashMap<String, String>,
     st: &MenuState,
     a1: Arc<Mutex<Vec<UiAction>>>,
+    a_settings: Arc<Mutex<Vec<UiAction>>>,
+    a_share: Arc<Mutex<Vec<UiAction>>>,
     a3: Arc<Mutex<Vec<UiAction>>>,
     a_retry: Arc<Mutex<Vec<UiAction>>>,
 ) -> View {
@@ -83,6 +97,18 @@ fn pause_panel(
             &t(tr, "maker-retry", "Retry"),
             col(90, 140, 200),
             move || push(&a_retry, UiAction::MakerRetry),
+        ));
+    }
+    children.push(mk_button(
+        &t(tr, "settings", "Settings"),
+        col(70, 70, 90),
+        move || push(&a_settings, UiAction::OpenSettings),
+    ));
+    if st.maker_mode_edit {
+        children.push(mk_button(
+            &t(tr, "share-title", "Share"),
+            col(110, 90, 160),
+            move || push(&a_share, UiAction::MakerPublish),
         ));
     }
     children.push(mk_button(
@@ -226,6 +252,629 @@ pub(crate) fn load_level_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) 
         &t(tr, "back", "Back"),
         col(70, 70, 90),
         move || push(&a_back, UiAction::CloseOverlay),
+    ));
+
+    modal_shell(inner)
+}
+
+pub(crate) fn settings_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_save = actions.clone();
+    let a_back = actions.clone();
+
+    let vol_row = |label: String, value: f32, mk: fn(f32) -> UiAction| -> View {
+        let a = actions.clone();
+        Column(Modifier::new().fill_max_width().gap(Dp(6.0)))
+            .child(
+                RText(format!("{label} · {:.0}%", value * 100.0))
+                    .size(Sp(14.0))
+                    .color(RColor::WHITE),
+            )
+            .child(Slider(
+                value,
+                (0.0, 1.0),
+                Some(0.05),
+                move |v| push(&a, mk(v)),
+                SliderConfig {
+                    modifier: Modifier::new().fill_max_width(),
+                    ..Default::default()
+                },
+            ))
+    };
+
+    let mut lang_chips: Vec<View> = Vec::new();
+    for lang in &st.available_languages {
+        let a = actions.clone();
+        let code = lang.clone();
+        let selected = st.language == *lang;
+        lang_chips.push(mk_chip(
+            RText(lang.clone()).size(Sp(13.0)).color(if selected {
+                RColor::WHITE
+            } else {
+                col(150, 150, 170)
+            }),
+            selected,
+            col(60, 120, 200),
+            move || push(&a, UiAction::SetLanguage(code.clone())),
+        ));
+    }
+    let lang_row = FlowRow(
+        Modifier::new().fill_max_width().gap(Dp(6.0)),
+        FlowRowConfig::default(),
+    )
+    .child(lang_chips);
+
+    let inner = Column(
+        Modifier::new()
+            .width(Dp(420.0))
+            .padding(Dp(24.0))
+            .background(col(20, 20, 28))
+            .clip_rounded(Dp(12.0))
+            .align_items(AlignItems::CENTER),
+    )
+    .child(
+        RText(t(tr, "settings", "Settings"))
+            .size(Sp(32.0))
+            .color(RColor::WHITE),
+    )
+    .child(spacer(16.0))
+    .child(vol_row(
+        t(tr, "master-volume", "Master Volume"),
+        st.master_vol,
+        UiAction::SetMasterVol,
+    ))
+    .child(spacer(12.0))
+    .child(vol_row(
+        t(tr, "sfx-volume", "SFX Volume"),
+        st.sfx_vol,
+        UiAction::SetSfxVol,
+    ))
+    .child(spacer(12.0))
+    .child(vol_row(
+        t(tr, "music-volume", "Music Volume"),
+        st.music_vol,
+        UiAction::SetMusicVol,
+    ))
+    .child(spacer(16.0))
+    .child(
+        RText(t(tr, "language", "Language"))
+            .size(Sp(15.0))
+            .color(RColor::WHITE),
+    )
+    .child(spacer(6.0))
+    .child(lang_row)
+    .child(spacer(20.0))
+    .child(mk_button(
+        &t(tr, "save", "Save"),
+        col(60, 120, 200),
+        move || push(&a_save, UiAction::SaveSettings),
+    ))
+    .child(mk_button(
+        &t(tr, "back", "Back"),
+        col(70, 70, 90),
+        move || push(&a_back, UiAction::CloseOverlay),
+    ));
+
+    modal_shell(inner)
+}
+
+pub(crate) fn credits_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let a = actions.clone();
+    let tr = &st.translations;
+    let inner = Column(
+        Modifier::new()
+            .width(Dp(400.0))
+            .padding(Dp(24.0))
+            .background(col(20, 20, 28))
+            .clip_rounded(Dp(12.0))
+            .align_items(AlignItems::CENTER),
+    )
+    .child((
+        RText(t(tr, "credits", "Credits"))
+            .size(Sp(36.0))
+            .color(RColor::WHITE),
+        spacer(12.0),
+        RText("Original Godot template: mlm-games")
+            .size(Sp(16.0))
+            .color(RColor::WHITE),
+        RText("Repame + Repose port: mlm-games")
+            .size(Sp(16.0))
+            .color(RColor::WHITE),
+        RText("Engine: Repame  UI: Repose")
+            .size(Sp(16.0))
+            .color(RColor::WHITE),
+        RText("3D models: Cube World by Quaternius (CC0)")
+            .size(Sp(16.0))
+            .color(RColor::WHITE),
+        spacer(16.0),
+        mk_button(&t(tr, "back", "Back"), col(70, 70, 90), move || {
+            push(&a, UiAction::CloseOverlay)
+        }),
+    ));
+
+    modal_shell(inner)
+}
+
+pub(crate) fn share_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_close = actions.clone();
+    let a_copy = actions.clone();
+    let a_export = actions.clone();
+    let a_import = actions.clone();
+    let a_collection = actions.clone();
+
+    let import_state: Rc<RefCell<TextFieldState>> =
+        remember(|| RefCell::new(TextFieldState::new()));
+    let import_focus: Rc<Cell<bool>> = remember(|| Cell::new(false));
+    if matches!(st.overlay, OverlayMenu::Share) {
+        push(&actions, UiAction::SetKeyboardCaptured(import_focus.get()));
+    }
+    let field = BasicTextField(
+        import_state.clone(),
+        Modifier::new().fill_max_width(),
+        t(
+            tr,
+            "share-import-hint",
+            "Type or paste a code, then press Enter",
+        ),
+        TextFieldConfig {
+            line_limits: TextFieldLineLimits::SingleLine,
+            keyboard_options: KeyboardOptions {
+                keyboard_type: KeyboardType::Filter,
+                ime_action: ImeAction::Go,
+                ..KeyboardOptions::DEFAULT
+            },
+            on_submit: Some({
+                let a = a_import.clone();
+                Rc::new(move |v: String| push(&a, UiAction::MakerImportCode(v)))
+                    as Rc<dyn Fn(String)>
+            }),
+            focus_tracker: Some(import_focus.clone()),
+            ..Default::default()
+        },
+    );
+
+    let mut tail: Vec<View> = Vec::new();
+    tail.push(mk_primary_button(
+        RText("Save to My Collection").size(Sp(15.0)),
+        col(150, 110, 200),
+        move || push(&a_collection, UiAction::BrowseAddToCollection),
+    ));
+    tail.push(spacer(16.0));
+    tail.push(mk_button(
+        &t(tr, "back", "Back"),
+        col(70, 70, 90),
+        move || push(&a_close, UiAction::CloseOverlay),
+    ));
+
+    let inner = Column(
+        Modifier::new()
+            .width(Dp(520.0))
+            .padding(Dp(24.0))
+            .background(col(20, 20, 28))
+            .clip_rounded(Dp(12.0))
+            .align_items(AlignItems::CENTER),
+    )
+    .child(
+        RText(t(tr, "share-title", "Share Level"))
+            .size(Sp(32.0))
+            .color(RColor::WHITE),
+    )
+    .child(spacer(8.0))
+    .child(
+        RText(st.level_name.clone())
+            .size(Sp(16.0))
+            .color(col(200, 200, 210)),
+    )
+    .child(
+        RText(if st.level_verified {
+            t(tr, "share-verified", "Verified")
+        } else {
+            t(tr, "share-unverified", "Beat the level to share it")
+        })
+        .size(Sp(14.0))
+        .color(if st.level_verified {
+            col(90, 200, 120)
+        } else {
+            col(230, 160, 70)
+        }),
+    )
+    .child(spacer(16.0))
+    .child(
+        RText(t(tr, "share-export-title", "Export"))
+            .size(Sp(18.0))
+            .color(RColor::WHITE),
+    )
+    .child(spacer(8.0))
+    .child(
+        Column(
+            Modifier::new()
+                .fill_max_width()
+                .padding(Dp(12.0))
+                .background(col(12, 12, 18))
+                .clip_rounded(Dp(8.0)),
+        )
+        .child(
+            RText(if st.export_code.is_empty() {
+                t(tr, "share-export-empty", "No code yet")
+            } else {
+                st.export_code.clone()
+            })
+            .size(Sp(13.0))
+            .color(if st.export_code.is_empty() {
+                col(180, 180, 190)
+            } else {
+                col(120, 200, 255)
+            }),
+        ),
+    )
+    .child(spacer(4.0))
+    .child(
+        RText(st.export_error.clone().unwrap_or_default())
+            .size(Sp(13.0))
+            .color(col(230, 110, 110)),
+    )
+    .child(spacer(8.0))
+    .child(mk_button(
+        &t(tr, "share-export", "Generate Code"),
+        col(70, 110, 170),
+        move || push(&a_export, UiAction::MakerExportCode),
+    ))
+    .child(mk_button(
+        &t(tr, "share-copy", "Copy Code"),
+        col(60, 140, 90),
+        move || push(&a_copy, UiAction::MakerCopyCode),
+    ))
+    .child(spacer(20.0))
+    .child(
+        RText(t(tr, "share-import-title", "Import"))
+            .size(Sp(18.0))
+            .color(RColor::WHITE),
+    )
+    .child(spacer(8.0))
+    .child(
+        Column(
+            Modifier::new()
+                .fill_max_width()
+                .padding(Dp(10.0))
+                .background(col(45, 45, 60))
+                .clip_rounded(Dp(8.0)),
+        )
+        .child(field),
+    )
+    .child(spacer(8.0))
+    .child(mk_button(
+        &t(tr, "share-import", "Import"),
+        col(160, 120, 60),
+        move || {
+            push(
+                &a_import,
+                UiAction::MakerImportCode(import_state.borrow().text.clone()),
+            )
+        },
+    ))
+    .child(spacer(8.0))
+    .child(Column(Modifier::new().align_items(AlignItems::CENTER)).children(tail));
+
+    modal_shell(inner)
+}
+
+pub(crate) fn level_info_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_close = actions.clone();
+    let a_save = actions.clone();
+
+    let focus0: Rc<Cell<bool>> = remember_with_key("li_focus_0", || Cell::new(false));
+    let focus1: Rc<Cell<bool>> = remember_with_key("li_focus_1", || Cell::new(false));
+    let focus2: Rc<Cell<bool>> = remember_with_key("li_focus_2", || Cell::new(false));
+    if matches!(st.overlay, OverlayMenu::LevelInfo) {
+        push(
+            &actions,
+            UiAction::SetKeyboardCaptured(focus0.get() || focus1.get() || focus2.get()),
+        );
+    }
+
+    let text_field = |idx: u8,
+                      label: &'static str,
+                      value: &str,
+                      multiline: bool,
+                      focus: Rc<Cell<bool>>|
+     -> View {
+        let state: Rc<RefCell<TextFieldState>> =
+            remember_with_key(format!("li_state_{idx}"), || {
+                RefCell::new(TextFieldState::new())
+            });
+        if !focus.get() && state.borrow().text != value {
+            state.borrow_mut().text = value.to_string();
+        }
+        let on_change = {
+            let a = actions.clone();
+            Rc::new(move |v: String| push(&a, UiAction::LevelInfoSetText(idx, v)))
+                as Rc<dyn Fn(String)>
+        };
+        let field = BasicTextField(
+            state,
+            Modifier::new().fill_max_width(),
+            label,
+            TextFieldConfig {
+                line_limits: if multiline {
+                    TextFieldLineLimits::MultiLine {
+                        min_height_in_lines: 2,
+                        max_height_in_lines: 6,
+                    }
+                } else {
+                    TextFieldLineLimits::SingleLine
+                },
+                on_change: Some(on_change),
+                focus_tracker: Some(focus),
+                ..Default::default()
+            },
+        );
+        Column(Modifier::new().fill_max_width().gap(Dp(4.0)))
+            .child(RText(label).size(Sp(11.0)).color(col(150, 150, 170)))
+            .child(
+                Column(
+                    Modifier::new()
+                        .fill_max_width()
+                        .padding(Dp(8.0))
+                        .background(col(45, 45, 60))
+                        .clip_rounded(Dp(8.0)),
+                )
+                .child(field),
+            )
+    };
+
+    let mut tag_views: Vec<View> = Vec::new();
+    for tag in LevelTag::ALL {
+        let a = actions.clone();
+        let included = st.info_tags.contains(&tag);
+        let label = RText(tag.label()).size(Sp(12.0)).color(if included {
+            RColor::WHITE
+        } else {
+            col(150, 150, 170)
+        });
+        tag_views.push(mk_chip(label, included, tag_color(tag), move || {
+            push(&a, UiAction::LevelInfoToggleTag(tag))
+        }));
+    }
+    let tag_row = FlowRow(
+        Modifier::new().fill_max_width().gap(Dp(6.0)),
+        FlowRowConfig::default(),
+    )
+    .child(tag_views);
+
+    let mut preset_views: Vec<View> = Vec::new();
+    for p in BoundaryPreset::ALL {
+        let a = actions.clone();
+        let selected = st.info_preset == Some(p);
+        let label = RText(p.label()).size(Sp(11.0)).color(RColor::WHITE);
+        preset_views.push(mk_chip(label, selected, col(90, 90, 120), move || {
+            push(&a, UiAction::LevelInfoPreset(p))
+        }));
+    }
+    let preset_row = FlowRow(
+        Modifier::new().fill_max_width().gap(Dp(6.0)),
+        FlowRowConfig::default(),
+    )
+    .child(preset_views);
+
+    let a_wup = actions.clone();
+    let a_wdn = actions.clone();
+    let water_label = RText(match st.info_water {
+        Some(level) => format!("  Water y = {level}  "),
+        None => "  No water  ".to_string(),
+    })
+    .size(Sp(13.0))
+    .color(col(200, 200, 210));
+    let water_minus = mk_button_sm("-", move || push(&a_wdn, UiAction::LevelInfoWaterDelta(-1)));
+    let water_plus = mk_button_sm("+", move || push(&a_wup, UiAction::LevelInfoWaterDelta(1)));
+    let settings_row = Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER))
+        .child(water_minus)
+        .child(water_label)
+        .child(water_plus);
+
+    let a_sup = actions.clone();
+    let a_sdn = actions.clone();
+    let a_sauto = actions.clone();
+    let size_label = RText(if st.info_size_auto {
+        "  Size: auto  ".to_string()
+    } else {
+        format!(
+            "  Size {}×{}×{}  ",
+            st.info_size[0], st.info_size[1], st.info_size[2]
+        )
+    })
+    .size(Sp(13.0))
+    .color(col(200, 200, 210));
+    let size_minus = mk_button_sm("-", move || push(&a_sdn, UiAction::LevelInfoSizeDelta(-1)));
+    let size_plus = mk_button_sm("+", move || push(&a_sup, UiAction::LevelInfoSizeDelta(1)));
+    let size_auto_btn = mk_button_sm("Auto", move || push(&a_sauto, UiAction::LevelInfoSizeAuto));
+    let size_row = Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER))
+        .child(size_minus)
+        .child(size_label)
+        .child(size_plus)
+        .child(size_auto_btn);
+
+    let a_hup = actions.clone();
+    let a_hdn = actions.clone();
+    let a_hauto = actions.clone();
+    let height_label = RText(if st.info_height == 0 {
+        "  Height: auto  ".to_string()
+    } else {
+        format!("  Height: {} cells  ", st.info_height)
+    })
+    .size(Sp(13.0))
+    .color(col(200, 200, 210));
+    let height_minus = mk_button_sm("-", move || {
+        push(&a_hdn, UiAction::LevelInfoHeightDelta(-1))
+    });
+    let height_plus = mk_button_sm("+", move || push(&a_hup, UiAction::LevelInfoHeightDelta(1)));
+    let height_auto_btn = mk_button_sm("Auto", move || {
+        push(&a_hauto, UiAction::LevelInfoHeightAuto)
+    });
+    let height_row = Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER))
+        .child(height_minus)
+        .child(height_label)
+        .child(height_plus)
+        .child(height_auto_btn);
+
+    let cond_label = match st.info_clear_condition {
+        ClearCondition::ReachGoal => "Reach Goal".to_string(),
+        ClearCondition::CollectAllGlimmers => "Collect All Glimmers".to_string(),
+        ClearCondition::DefeatAllProwlers => "Defeat All Prowlers".to_string(),
+        ClearCondition::NoDeath => "No Death".to_string(),
+        ClearCondition::TimeLimitMs(ms) => {
+            format!("Time Limit · {}:{:02}", ms / 60_000, (ms / 1_000) % 60)
+        }
+    };
+    let a_cond = actions.clone();
+    let condition_row =
+        Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER)).child(mk_pill_button(
+            RText(format!("Condition: {cond_label}"))
+                .size(Sp(12.0))
+                .color(RColor::WHITE),
+            move || push(&a_cond, UiAction::LevelInfoCycleClearCondition),
+        ));
+
+    let limit_label = match st.info_clear_condition {
+        ClearCondition::TimeLimitMs(ms) => {
+            format!(
+                "  {}:{:02}.{:03}  ",
+                ms / 60_000,
+                (ms / 1_000) % 60,
+                ms % 1_000
+            )
+        }
+        _ => "  Only used by Time Limit  ".to_string(),
+    };
+    let a_tup = actions.clone();
+    let a_tdn = actions.clone();
+    let time_row = Row(Modifier::new().gap(Dp(8.0)).align_items(AlignItems::CENTER))
+        .child(mk_button_sm("-", move || {
+            push(&a_tdn, UiAction::LevelInfoTimeLimitDelta(-15))
+        }))
+        .child(RText(limit_label).size(Sp(12.0)).color(col(200, 200, 210)))
+        .child(mk_button_sm("+", move || {
+            push(&a_tup, UiAction::LevelInfoTimeLimitDelta(15))
+        }));
+
+    let stats = format!(
+        "Blocks: {}   ·   Entities: {}",
+        st.info_blocks, st.info_entities
+    );
+
+    let body = Column(
+        Modifier::new()
+            .fill_max_width()
+            .align_items(AlignItems::CENTER),
+    )
+    .child(text_field(0, "Name", &st.info_name, false, focus0.clone()))
+    .child(spacer(8.0))
+    .child(text_field(
+        1,
+        "Author",
+        &st.info_author,
+        false,
+        focus1.clone(),
+    ))
+    .child(spacer(8.0))
+    .child(text_field(
+        2,
+        "Description",
+        &st.info_description,
+        true,
+        focus2.clone(),
+    ))
+    .child(spacer(16.0))
+    .child(RText("Tags").size(Sp(14.0)).color(col(180, 180, 190)))
+    .child(spacer(6.0))
+    .child(tag_row)
+    .child(spacer(16.0))
+    .child(
+        RText("Level Settings")
+            .size(Sp(14.0))
+            .color(col(180, 180, 190)),
+    )
+    .child(spacer(6.0))
+    .child(
+        RText("Boundary presets: floor caught, walls rim, ceiling cap.")
+            .size(Sp(11.0))
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(preset_row)
+    .child(spacer(8.0))
+    .child(settings_row)
+    .child(spacer(8.0))
+    .child(
+        RText("Cycle the level’s win rule. Time limit uses ±15s below.")
+            .size(Sp(11.0))
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(condition_row)
+    .child(spacer(8.0))
+    .child(time_row)
+    .child(spacer(12.0))
+    .child(
+        RText("Type size: shrink from auto box, grow to enlarge.")
+            .size(Sp(11.0))
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(size_row)
+    .child(spacer(8.0))
+    .child(
+        RText("Height is the room/wall top; the ceiling sits there.")
+            .size(Sp(11.0))
+            .color(col(130, 130, 150)),
+    )
+    .child(spacer(6.0))
+    .child(height_row)
+    .child(spacer(12.0))
+    .child(RText(stats).size(Sp(13.0)).color(col(200, 200, 210)))
+    .child(spacer(12.0))
+    .child(
+        RText("Saving metadata does not reset verification.")
+            .size(Sp(11.0))
+            .color(col(130, 130, 150)),
+    );
+
+    let scroll_state = remember_scroll_state("level_info");
+    let scroll = ScrollArea(
+        Modifier::new().fill_max_width().max_height(Dp(460.0)),
+        scroll_state,
+        body,
+    );
+
+    let inner = Column(
+        Modifier::new()
+            .width(Dp(480.0))
+            .max_height(Dp(720.0))
+            .padding(Dp(24.0))
+            .background(col(20, 20, 28))
+            .clip_rounded(Dp(12.0))
+            .align_items(AlignItems::CENTER),
+    )
+    .child(RText("Level Info").size(Sp(32.0)).color(RColor::WHITE))
+    .child(spacer(6.0))
+    .child(
+        RText("Click a field to edit · tags show up in Browse")
+            .size(Sp(12.0))
+            .color(col(150, 150, 170)),
+    )
+    .child(spacer(16.0))
+    .child(scroll)
+    .child(spacer(16.0))
+    .child(mk_primary_button(
+        icon_label(Symbols::SAVE, "Save".into()),
+        col(60, 140, 90),
+        move || push(&a_save, UiAction::LevelInfoSave),
+    ))
+    .child(mk_button(
+        &t(tr, "back", "Back"),
+        col(70, 70, 90),
+        move || push(&a_close, UiAction::LevelInfoClose),
     ));
 
     modal_shell(inner)

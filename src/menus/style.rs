@@ -50,6 +50,7 @@ pub mod tok {
         RColor::from_rgba(80, 200, 120, 255)
     }
 
+    pub const R_SM: f32 = 8.0;
     pub const R_MD: f32 = 12.0;
     pub const R_PILL: f32 = 20.0;
 }

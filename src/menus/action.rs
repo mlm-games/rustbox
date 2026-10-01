@@ -1,4 +1,4 @@
-use crate::maker::level::LevelTag;
+use crate::maker::level::{BoundaryPreset, LevelTag};
 
 #[derive(Clone, Debug)]
 pub enum UiAction {
@@ -7,9 +7,36 @@ pub enum UiAction {
     Resume,
     QuitToTitle,
     QuitApp,
+    OpenSettings,
+    OpenCredits,
+    SetMasterVol(f32),
+    SetSfxVol(f32),
+    SetMusicVol(f32),
+    SaveSettings,
+    NextLanguage,
+    SetLanguage(String),
     // Maker pause menu
     MakerRetry,
     MakerCloseSignDialog,
+    MakerPublish,
+    MakerExportCode,
+    MakerImportCode(String),
+    MakerCopyCode,
+    // Level info panel
+    LevelInfoOpen,
+    LevelInfoCycleClearCondition,
+    LevelInfoTimeLimitDelta(i32),
+    LevelInfoToggleTag(LevelTag),
+    LevelInfoSave,
+    LevelInfoClose,
+    LevelInfoPreset(BoundaryPreset),
+    LevelInfoWaterDelta(i32),
+    LevelInfoSizeDelta(i32),
+    LevelInfoSizeAuto,
+    LevelInfoHeightDelta(i32),
+    LevelInfoHeightAuto,
+    // 0 = name, 1 = author, 2 = description
+    LevelInfoSetText(u8, String),
     // Local level browser
     BrowseOpen,
     BrowsePlay(String),
@@ -23,6 +50,7 @@ pub enum UiAction {
     BrowseToggleVerified,
     BrowseSetDifficulty(Option<u8>),
     BrowseCycleSort,
+    BrowseAddToCollection,
     BrowseSetQuery(String),
     BrowseClearQuery,
     SetKeyboardCaptured(bool),

@@ -1,5 +1,7 @@
+mod i18n;
 pub mod maker;
 pub mod menus;
+mod save;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -8,6 +10,8 @@ use std::time::Duration;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::world::Mut;
+use game_utils::i18n::LocaleResources;
+use game_utils::save::SaveManager;
 use glam::{IVec3, Vec3};
 use maker::block::{ALL_BLOCK_SHAPES, BlockKind};
 use maker::camera::{CameraRig, play_camera_follow};
@@ -75,6 +79,9 @@ struct App {
     last: Instant,
     menu_actions: menus::ActionQueue,
     menus: menus::MenuState,
+    save_manager: SaveManager,
+    save: save::SaveData,
+    locale: LocaleResources,
     phase_t: f32,
     pending_mode: Option<MakerMode>,
     refocus_root: bool,
@@ -146,6 +153,12 @@ impl App {
                 .run_if(not_paused),
         );
         repame_rapier3d::register_rapier3d_systems(&mut sim);
+        let save_manager = SaveManager::new("com", "mlm-games", "rustbox", "save.ron", 1);
+        let save = save_manager.load::<save::SaveData>().sanitized();
+        let mut locale = i18n::build_locale();
+        if !locale.set_locale(&save.settings.language) {
+            locale.set_locale("en");
+        }
         Self {
             sim: Rc::new(RefCell::new(sim)),
             cam: Rc::new(Cell::new(OrbitCamera {
@@ -169,6 +182,9 @@ impl App {
             last: Instant::now(),
             menu_actions: Default::default(),
             menus: Default::default(),
+            save_manager,
+            save,
+            locale,
             phase_t: 0.0,
             pending_mode: None,
             refocus_root: false,
@@ -870,13 +886,21 @@ impl App {
         for action in batch {
             self.apply_menu_action(action);
         }
-        if !matches!(self.menus.overlay, menus::OverlayMenu::Browse) && !self.menus.sign_editor_open
+        if !matches!(
+            self.menus.overlay,
+            menus::OverlayMenu::Browse | menus::OverlayMenu::Share | menus::OverlayMenu::LevelInfo
+        ) && !self.menus.sign_editor_open
         {
             self.menus.keyboard_captured = false;
         }
         self.handle_pause_escape(edges);
         if (drained || self.menus.overlay != prev_overlay || self.menus.phase != prev_phase)
-            && self.menus.overlay != menus::OverlayMenu::Browse
+            && !matches!(
+                self.menus.overlay,
+                menus::OverlayMenu::Browse
+                    | menus::OverlayMenu::Share
+                    | menus::OverlayMenu::LevelInfo
+            )
             && !self.menus.sign_editor_open
         {
             self.refocus_root = true;
@@ -892,7 +916,17 @@ impl App {
                 self.begin_loading();
             }
             UiAction::CloseOverlay => {
-                self.menus.overlay = OverlayMenu::None;
+                if self.menus.overlay == OverlayMenu::Settings {
+                    let saved = self.menus.saved_language.clone();
+                    self.locale.set_locale(&saved);
+                }
+                let paused = self.is_paused();
+                self.menus.overlay = match self.menus.overlay {
+                    OverlayMenu::Settings | OverlayMenu::Credits | OverlayMenu::Share if paused => {
+                        OverlayMenu::Pause
+                    }
+                    _ => OverlayMenu::None,
+                };
             }
             UiAction::Resume => {
                 self.menus.overlay = OverlayMenu::None;
@@ -908,6 +942,357 @@ impl App {
             UiAction::QuitApp => {
                 #[cfg(not(target_arch = "wasm32"))]
                 std::process::exit(0);
+            }
+            UiAction::OpenSettings => {
+                self.menus.saved_language = self.locale.current.clone();
+                self.menus.overlay = OverlayMenu::Settings;
+            }
+            UiAction::OpenCredits => {
+                self.menus.overlay = OverlayMenu::Credits;
+            }
+            UiAction::SetMasterVol(v) => self.menus.master_vol = v.clamp(0.0, 1.0),
+            UiAction::SetSfxVol(v) => self.menus.sfx_vol = v.clamp(0.0, 1.0),
+            UiAction::SetMusicVol(v) => self.menus.music_vol = v.clamp(0.0, 1.0),
+            UiAction::SaveSettings => {
+                self.save.settings.master_volume = self.menus.master_vol;
+                self.save.settings.sfx_volume = self.menus.sfx_vol;
+                self.save.settings.music_volume = self.menus.music_vol;
+                self.save.settings.language = self.locale.current.clone();
+                let _ = self.save_manager.save(&self.save);
+                self.menus.saved_language = self.locale.current.clone();
+                self.menus.overlay = if self.is_paused() {
+                    OverlayMenu::Pause
+                } else {
+                    OverlayMenu::None
+                };
+            }
+            UiAction::NextLanguage => {
+                let next = {
+                    let avail = &self.locale.available;
+                    avail
+                        .iter()
+                        .position(|l| *l == self.locale.current)
+                        .map(|i| avail[(i + 1) % avail.len()].clone())
+                };
+                if let Some(lang) = next {
+                    self.locale.set_locale(&lang);
+                }
+            }
+            UiAction::SetLanguage(lang) => {
+                self.locale.set_locale(&lang);
+            }
+            UiAction::BrowseAddToCollection => {
+                let res = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    sim.world
+                        .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                            let store = world.resource::<storage::LevelStorage>();
+                            let res = storage::save_to_collection(store, &mut level);
+                            if let Ok(key) = &res {
+                                world.resource_mut::<win::MakerUi>().current_key =
+                                    Some(key.clone());
+                            }
+                            res.map(|_| ())
+                        })
+                };
+                match res {
+                    Ok(()) => {
+                        self.rebuild_catalog();
+                        self.announce("Saved to your collection.");
+                    }
+                    Err(e) => self.announce(format!("Save failed: {e}")),
+                }
+            }
+            UiAction::MakerPublish => {
+                let outcome = {
+                    let Ok(sim) = self.sim.try_borrow() else {
+                        return;
+                    };
+                    let level = sim.world.resource::<LevelDocument>();
+                    if level.data.is_verified {
+                        Some(storage::export_level_code(&level.data))
+                    } else {
+                        None
+                    }
+                };
+                match outcome {
+                    None => self.announce("Beat the level before publishing."),
+                    Some(Ok(code)) => {
+                        self.menus.export_code = code;
+                        self.menus.export_error = None;
+                        self.menus.overlay = OverlayMenu::Share;
+                    }
+                    Some(Err(e)) => {
+                        self.menus.export_code.clear();
+                        self.menus.export_error = Some(format!("Export failed: {e}"));
+                        self.menus.overlay = OverlayMenu::Share;
+                    }
+                }
+            }
+            UiAction::MakerExportCode => {
+                let res = {
+                    let Ok(sim) = self.sim.try_borrow() else {
+                        return;
+                    };
+                    let level = sim.world.resource::<LevelDocument>();
+                    storage::export_level_code(&level.data)
+                };
+                match res {
+                    Ok(code) => {
+                        self.menus.export_code = code;
+                        self.menus.export_error = None;
+                    }
+                    Err(e) => {
+                        self.menus.export_code.clear();
+                        self.menus.export_error = Some(format!("Export failed: {e}"));
+                    }
+                }
+            }
+            UiAction::MakerCopyCode => {
+                if self.menus.export_code.is_empty() {
+                    self.announce("No code to copy yet.");
+                } else {
+                    repose_core::clipboard::copy_to_clipboard(&self.menus.export_code);
+                    self.announce("Code copied!");
+                }
+            }
+            UiAction::MakerImportCode(code) => {
+                let data = match storage::import_level_code(code.trim()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        self.announce(format!("Bad code: {e}"));
+                        return;
+                    }
+                };
+                let outcome = match self.sim.try_borrow_mut() {
+                    Ok(mut sim) => {
+                        sim.world
+                            .resource_scope(|_world, mut level: Mut<LevelDocument>| {
+                                let Ok(mut view) = self.world.try_borrow_mut() else {
+                                    return Err(anyhow::anyhow!("view busy"));
+                                };
+                                view.release_stroke(&mut level);
+                                storage::apply_level_data(&mut level, &mut view.history, data);
+                                view.sync_source(&level);
+                                Ok(())
+                            })
+                    }
+                    Err(_) => return,
+                };
+                if outcome.is_err() {
+                    return;
+                }
+                self.menus.export_code.clear();
+                self.menus.export_error = None;
+                self.menus.overlay = OverlayMenu::None;
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    sim.world.resource_mut::<win::MakerUi>().current_key = None;
+                    sim.world.resource_mut::<SelectedEntity>().0 = None;
+                    sim.world.resource_mut::<ActiveTrack>().0 = None;
+                }
+                self.set_mode(MakerMode::Play);
+                self.announce("Level imported!");
+            }
+            UiAction::LevelInfoOpen => {
+                if let Ok(sim) = self.sim.try_borrow() {
+                    let level = sim.world.resource::<LevelDocument>();
+                    self.menus.info_name = level.data.name.clone();
+                    self.menus.info_author = level.data.author.clone();
+                    self.menus.info_description = level.data.description.clone();
+                    self.menus.info_tags = level.data.tags.clone();
+                    self.menus.info_clear_condition = level.data.clear_condition;
+                    self.menus.info_preset = level.data.boundary.boundary_preset();
+                    self.menus.info_water = level.data.water_level;
+                    self.menus.info_size = level.play_size();
+                    self.menus.info_size_auto = level.data.size.is_none();
+                    self.menus.info_height = level.data.boundary.height;
+                    self.menus.info_blocks = level.map.len() as u32;
+                    self.menus.info_entities = level.data.entities.len() as u32;
+                }
+                self.menus.overlay = OverlayMenu::LevelInfo;
+            }
+            UiAction::LevelInfoClose => {
+                self.menus.overlay = OverlayMenu::None;
+            }
+            UiAction::LevelInfoSave => {
+                let res = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    sim.world
+                        .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                            level.data.name = self.menus.info_name.clone();
+                            level.data.author = self.menus.info_author.clone();
+                            level.data.description = self.menus.info_description.clone();
+                            level.data.tags = self.menus.info_tags.clone();
+                            level.data.clear_condition = self.menus.info_clear_condition;
+                            if level.data.created_at == 0 {
+                                level.data.created_at = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
+                            }
+                            let key = world.resource::<win::MakerUi>().current_key.clone();
+                            let store = world.resource::<storage::LevelStorage>();
+                            match key {
+                                Some(k) => storage::save_level(store, &mut level, &k),
+                                None => match storage::save_to_collection(store, &mut level) {
+                                    Ok(k) => {
+                                        world.resource_mut::<win::MakerUi>().current_key = Some(k);
+                                        Ok(())
+                                    }
+                                    Err(e) => Err(e),
+                                },
+                            }
+                        })
+                };
+                match res {
+                    Ok(()) => {
+                        self.refresh_level_slots();
+                        self.rebuild_catalog();
+                        self.announce("Level info saved.");
+                        self.menus.overlay = OverlayMenu::None;
+                    }
+                    Err(e) => self.announce(format!("Save failed: {e}")),
+                }
+            }
+            UiAction::LevelInfoCycleClearCondition => {
+                use maker::level::ClearCondition as Cc;
+                self.menus.info_clear_condition = match self.menus.info_clear_condition {
+                    Cc::ReachGoal => Cc::CollectAllGlimmers,
+                    Cc::CollectAllGlimmers => Cc::DefeatAllProwlers,
+                    Cc::DefeatAllProwlers => Cc::NoDeath,
+                    Cc::NoDeath => Cc::TimeLimitMs(60_000),
+                    Cc::TimeLimitMs(_) => Cc::ReachGoal,
+                };
+            }
+            UiAction::LevelInfoTimeLimitDelta(d) => {
+                if let maker::level::ClearCondition::TimeLimitMs(ms) =
+                    &mut self.menus.info_clear_condition
+                {
+                    let next = (*ms as i64 + d as i64 * 1000).max(5_000);
+                    *ms = next as u32;
+                }
+            }
+            UiAction::LevelInfoToggleTag(tag) => {
+                if let Some(pos) = self.menus.info_tags.iter().position(|t| *t == tag) {
+                    self.menus.info_tags.remove(pos);
+                } else {
+                    self.menus.info_tags.push(tag);
+                }
+            }
+            UiAction::LevelInfoSetText(idx, v) => match idx {
+                0 => self.menus.info_name = v,
+                1 => self.menus.info_author = v,
+                _ => self.menus.info_description = v,
+            },
+            UiAction::LevelInfoPreset(preset) => {
+                let status = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    level.data.boundary = preset.config();
+                    level.mark_all_dirty();
+                    format!("Boundary: {}", preset.label())
+                };
+                self.menus.info_preset = Some(preset);
+                self.announce(status);
+            }
+            UiAction::LevelInfoWaterDelta(d) => {
+                let next = match self.menus.info_water {
+                    Some(level) if d > 0 => Some(level + d),
+                    Some(level) if level + d < 0 => None,
+                    Some(level) => Some((level + d).max(0)),
+                    None if d > 0 => Some(1),
+                    None => None,
+                };
+                self.menus.info_water = next;
+                let status = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    level.data.water_level = next;
+                    level.mark_all_dirty();
+                    match next {
+                        Some(y) => format!("Water plane at y={y}"),
+                        None => "Water: off".to_string(),
+                    }
+                };
+                self.announce(status);
+            }
+            UiAction::LevelInfoSizeDelta(d) => {
+                let status = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    let base = level.data.size.unwrap_or_else(|| level.play_size());
+                    let mut next = [base[0] + d, base[1] + d, base[2] + d];
+                    let mut need = [1, 1, 1];
+                    for b in level.map.values() {
+                        need[0] = need[0].max(b.position[0].abs());
+                        need[1] = need[1].max(b.position[1]);
+                        need[2] = need[2].max(b.position[2].abs());
+                    }
+                    for i in 0..3 {
+                        next[i] = next[i].max(need[i]);
+                    }
+                    level.data.size = Some(next);
+                    level.mark_all_dirty();
+                    self.menus.info_size = next;
+                    self.menus.info_size_auto = false;
+                    format!("Size {}×{}×{}", next[0], next[1], next[2])
+                };
+                self.announce(status);
+            }
+            UiAction::LevelInfoSizeAuto => {
+                let status = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    level.data.size = None;
+                    level.mark_all_dirty();
+                    self.menus.info_size = level.play_size();
+                    self.menus.info_size_auto = true;
+                    "Size: auto (from content)".to_string()
+                };
+                self.announce(status);
+            }
+            UiAction::LevelInfoHeightDelta(d) => {
+                let status = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    let h = (self.menus.info_height + d).max(0);
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    level.data.boundary.height = h;
+                    level.mark_all_dirty();
+                    self.menus.info_height = h;
+                    if h == 0 {
+                        "Wall height: auto (from size)".to_string()
+                    } else {
+                        format!("Wall height: {h} cells")
+                    }
+                };
+                self.announce(status);
+            }
+            UiAction::LevelInfoHeightAuto => {
+                let status = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    level.data.boundary.height = 0;
+                    level.mark_all_dirty();
+                    self.menus.info_height = 0;
+                    "Wall height: auto (from size)".to_string()
+                };
+                self.announce(status);
             }
             UiAction::MakerRetry => {
                 self.menus.overlay = menus::OverlayMenu::None;
@@ -1604,6 +1989,17 @@ impl App {
             menus::OverlayMenu::LoadLevel | menus::OverlayMenu::PartPicker => {
                 self.menus.overlay = menus::OverlayMenu::None;
             }
+            menus::OverlayMenu::Settings | menus::OverlayMenu::Credits => {
+                self.menus.overlay = if paused {
+                    menus::OverlayMenu::Pause
+                } else {
+                    menus::OverlayMenu::None
+                };
+            }
+            menus::OverlayMenu::LevelInfo => {
+                self.menus.overlay = menus::OverlayMenu::None;
+                sim.world.resource_mut::<Paused>().0 = false;
+            }
             _ => {}
         }
     }
@@ -1622,6 +2018,17 @@ impl App {
     }
 
     fn sync_menu_state(&mut self) {
+        if self.menus.overlay != menus::OverlayMenu::Settings {
+            let c = |v: f32, fb: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { fb };
+            self.menus.master_vol = c(self.save.settings.master_volume, 1.0);
+            self.menus.sfx_vol = c(self.save.settings.sfx_volume, 1.0);
+            self.menus.music_vol = c(self.save.settings.music_volume, 0.8);
+        }
+        if self.menus.translations.is_empty() || self.menus.language != self.locale.current {
+            self.menus.language = self.locale.current.clone();
+            self.menus.translations = game_utils::i18n::get_current_translations(&self.locale);
+        }
+        self.menus.available_languages = self.locale.available.clone();
         let Ok(sim) = self.sim.try_borrow() else {
             return;
         };
@@ -1657,6 +2064,7 @@ impl App {
         {
             let level = sim.world.resource::<LevelDocument>();
             self.menus.level_name = level.data.name.clone();
+            self.menus.level_verified = level.data.is_verified;
             let sel = sim.world.resource::<SelectedEntity>().0;
             self.menus.selected_entity_data = sel.and_then(|id| level.entity_by_id(id)).cloned();
             let track = sim.world.resource::<ActiveTrack>().0;
@@ -1686,6 +2094,12 @@ impl App {
         if let Ok(mut sim) = self.sim.try_borrow_mut() {
             sim.world.resource_mut::<Paused>().0 = paused;
         }
+    }
+
+    fn is_paused(&self) -> bool {
+        self.sim
+            .try_borrow()
+            .is_ok_and(|sim| sim.world.resource::<Paused>().0)
     }
 
     fn set_mode(&self, mode: MakerMode) {

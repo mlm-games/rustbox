@@ -35,6 +35,33 @@ pub fn mk_button(label: &str, _bg: RColor, on_click: impl Fn() + 'static) -> Vie
     )
 }
 
+pub fn mk_button_sm(label: &str, on_click: impl Fn() + 'static) -> View {
+    let label = label.to_string();
+    FilledTonalButton(
+        Modifier::new()
+            .width(Dp(48.0))
+            .height(Dp(40.0))
+            .clip_rounded(Dp(tok::R_SM)),
+        on_click,
+        ButtonConfig::default(),
+        move || RText(label.clone()).size(Sp(20.0)),
+    )
+}
+
+pub fn mk_primary_button(label: View, bg: RColor, on_click: impl Fn() + 'static) -> View {
+    FilledTonalButton(
+        Modifier::new()
+            .min_height(Dp(38.0))
+            .padding(Dp(10.0))
+            .background(bg)
+            .clip_rounded(Dp(tok::R_SM))
+            .flex_shrink(0.0),
+        on_click,
+        ButtonConfig::default(),
+        move || label.clone(),
+    )
+}
+
 pub fn mk_icon_button(icon: Symbol, enabled: bool, on_click: impl Fn() + 'static) -> View {
     FilledTonalIconButton(
         Icon(icon).size(Sp(19.0)),
