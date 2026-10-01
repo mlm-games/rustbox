@@ -507,6 +507,9 @@ pub struct PlayIntent {
     pub down_down: bool,
     /// Crouch + back (used to drop through one-way platforms).
     pub drop_through: bool,
+    /// I / Space / Escape, sampled raw so sign dismissal works while the
+    /// dialog itself has the keyboard captured.
+    pub dismiss_pressed: bool,
 }
 
 /// Latched edge-triggered presses sampled in `Update` and consumed in
@@ -590,6 +593,9 @@ impl PlayKeys<'_> {
             up_down,
             down_down,
             drop_through: crouch_down && down_down,
+            dismiss_pressed: self.edges.contains(&PhysicalKey::KeyI)
+                || self.edges.contains(&PhysicalKey::Space)
+                || self.edges.contains(&PhysicalKey::Escape),
         }
     }
 }

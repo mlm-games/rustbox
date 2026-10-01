@@ -1583,7 +1583,9 @@ dependencies = [
 
 [[package]]
 name = "game-utils"
-version = "0.4.0"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1da9663e8a7e5fbcd04018ee34deb0a72d1f9bfabb77738904bb5a2fcae6000"
 dependencies = [
  "directories",
  "fluent-bundle",
@@ -3799,7 +3801,7 @@ dependencies = [
  "glam 0.33.11",
  "log",
  "repame-atlas",
- "repose-canvas",
+ "repose-canvas 0.31.2",
  "repose-core",
  "repose-render-wgpu",
  "repose-ui",
@@ -3846,6 +3848,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "repose-canvas"
+version = "0.31.4"
+dependencies = [
+ "lyon_path",
+ "lyon_tessellation",
+ "repose-core",
+ "repose-ui",
+]
+
+[[package]]
 name = "repose-core"
 version = "0.31.4"
 dependencies = [
@@ -3877,6 +3889,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "repose-material"
+version = "0.31.4"
+dependencies = [
+ "repose-canvas 0.31.4",
+ "repose-core",
+ "repose-text",
+ "repose-tree",
+ "repose-ui",
+ "web-time",
 ]
 
 [[package]]
@@ -4100,6 +4124,7 @@ dependencies = [
  "repame-sim",
  "repame-view3d",
  "repose-core",
+ "repose-material",
  "repose-ui",
  "ron",
  "rustbox-format",

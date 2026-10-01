@@ -1,6 +1,6 @@
 use repose_core::StateColors;
 use repose_core::View;
-use repose_core::prelude::{Color, Modifier, theme};
+use repose_core::prelude::{Color, Dp, Modifier, theme};
 use repose_material::material3::{Card, CardConfig};
 use repose_material::ripple::{RippleConfig, ripple};
 use repose_ui::{Column, ViewExt};
@@ -38,7 +38,7 @@ pub fn clickable_outlined_card(
         CardConfig {
             modifier: m,
             container_color: bg,
-            border: Some((1.0, th.outline_variant)),
+            border: Some((Dp(1.0), th.outline_variant)),
             shape_radius: th.shapes.medium,
             ..config
         },

@@ -1,4 +1,5 @@
 pub mod maker;
+pub mod menus;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -73,6 +74,11 @@ struct App {
     prev_mode: MakerMode,
     looked: Rc<Cell<bool>>,
     last: Instant,
+    menu_actions: menus::ActionQueue,
+    menus: menus::MenuState,
+    phase_t: f32,
+    pending_mode: Option<MakerMode>,
+    refocus_root: bool,
 }
 
 impl App {
@@ -160,6 +166,11 @@ impl App {
             prev_mode: MakerMode::Edit,
             looked: Rc::new(Cell::new(false)),
             last: Instant::now(),
+            menu_actions: Default::default(),
+            menus: Default::default(),
+            phase_t: 0.0,
+            pending_mode: None,
+            refocus_root: false,
         }
     }
 
@@ -184,6 +195,10 @@ impl App {
             sched.held_keys.contains(&PhysicalKey::ShiftLeft)
                 || sched.held_keys.contains(&PhysicalKey::ShiftRight),
         );
+
+        self.drain_menu_actions(&edges);
+        self.tick_phase(dt.as_secs_f32());
+        self.update_input_capture();
 
         let mut cam = self.cam.get();
         self.sample_input(sched, &edges);
@@ -252,11 +267,12 @@ impl App {
             self.cam.set(cam);
         }
         let paused = sim.world.resource::<Paused>().0;
-        sched.cursor_override = if mode == MakerMode::Play && !paused {
-            Some(CursorIcon::Hidden)
-        } else {
-            None
-        };
+        sched.cursor_override =
+            if mode == MakerMode::Play && !paused && self.menus.phase == menus::AppState::InGame {
+                Some(CursorIcon::Hidden)
+            } else {
+                None
+            };
         let in_edit = mode == MakerMode::Edit;
         let mut preview_cell = None;
         if in_edit {
@@ -449,11 +465,6 @@ impl App {
             )));
             if !ui.status.is_empty() {
                 play_lines.push(line(ui.status.clone()));
-            }
-            if ui.sign_dialog_open {
-                for sign_line in &ui.sign_dialog_lines {
-                    play_lines.push(line(sign_line.clone()));
-                }
             }
         }
         if mode == MakerMode::Play
@@ -798,6 +809,10 @@ impl App {
 
         let focus = remember(FocusRequester::new);
         let fr_positioned = (*focus).clone();
+        if self.refocus_root {
+            self.refocus_root = false;
+            (*focus).request_focus();
+        }
         let focus_staging = self.staging.clone();
         let key_staging = self.staging.clone();
         let button = self.button.clone();
@@ -862,7 +877,16 @@ impl App {
                     secondary_cancel.set(false);
                 }),
         )
-        .child(vec![viewport, hud])
+        .child({
+            self.sync_menu_state();
+            let mut layer: Vec<View> = Vec::new();
+            if self.menus.phase == menus::AppState::InGame {
+                layer.push(viewport);
+                layer.push(hud);
+            }
+            layer.push(menus::compose_root(&self.menus, self.menu_actions.clone()));
+            layer
+        })
     }
 
     fn sample_input(&mut self, sched: &Scheduler, edges: &[PhysicalKey]) {
@@ -910,6 +934,332 @@ impl App {
         }
         if let Ok(mut world) = self.world.try_borrow_mut() {
             world.last_action = msg;
+        }
+    }
+
+    fn drain_menu_actions(&mut self, edges: &[PhysicalKey]) {
+        let batch = {
+            let Ok(mut queue) = self.menu_actions.lock() else {
+                return;
+            };
+            std::mem::take(&mut *queue)
+        };
+        let drained = !batch.is_empty();
+        let prev_overlay = self.menus.overlay;
+        let prev_phase = self.menus.phase;
+        for action in batch {
+            self.apply_menu_action(action);
+        }
+        if !matches!(self.menus.overlay, menus::OverlayMenu::Browse) {
+            self.menus.keyboard_captured = false;
+        }
+        self.handle_pause_escape(edges);
+        if (drained || self.menus.overlay != prev_overlay || self.menus.phase != prev_phase)
+            && self.menus.overlay != menus::OverlayMenu::Browse
+        {
+            self.refocus_root = true;
+        }
+    }
+
+    fn apply_menu_action(&mut self, action: menus::UiAction) {
+        use menus::OverlayMenu;
+        use menus::UiAction;
+        match action {
+            UiAction::StartGame => {
+                self.pending_mode = Some(MakerMode::Edit);
+                self.begin_loading();
+            }
+            UiAction::CloseOverlay => {
+                self.menus.overlay = OverlayMenu::None;
+            }
+            UiAction::Resume => {
+                self.menus.overlay = OverlayMenu::None;
+                self.set_paused(false);
+            }
+            UiAction::QuitToTitle => {
+                self.menus.overlay = OverlayMenu::None;
+                self.set_paused(false);
+                self.set_mode(MakerMode::Edit);
+                self.menus.phase = menus::AppState::Title;
+                self.phase_t = 0.0;
+            }
+            UiAction::QuitApp => {
+                #[cfg(not(target_arch = "wasm32"))]
+                std::process::exit(0);
+            }
+            UiAction::MakerRetry => {
+                self.menus.overlay = menus::OverlayMenu::None;
+                if let Ok(mut sim) = self.sim.try_borrow_mut()
+                    && *sim.world.resource::<MakerMode>() == MakerMode::Play
+                    && sim.world.resource::<Paused>().0
+                {
+                    sim.world.resource_mut::<PlayIntent>().reset_pressed = true;
+                }
+            }
+            UiAction::MakerCloseSignDialog => {
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    let ui = &mut sim.world.resource_mut::<win::MakerUi>();
+                    ui.sign_dialog_open = false;
+                    ui.sign_dialog_lines.clear();
+                }
+            }
+            UiAction::SetKeyboardCaptured(v) => {
+                self.menus.keyboard_captured = v;
+            }
+            UiAction::BrowseOpen => {
+                if let Ok(sim) = self.sim.try_borrow() {
+                    let store = sim.world.resource::<storage::LevelStorage>();
+                    self.menus.browse_levels = maker::catalog::build_catalog(store);
+                }
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+                self.menus.overlay = OverlayMenu::Browse;
+            }
+            UiAction::BrowsePlay(key) => {
+                self.menus.browse_confirm_delete = None;
+                self.menus.overlay = OverlayMenu::None;
+                self.menu_load_level(&key, true);
+                self.begin_loading();
+            }
+            UiAction::BrowseEdit(key) => {
+                self.menus.browse_confirm_delete = None;
+                self.menus.overlay = OverlayMenu::None;
+                self.menu_load_level(&key, false);
+                self.begin_loading();
+            }
+            UiAction::BrowseDelete(key) => {
+                if self.menus.browse_confirm_delete.as_deref() == Some(key.as_str()) {
+                    self.confirm_delete(&key);
+                } else {
+                    self.menus.browse_confirm_delete = Some(key);
+                }
+            }
+            UiAction::BrowseConfirmDelete(key) => self.confirm_delete(&key),
+            UiAction::BrowseCancelDelete => {
+                self.menus.browse_confirm_delete = None;
+            }
+            UiAction::BrowseSelect(key) => {
+                self.menus.browse_selected = Some(key);
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowseClearSelection => {
+                self.menus.browse_selected = None;
+                self.menus.browse_confirm_delete = None;
+            }
+            UiAction::BrowseToggleTag(tag) => {
+                if let Some(pos) = self
+                    .menus
+                    .browse_include_tags
+                    .iter()
+                    .position(|t| *t == tag)
+                {
+                    self.menus.browse_include_tags.remove(pos);
+                } else {
+                    self.menus.browse_include_tags.push(tag);
+                }
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowseToggleVerified => {
+                self.menus.browse_verified_only = !self.menus.browse_verified_only;
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowseSetDifficulty(d) => {
+                self.menus.browse_difficulty = d;
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowseCycleSort => {
+                self.menus.browse_sort = (self.menus.browse_sort + 1) % 6;
+                self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowseSetQuery(q) => {
+                self.menus.browse_query = q;
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowseClearQuery => {
+                self.menus.browse_query.clear();
+                self.menus.browse_confirm_delete = None;
+                self.menus.reconcile_browse_nav();
+            }
+        }
+    }
+
+    fn confirm_delete(&mut self, key: &str) {
+        let result = self.delete_slot(key);
+        self.menus.browse_confirm_delete = None;
+        match result {
+            Ok(()) => {
+                self.rebuild_catalog();
+                self.announce("Deleted.");
+            }
+            Err(e) => self.announce(format!("Delete failed: {e}")),
+        }
+    }
+
+    fn delete_slot(&self, key: &str) -> anyhow::Result<()> {
+        let sim = self
+            .sim
+            .try_borrow()
+            .map_err(|_| anyhow::anyhow!("sim busy"))?;
+        let store = sim.world.resource::<storage::LevelStorage>();
+        if key.starts_with(storage::COLLECTION_PREFIX) {
+            storage::delete_collection(store, key)
+        } else {
+            store.0.delete(key)
+        }
+    }
+
+    fn rebuild_catalog(&mut self) {
+        let Ok(sim) = self.sim.try_borrow() else {
+            return;
+        };
+        let store = sim.world.resource::<storage::LevelStorage>();
+        self.menus.browse_levels = maker::catalog::build_catalog(store);
+        self.menus.reconcile_browse_nav();
+    }
+
+    fn menu_load_level(&mut self, key: &str, play: bool) {
+        let mut name = String::new();
+        let outcome = match self.sim.try_borrow_mut() {
+            Ok(mut sim) => sim
+                .world
+                .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                    let store = world.resource::<storage::LevelStorage>();
+                    let Ok(mut view) = self.world.try_borrow_mut() else {
+                        return Err(anyhow::anyhow!("view busy"));
+                    };
+                    view.release_stroke(&mut level);
+                    let res = storage::load_level(store, &mut level, &mut view.history, key);
+                    if matches!(res, Ok(true)) {
+                        view.sync_source(&level);
+                        name = level.data.name.clone();
+                    }
+                    res
+                }),
+            Err(_) => return,
+        };
+        match outcome {
+            Ok(true) => {
+                {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    sim.world.resource_mut::<SelectedEntity>().0 = None;
+                    let ui = &mut sim.world.resource_mut::<win::MakerUi>();
+                    ui.goal_latched = false;
+                    if play {
+                        ui.play_timer = 0.0;
+                        ui.deaths = 0;
+                        ui.clear_time_secs = 0.0;
+                    }
+                }
+                if play {
+                    self.pending_mode = Some(MakerMode::Play);
+                    self.announce(format!("Playing: {name}"));
+                } else {
+                    self.pending_mode = Some(MakerMode::Edit);
+                    self.announce(format!("Editing: {name}"));
+                }
+            }
+            Ok(false) => self.announce("Level not found."),
+            Err(e) => self.announce(format!("Load failed: {e}")),
+        }
+    }
+
+    fn begin_loading(&mut self) {
+        self.menus.phase = menus::AppState::Loading;
+        self.menus.overlay = menus::OverlayMenu::None;
+        self.menus.loading_progress = 0.0;
+        self.phase_t = 0.0;
+    }
+
+    fn tick_phase(&mut self, dt: f32) {
+        self.phase_t += dt;
+        match self.menus.phase {
+            menus::AppState::Splash if self.phase_t >= 1.5 => {
+                self.menus.phase = menus::AppState::Title;
+                self.phase_t = 0.0;
+            }
+            menus::AppState::Loading => {
+                self.menus.loading_progress = (self.phase_t / 0.5).min(1.0);
+                if self.phase_t >= 0.5 {
+                    self.enter_ingame();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn enter_ingame(&mut self) {
+        let mode = self.pending_mode.take().unwrap_or(MakerMode::Edit);
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            {
+                let mut level = sim.world.resource_mut::<LevelDocument>();
+                level.mark_all_dirty();
+                level.entities_dirty = true;
+            }
+            *sim.world.resource_mut::<MakerMode>() = mode;
+        }
+        self.menus.phase = menus::AppState::InGame;
+        self.phase_t = 0.0;
+    }
+
+    fn handle_pause_escape(&mut self, edges: &[PhysicalKey]) {
+        if self.menus.phase != menus::AppState::InGame || !edges.contains(&PhysicalKey::Escape) {
+            return;
+        }
+        let Ok(mut sim) = self.sim.try_borrow_mut() else {
+            return;
+        };
+        let paused = sim.world.resource::<Paused>().0;
+        match self.menus.overlay {
+            menus::OverlayMenu::None if !paused => {
+                self.menus.overlay = menus::OverlayMenu::Pause;
+                sim.world.resource_mut::<Paused>().0 = true;
+            }
+            menus::OverlayMenu::Pause => {
+                self.menus.overlay = menus::OverlayMenu::None;
+                sim.world.resource_mut::<Paused>().0 = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn update_input_capture(&mut self) {
+        let modal = self.menus.overlay != menus::OverlayMenu::None
+            || self.menus.phase != menus::AppState::InGame
+            || self.menus.sign_dialog_open
+            || self.menus.keyboard_captured;
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            let mut capture = sim.world.resource_mut::<InputCapture>();
+            capture.ui_wants_pointer = modal;
+            capture.ui_wants_keyboard = modal;
+        }
+    }
+
+    fn sync_menu_state(&mut self) {
+        let Ok(sim) = self.sim.try_borrow() else {
+            return;
+        };
+        let ui = sim.world.resource::<win::MakerUi>();
+        self.menus.sign_dialog_open = ui.sign_dialog_open;
+        self.menus.sign_dialog_lines = ui.sign_dialog_lines.clone();
+        self.menus.maker_mode_edit = *sim.world.resource::<MakerMode>() == MakerMode::Edit;
+    }
+
+    fn set_paused(&self, paused: bool) {
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            sim.world.resource_mut::<Paused>().0 = paused;
+        }
+    }
+
+    fn set_mode(&self, mode: MakerMode) {
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            *sim.world.resource_mut::<MakerMode>() = mode;
         }
     }
 

@@ -1,5 +1,3 @@
-use bevy::prelude::Color;
-
 use super::block::{BlockKindColor, BlockShape};
 use super::entity_data::EntityKindColor;
 use super::level::{BlockData, LevelData};
@@ -135,7 +133,7 @@ pub fn render(level: &LevelData) -> ThumbImage {
         let drop = (top_h - bot_h) * c;
         let mut base = to_rgba(b.kind.color());
         if b.waterlogged {
-            base = blend(base, to_rgba(Color::srgb(0.2, 0.55, 0.95)), 0.45);
+            base = blend(base, to_rgba([0.2, 0.55, 0.95]), 0.45);
         }
 
         let top = (sx, sy - bb);
@@ -310,12 +308,11 @@ fn blend_px(buf: &mut [u8], w: usize, x: usize, y: usize, c: Px) {
 }
 
 #[inline]
-fn to_rgba(c: Color) -> Px {
-    let s = c.to_srgba();
+fn to_rgba(c: [f32; 3]) -> Px {
     [
-        (s.red.clamp(0.0, 1.0) * 255.0) as u8,
-        (s.green.clamp(0.0, 1.0) * 255.0) as u8,
-        (s.blue.clamp(0.0, 1.0) * 255.0) as u8,
+        (c[0].clamp(0.0, 1.0) * 255.0) as u8,
+        (c[1].clamp(0.0, 1.0) * 255.0) as u8,
+        (c[2].clamp(0.0, 1.0) * 255.0) as u8,
         255,
     ]
 }
@@ -381,7 +378,7 @@ mod tests {
             ],
             entities: vec![EntityData::defaults_for(
                 EntityKind::Glimmer,
-                bevy::prelude::IVec3::new(0, 2, 0),
+                glam::IVec3::new(0, 2, 0),
                 1,
             )],
             tracks: vec![],

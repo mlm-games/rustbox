@@ -37,6 +37,7 @@ repame-rapier3d = "0.3"
 bevy_ecs = "0.19"
 repose-core = "0.31"
 repose-ui = "0.31"
+repose-material = { path = "../repose/crates/repose-material" }
 rand = "0.10"
 game-utils = "0.4"
 serde = { version = "1", features = ["derive"] }

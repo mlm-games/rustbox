@@ -2,6 +2,7 @@ use bevy_ecs::prelude::{Res, Resource};
 
 pub mod block;
 pub mod camera;
+pub mod catalog;
 pub mod chunk;
 pub mod collision;
 pub mod commands;
@@ -20,6 +21,7 @@ pub mod player;
 pub mod props;
 pub mod rapier;
 pub mod storage;
+pub mod thumbnail;
 pub mod track;
 pub mod win;
 

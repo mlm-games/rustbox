@@ -1363,10 +1363,7 @@ pub fn resolve_use(world: &mut World, dt: f32) {
     };
 
     if world.resource::<MakerUi>().sign_dialog_open {
-        let dismiss = {
-            let intent = world.resource::<PlayIntent>();
-            intent.interact_pressed || intent.jump_pressed
-        };
+        let dismiss = world.resource::<PlayIntent>().dismiss_pressed;
         if dismiss {
             let mut ui = world.resource_mut::<MakerUi>();
             ui.sign_dialog_open = false;

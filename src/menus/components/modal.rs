@@ -32,15 +32,3 @@ pub fn modal_shell(inner: View) -> View {
     )
     .child(inner)
 }
-
-pub fn modal_card(width: f32, children: impl IntoIterator<Item = View>) -> View {
-    Column(
-        Modifier::new()
-            .width(width)
-            .padding(24.0)
-            .background(tok::bg_modal())
-            .clip_rounded(tok::R_MD)
-            .align_items(AlignItems::CENTER),
-    )
-    .children(children.into_iter().collect::<Vec<View>>())
-}
