@@ -3,16 +3,16 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use repose_core::View;
-use repose_core::prelude::{AlignItems, ImageFit, JustifyContent, Modifier, remember};
+use repose_core::prelude::{AlignItems, Dp, ImageFit, JustifyContent, Modifier, Sp, remember};
 use repose_material::Icon;
 use repose_material::material3::{
     ButtonConfig, FilledTonalButton, FilledTonalIconButton, IconButtonColors, IconButtonConfig,
 };
 use repose_ui::{Column, Image, ImageExt, Row, Text as RText, TextStyle, ViewExt, ZStack};
 
-use crate::app::SharedUi;
+use crate::menus::MenuState;
 use crate::menus::action::UiAction;
-use crate::menus::components::{Symbols, push_ui};
+use crate::menus::components::{Symbols, push};
 use crate::menus::editor::prepend_recents;
 use crate::menus::style::tok;
 
@@ -77,7 +77,7 @@ fn catalog(cat: Mm2Cat) -> Vec<PItem> {
     }
 }
 
-pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+pub fn part_picker(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tab: Rc<Cell<usize>> = remember(|| Cell::new(0));
     let cat = match tab.get() {
         1 => Mm2Cat::Items,
@@ -94,19 +94,19 @@ pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let name = (*label).to_string();
         tab_row.push(FilledTonalButton(
             Modifier::new()
-                .min_height(44.0)
-                .padding(18.0)
+                .min_height(Dp(44.0))
+                .padding(Dp(18.0))
                 .flex_grow(1.0)
                 .background(if selected {
                     tok::bg_elevated()
                 } else {
                     tok::bg_panel_solid()
                 })
-                .clip_rounded(tok::R_PILL),
+                .clip_rounded(Dp(tok::R_PILL)),
             move || t.set(i),
             ButtonConfig::default(),
             move || {
-                RText(name.clone()).size(15.0).color(if selected {
+                RText(name.clone()).size(Sp(15.0)).color(if selected {
                     tok::text()
                 } else {
                     tok::text_dim()
@@ -126,10 +126,10 @@ pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         let icon = icon_of(st, kind, id);
         row_kids.push(picker_tile(name, icon, move || {
             if kind == 2 {
-                push_ui(&a, UiAction::MakerSetBrushTab(2));
+                push(&a, UiAction::MakerSetBrushTab(2));
             } else {
-                push_ui(&a, UiAction::MakerSetBrushTab(kind));
-                push_ui(
+                push(&a, UiAction::MakerSetBrushTab(kind));
+                push(
                     &a,
                     if kind == 1 {
                         UiAction::MakerSelectEntity(id)
@@ -139,10 +139,10 @@ pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                 );
             }
             prepend_recents(kind, id);
-            push_ui(&a, UiAction::CloseOverlay);
+            push(&a, UiAction::CloseOverlay);
         }));
         if row_kids.len() == 6 || n + 1 == items.len() {
-            rows.push(Row(Modifier::new().gap(10.0)).children(std::mem::take(&mut row_kids)));
+            rows.push(Row(Modifier::new().gap(Dp(10.0))).children(std::mem::take(&mut row_kids)));
         }
     }
 
@@ -153,17 +153,17 @@ pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     )
     .child((
         Row(Modifier::new()
-            .width(760.0)
-            .gap(10.0)
-            .padding(8.0)
+            .width(Dp(760.0))
+            .gap(Dp(10.0))
+            .padding(Dp(8.0))
             .background(tok::bg_elevated())
-            .clip_rounded(tok::R_PILL))
+            .clip_rounded(Dp(tok::R_PILL)))
         .children(tab_row),
-        Column(Modifier::new().width(1.0).height(24.0)),
+        Column(Modifier::new().width(Dp(1.0)).height(Dp(24.0))),
         Column(
             Modifier::new()
-                .gap(10.0)
-                .width(760.0)
+                .gap(Dp(10.0))
+                .width(Dp(760.0))
                 .align_items(AlignItems::CENTER),
         )
         .children(rows),
@@ -189,14 +189,14 @@ pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
                     .fill_max_size()
                     .justify_content(JustifyContent::FLEX_START)
                     .align_items(AlignItems::FLEX_END)
-                    .padding(14.0),
+                    .padding(Dp(14.0)),
             )
             .child(FilledTonalIconButton(
-                Icon(Symbols::CLOSE).size(24.0).color(tok::text()),
-                move || push_ui(&a_close, UiAction::CloseOverlay),
+                Icon(Symbols::CLOSE).size(Sp(24.0)).color(tok::text()),
+                move || push(&a_close, UiAction::CloseOverlay),
                 IconButtonConfig {
                     enabled: true,
-                    container_size: Some(46.0),
+                    container_size: Some(Dp(46.0)),
                     colors: IconButtonColors {
                         container_color: tok::bg_elevated(),
                         content_color: tok::text(),
@@ -209,7 +209,7 @@ pub fn part_picker(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
         )
 }
 
-fn icon_of(st: &SharedUi, kind: u8, id: u8) -> Option<u64> {
+fn icon_of(st: &MenuState, kind: u8, id: u8) -> Option<u64> {
     match kind {
         1 => st.entity_icon_handles.get(id as usize).copied(),
         2 => None,
@@ -220,33 +220,33 @@ fn icon_of(st: &SharedUi, kind: u8, id: u8) -> Option<u64> {
 fn picker_tile(name: String, icon: Option<u64>, on_click: impl Fn() + 'static) -> View {
     let mut top = ZStack(
         Modifier::new()
-            .width(64.0)
-            .height(64.0)
+            .width(Dp(64.0))
+            .height(Dp(64.0))
             .background(tok::bg_panel_solid())
-            .clip_rounded(tok::R_MD),
+            .clip_rounded(Dp(tok::R_MD)),
     );
     if let Some(handle) = icon {
         top = top.child(
-            Image(Modifier::new().fill_max_size().padding(4.0), handle)
+            Image(Modifier::new().fill_max_size().padding(Dp(4.0)), handle)
                 .image_fit(ImageFit::Contain),
         );
     } else {
-        top = top.child(RText("T").size(26.0).color(tok::text()));
+        top = top.child(RText("T").size(Sp(26.0)).color(tok::text()));
     }
 
     FilledTonalButton(
         Modifier::new()
-            .width(72.0)
-            .min_height(88.0)
-            .padding(4.0)
+            .width(Dp(72.0))
+            .min_height(Dp(88.0))
+            .padding(Dp(4.0))
             .background(tok::bg_elevated())
-            .clip_rounded(tok::R_MD),
+            .clip_rounded(Dp(tok::R_MD)),
         on_click,
         ButtonConfig::default(),
         move || {
-            Column(Modifier::new().gap(4.0).align_items(AlignItems::CENTER)).children(vec![
+            Column(Modifier::new().gap(Dp(4.0)).align_items(AlignItems::CENTER)).children(vec![
                 top.clone(),
-                RText(name.clone()).size(11.0).color(tok::text()),
+                RText(name.clone()).size(Sp(11.0)).color(tok::text()),
             ])
         },
     )

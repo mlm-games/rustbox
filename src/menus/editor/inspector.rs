@@ -1,15 +1,15 @@
 use std::sync::{Arc, Mutex};
 
 use repose_core::View;
-use repose_core::prelude::{AlignItems, Modifier};
+use repose_core::prelude::{AlignItems, Dp, Modifier, Sp};
 use repose_ui::{Column, Row, Text as RText, TextStyle};
 
-use crate::app::SharedUi;
 use crate::maker::entity_data::{ContainedItem, EntityKind};
 use crate::maker::track::TrackMode;
+use crate::menus::MenuState;
 use crate::menus::action::UiAction;
 use crate::menus::components::{
-    Symbols, inspector_section, mk_icon_button, mk_pill_button, push_ui, spacer,
+    Symbols, inspector_section, mk_icon_button, mk_pill_button, push, spacer,
 };
 use crate::menus::style::{t, tok};
 
@@ -22,21 +22,21 @@ fn stepper_row(
     Row(Modifier::new()
         .fill_max_width()
         .align_items(AlignItems::CENTER)
-        .gap(6.0))
+        .gap(Dp(6.0)))
     .children(vec![
         mk_icon_button(Symbols::REMOVE, true, on_minus),
         RText(format!("{label}: {value}"))
-            .size(12.0)
+            .size(Sp(12.0))
             .color(tok::text()),
         mk_icon_button(Symbols::ADD, true, on_plus),
     ])
 }
 
-pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+pub fn inspector_panel(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
     let mut body: Vec<View> = vec![
         RText(t(tr, "inspector-title", "Inspector"))
-            .size(12.0)
+            .size(Sp(12.0))
             .color(tok::text_dim()),
         spacer(6.0),
     ];
@@ -71,7 +71,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             "Selection",
             vec![
                 RText(t(tr, label_key, label_fb))
-                    .size(16.0)
+                    .size(Sp(16.0))
                     .color(tok::text()),
                 RText(format!(
                     "{} ({},{},{})",
@@ -80,7 +80,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                     e.cell[1],
                     e.cell[2]
                 ))
-                .size(12.0)
+                .size(Sp(12.0))
                 .color(tok::text_dim()),
             ],
         ));
@@ -119,8 +119,8 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                 vec![stepper_row(
                     t(tr, param_key, param_fb),
                     format!("{:.1}", e.param),
-                    move || push_ui(&a_minus, UiAction::MakerInspParamDelta(-step)),
-                    move || push_ui(&a_plus, UiAction::MakerInspParamDelta(step)),
+                    move || push(&a_minus, UiAction::MakerInspParamDelta(-step)),
+                    move || push(&a_plus, UiAction::MakerInspParamDelta(step)),
                 )],
             ));
         }
@@ -133,16 +133,16 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                     Row(Modifier::new()
                         .fill_max_width()
                         .align_items(AlignItems::CENTER)
-                        .gap(6.0))
+                        .gap(Dp(6.0)))
                     .children(vec![
                         RText(t(tr, "inspector-sign-text", "Sign Text"))
-                            .size(12.0)
+                            .size(Sp(12.0))
                             .color(tok::text()),
                         mk_pill_button(
                             RText(t(tr, "inspector-edit-text", "Edit Text"))
-                                .size(12.0)
+                                .size(Sp(12.0))
                                 .color(tok::text()),
-                            move || push_ui(&a_edit, UiAction::MakerInspEditSignText),
+                            move || push(&a_edit, UiAction::MakerInspEditSignText),
                         ),
                     ]),
                 ],
@@ -157,8 +157,8 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                 vec![stepper_row(
                     t(tr, "inspector-contents", "Contains"),
                     e.contents.label(),
-                    move || push_ui(&a_cycle, UiAction::MakerInspCycleContents),
-                    move || push_ui(&a_cycle2, UiAction::MakerInspCycleContents),
+                    move || push(&a_cycle, UiAction::MakerInspCycleContents),
+                    move || push(&a_cycle2, UiAction::MakerInspCycleContents),
                 )],
             ));
 
@@ -170,8 +170,8 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                     vec![stepper_row(
                         t(tr, "inspector-count", "Count"),
                         e.contents.label(),
-                        move || push_ui(&a_minus, UiAction::MakerInspContentsDelta(-1)),
-                        move || push_ui(&a_plus, UiAction::MakerInspContentsDelta(1)),
+                        move || push(&a_minus, UiAction::MakerInspContentsDelta(-1)),
+                        move || push(&a_plus, UiAction::MakerInspContentsDelta(1)),
                     )],
                 ));
             }
@@ -188,8 +188,8 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                 vec![stepper_row(
                     t(tr, "inspector-channel", "Channel"),
                     format!("{}", e.link),
-                    move || push_ui(&a_minus, UiAction::MakerInspLinkDelta(-1)),
-                    move || push_ui(&a_plus, UiAction::MakerInspLinkDelta(1)),
+                    move || push(&a_minus, UiAction::MakerInspLinkDelta(-1)),
+                    move || push(&a_plus, UiAction::MakerInspLinkDelta(1)),
                 )],
             ));
         }
@@ -205,8 +205,8 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                 vec![stepper_row(
                     t(tr, "inspector-yaw", "Yaw"),
                     format!("{}°", e.yaw_deg as i32),
-                    move || push_ui(&a_minus, UiAction::MakerInspYawDelta(-45.0)),
-                    move || push_ui(&a_plus, UiAction::MakerInspYawDelta(45.0)),
+                    move || push(&a_minus, UiAction::MakerInspYawDelta(-45.0)),
+                    move || push(&a_plus, UiAction::MakerInspYawDelta(45.0)),
                 )],
             ));
         }
@@ -221,7 +221,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                 "Track",
                 vec![mk_pill_button(
                     RText(format!("{}: {}", t(tr, "inspector-track", "Track"), cur)),
-                    move || push_ui(&a_cycle, UiAction::MakerInspTrackCycle),
+                    move || push(&a_cycle, UiAction::MakerInspTrackCycle),
                 )],
             ));
         }
@@ -231,7 +231,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             "Delete",
             vec![mk_pill_button(
                 RText(t(tr, "inspector-delete", "Delete")),
-                move || push_ui(&a_del, UiAction::MakerInspDeleteEntity),
+                move || push(&a_del, UiAction::MakerInspDeleteEntity),
             )],
         ));
     } else if let Some(track) = &st.active_track_data {
@@ -248,14 +248,14 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                     t(tr, "toolbar-tracks", "Tracks"),
                     track.id
                 ))
-                .size(16.0)
+                .size(Sp(16.0))
                 .color(tok::text()),
                 RText(format!(
                     "{}: {}",
                     t(tr, "inspector-points", "Points"),
                     track.points.len()
                 ))
-                .size(12.0)
+                .size(Sp(12.0))
                 .color(tok::text_dim()),
             ],
         ));
@@ -269,7 +269,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
                     t(tr, "inspector-mode", "Mode"),
                     mode_label
                 )),
-                move || push_ui(&a_mode, UiAction::MakerInspTrackModeToggle),
+                move || push(&a_mode, UiAction::MakerInspTrackModeToggle),
             )],
         ));
 
@@ -280,8 +280,8 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             vec![stepper_row(
                 t(tr, "inspector-speed", "Speed"),
                 format!("{:.1}", track.speed),
-                move || push_ui(&a_minus, UiAction::MakerInspTrackSpeedDelta(-0.5)),
-                move || push_ui(&a_plus, UiAction::MakerInspTrackSpeedDelta(0.5)),
+                move || push(&a_minus, UiAction::MakerInspTrackSpeedDelta(-0.5)),
+                move || push(&a_plus, UiAction::MakerInspTrackSpeedDelta(0.5)),
             )],
         ));
 
@@ -290,7 +290,7 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             "Mode",
             vec![mk_pill_button(
                 RText(t(tr, "inspector-reverse", "Reverse")),
-                move || push_ui(&a_rev, UiAction::MakerInspTrackReverse),
+                move || push(&a_rev, UiAction::MakerInspTrackReverse),
             )],
         ));
 
@@ -299,13 +299,13 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             "Delete",
             vec![mk_pill_button(
                 RText(t(tr, "inspector-delete", "Delete")),
-                move || push_ui(&a_del, UiAction::MakerInspTrackDelete),
+                move || push(&a_del, UiAction::MakerInspTrackDelete),
             )],
         ));
     } else {
         body.push(
             RText(t(tr, "inspector-hint", "Select an entity or track"))
-                .size(13.0)
+                .size(Sp(13.0))
                 .color(tok::text_dim()),
         );
     }
@@ -323,16 +323,16 @@ pub fn inspector_panel(st: &SharedUi, actions: Arc<Mutex<Vec<UiAction>>>) -> Vie
             t(tr, "inspector-mirror", "Mirror"),
             mirror_label
         ))
-        .size(12.0)
+        .size(Sp(12.0))
         .color(tok::text_dim()),
     );
 
     Column(
         Modifier::new()
-            .width(196.0)
-            .padding(12.0)
+            .width(Dp(196.0))
+            .padding(Dp(12.0))
             .background(tok::bg_elevated())
-            .clip_rounded(tok::R_PILL)
+            .clip_rounded(Dp(tok::R_PILL))
             .align_items(AlignItems::FLEX_START),
     )
     .children(body)

@@ -60,6 +60,25 @@ pub fn icon_label(symbol: Symbol, text: String) -> View {
     ))
 }
 
+pub fn icon_text(symbol: Symbol, text: String, size: f32, color: RColor) -> View {
+    Row(Modifier::new().gap(Dp(5.0)).align_items(AlignItems::CENTER)).child((
+        Icon(symbol).size(Sp(size)).color(color),
+        RText(text).size(Sp(size)).color(color),
+    ))
+}
+
+pub fn mk_pill_button(label: View, on_click: impl Fn() + 'static) -> View {
+    FilledTonalButton(
+        Modifier::new()
+            .min_height(Dp(38.0))
+            .padding(Dp(10.0))
+            .clip_rounded(Dp(tok::R_PILL)),
+        on_click,
+        ButtonConfig::default(),
+        move || label.clone(),
+    )
+}
+
 pub fn mk_chip(label: View, selected: bool, accent: RColor, on_click: impl Fn() + 'static) -> View {
     let bg = if selected { accent } else { tok::bg_chip() };
     FilledTonalButton(

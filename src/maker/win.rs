@@ -22,6 +22,9 @@ pub struct MakerUi {
     pub sign_dialog_open: bool,
     pub sign_dialog_lines: Vec<String>,
     pub score: u32,
+    /// Collection key of the level being edited; `None` saves to the
+    /// autosave slot.
+    pub current_key: Option<String>,
 }
 
 impl MakerUi {

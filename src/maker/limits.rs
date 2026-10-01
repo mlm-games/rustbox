@@ -1,4 +1,5 @@
-use bevy_ecs::prelude::{Res, ResMut, Resource};
+use bevy_ecs::prelude::Resource;
+use bevy_ecs::world::World;
 use glam::IVec3;
 
 use super::level::LevelDocument;
@@ -42,15 +43,13 @@ pub struct LevelStats {
     pub over_limit: bool,
 }
 
-pub fn update_level_stats(
-    level: Res<LevelDocument>,
-    limits: Res<LevelLimits>,
-    mut stats: ResMut<LevelStats>,
-) {
-    stats.blocks = level.map.len() as u32;
-    stats.entities = level.data.entities.len() as u32;
-    stats.tracks = level.data.tracks.len() as u32;
-    stats.track_points = level
+pub fn update_level_stats(world: &mut World) {
+    let limits = *world.resource::<LevelLimits>();
+    let level = world.resource::<LevelDocument>();
+    let blocks = level.map.len() as u32;
+    let entities = level.data.entities.len() as u32;
+    let tracks = level.data.tracks.len() as u32;
+    let track_points: u32 = level
         .data
         .tracks
         .iter()
@@ -74,16 +73,24 @@ pub fn update_level_stats(
             }
         }
     }
-    stats.estimated_vertices = faces * 4;
+    let estimated_vertices = faces * 4;
 
-    stats.warning = stats.blocks as f32 > limits.max_blocks as f32 * limits.warn_ratio
-        || stats.entities as f32 > limits.max_entities as f32 * limits.warn_ratio
-        || stats.estimated_vertices as f32
-            > limits.max_estimated_vertices as f32 * limits.warn_ratio;
+    let warning = blocks as f32 > limits.max_blocks as f32 * limits.warn_ratio
+        || entities as f32 > limits.max_entities as f32 * limits.warn_ratio
+        || estimated_vertices as f32 > limits.max_estimated_vertices as f32 * limits.warn_ratio;
 
-    stats.over_limit = stats.blocks > limits.max_blocks
-        || stats.entities > limits.max_entities
-        || stats.tracks > limits.max_tracks
-        || stats.track_points > limits.max_track_points
-        || stats.estimated_vertices > limits.max_estimated_vertices;
+    let over_limit = blocks > limits.max_blocks
+        || entities > limits.max_entities
+        || tracks > limits.max_tracks
+        || track_points > limits.max_track_points
+        || estimated_vertices > limits.max_estimated_vertices;
+
+    let mut stats = world.resource_mut::<LevelStats>();
+    stats.blocks = blocks;
+    stats.entities = entities;
+    stats.tracks = tracks;
+    stats.track_points = track_points;
+    stats.estimated_vertices = estimated_vertices;
+    stats.warning = warning;
+    stats.over_limit = over_limit;
 }

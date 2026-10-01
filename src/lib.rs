@@ -11,7 +11,7 @@ use bevy_ecs::world::Mut;
 use glam::{IVec3, Vec3};
 use maker::block::{ALL_BLOCK_SHAPES, BlockKind};
 use maker::camera::{CameraRig, play_camera_follow};
-use maker::commands::EditCommand;
+use maker::commands::{CommandHistory, EditCommand};
 use maker::entities_runtime::{
     DropIdCounter, EntityEntities, LinkState, apply_fans, carry_crate_riders,
     collect_dropped_glimmers, collect_glimmers, collect_heal_orbs, collect_keys,
@@ -20,7 +20,7 @@ use maker::entities_runtime::{
     touch_speed_rings, update_crumble_plates, update_drops, update_lock_gates, update_relay_gates,
     update_seals,
 };
-use maker::entity_data::{EntityDataExt, EntityKind};
+use maker::entity_data::{ContainedItem, EntityDataExt, EntityKind};
 use maker::interaction::{DamageRequests, ForcedMotionRequests, InteractionMemory, UseSelection};
 use maker::interactive_blocks::{
     OnOffState, PulseClock, reset_onoff_state, reset_pulse_clock, sync_pulse, touch_onoff_switches,
@@ -35,22 +35,21 @@ use maker::mode::{
     SelectionBoxStart, SelectionSet,
 };
 use maker::player::{
-    MoveState, MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, Trauma,
+    MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, Trauma,
     clear_pressed_latch, latch_play_presses, player_controller, spawn_player, sync_mode,
 };
 use maker::props::RuntimeSolids;
 use maker::track::{ActiveTrack, TrackMode};
 use maker::{Paused, edit_ops, gizmos, interaction, not_paused, rapier, storage, win};
-use repame_shell::{Sim, SimTime, Staging};
+use repame_shell::{Sim, Staging};
 use repame_view3d::{BatchDesc, Frame3d, GeomHandle, OrbitCamera, View3dEvent, Viewport3d};
 use repose_core::input::{
     Key, KeyEvent, KeyEventType, PhysicalKey, PointerButton, PointerEvent, PointerEventKind,
 };
 use repose_core::{
-    Color, CursorIcon, Dp, FocusRequester, Modifier, RenderContext, Scheduler, Sp, View, remember,
-    request_frame,
+    CursorIcon, FocusRequester, Modifier, RenderContext, Scheduler, View, remember, request_frame,
 };
-use repose_ui::{Column, Text, TextStyle, ViewExt, ZStack};
+use repose_ui::{ViewExt, ZStack};
 use web_time::Instant;
 
 #[cfg(target_arch = "wasm32")]
@@ -125,6 +124,8 @@ impl App {
         sim.world.insert_resource(ActiveLinkChannel::default());
         sim.world.insert_resource(ActiveTrack::default());
         sim.world.insert_resource(LevelLimits::default());
+        sim.world
+            .insert_resource(maker::limits::LevelStats::default());
         sim.add_chained_systems(
             (
                 sync_mode,
@@ -174,7 +175,7 @@ impl App {
         }
     }
 
-    fn view(&mut self, sched: &mut Scheduler, _ctx: &RenderContext) -> View {
+    fn view(&mut self, sched: &mut Scheduler, ctx: &RenderContext) -> View {
         request_frame();
         let now = Instant::now();
         let dt = now
@@ -228,7 +229,6 @@ impl App {
         rapier::write_back_bodies(&mut sim.world);
         rapier::move_held_objects(&mut sim.world);
         rapier::pickup_throwables(&mut sim.world);
-        let elapsed = sim.world.resource::<SimTime>().elapsed_secs;
         let dt_secs = dt.as_secs_f32();
         sync_pulse(&mut sim.world, dt_secs);
         interaction::begin_interaction_frame(&mut sim.world, entities_rebuilt);
@@ -263,6 +263,7 @@ impl App {
         win::tick_play_timer(&mut sim.world, mode, dt_secs);
         win::detect_goal(&mut sim.world, mode);
         win::tick_status(&mut sim.world, dt_secs);
+        maker::limits::update_level_stats(&mut sim.world);
         if mode == MakerMode::Play {
             self.cam.set(cam);
         }
@@ -278,55 +279,15 @@ impl App {
         if in_edit {
             edit_ops::validate_refs(&mut sim.world);
         }
-        let (edit_tab, paste_on, sel_len, limits, shift) = if in_edit {
+        let (edit_tab, paste_on, limits, shift) = if in_edit {
             (
                 *sim.world.resource::<BrushTab>(),
                 sim.world.resource::<PastePreview>().active,
-                sim.world.resource::<SelectionSet>().len(),
                 *sim.world.resource::<LevelLimits>(),
                 self.shift.get(),
             )
         } else {
-            (BrushTab::default(), false, 0, LevelLimits::default(), false)
-        };
-        let tool_line = if in_edit {
-            Some(match edit_tab {
-                BrushTab::Blocks => {
-                    let brush = self.world.borrow();
-                    format!(
-                        "tab blocks · brush {:?} {} r{}{}",
-                        brush.brush.kind,
-                        brush.brush.shape.name(),
-                        brush.brush.rot,
-                        if brush.brush.waterlogged {
-                            " · wet"
-                        } else {
-                            ""
-                        }
-                    )
-                }
-                BrushTab::Entities => format!(
-                    "tab entities · {} · yaw {}° · link {}",
-                    sim.world.resource::<SelectedEntityKind>().0.label(),
-                    sim.world.resource::<PlaceYaw>().0 as i32,
-                    sim.world.resource::<ActiveLinkChannel>().0,
-                ),
-                BrushTab::Tracks => {
-                    if let Some(id) = sim.world.resource::<ActiveTrack>().0 {
-                        let info = sim
-                            .world
-                            .resource::<LevelDocument>()
-                            .track(id)
-                            .map(|t| format!("{:?} {:.1}", t.mode, t.speed))
-                            .unwrap_or_default();
-                        format!("tab tracks · editing {info} · m mode · +/- speed · enter end")
-                    } else {
-                        "tab tracks".to_string()
-                    }
-                }
-            })
-        } else {
-            None
+            (BrushTab::default(), false, LevelLimits::default(), false)
         };
         if in_edit {
             let ui_wants_pointer = sim.world.resource::<InputCapture>().ui_wants_pointer;
@@ -450,40 +411,16 @@ impl App {
             frame.push(group);
         }
 
-        let name = level.data.name.clone();
-        let blocks = level.map.len();
-        let chunks = world.chunk_count();
-        let action = world.last_action.clone();
         drop(world);
         drop(level);
-        let mut play_lines = Vec::new();
-        if mode == MakerMode::Play {
-            let ui = sim.world.resource::<win::MakerUi>();
-            play_lines.push(line(format!(
-                "time {}",
-                win::fmt_ms((ui.play_timer * 1000.0).round() as u32)
-            )));
-            if !ui.status.is_empty() {
-                play_lines.push(line(ui.status.clone()));
-            }
-        }
         if mode == MakerMode::Play
-            && let (Some(p), Some(tf), Some(ms)) = (
+            && let (Some(p), Some(tf)) = (
                 sim.world.get::<Player>(self.player),
                 sim.world.get::<PlayerTransform>(self.player),
-                sim.world.get::<MoveState>(self.player),
             )
+            && tf.visible
         {
-            if tf.visible {
-                frame.push(player_box(p, tf));
-            }
-            play_lines.push(line(format!(
-                "pos ({:.2}, {:.2}, {:.2}) · {}",
-                tf.translation.x,
-                tf.translation.y,
-                tf.translation.z,
-                if ms.grounded { "grounded" } else { "air" }
-            )));
+            frame.push(player_box(p, tf));
         }
         draw_props(&sim.world, &mut frame);
         drop(sim);
@@ -776,45 +713,6 @@ impl App {
             },
         );
 
-        let mut hud_children = vec![
-            line(format!("Rustbox · tick {elapsed:.2}s")),
-            line(format!(
-                "mode: {}",
-                if mode == MakerMode::Edit {
-                    "edit"
-                } else {
-                    "play"
-                }
-            )),
-            line(format!("{name} · {blocks} blocks · {chunks} chunks")),
-            line(
-                "left place · right erase · shift+click fill · B volume select · ctrl+a/c/x/v · ctrl+z undo",
-            ),
-        ];
-        if let Some(text) = tool_line {
-            hud_children.push(line(text));
-        }
-        if sel_len > 0 {
-            hud_children.push(line(format!("sel {sel_len} item(s)")));
-        }
-        hud_children.push(line(action));
-        hud_children.extend(play_lines);
-        let hud = Column(
-            Modifier::new()
-                .absolute()
-                .offset(Some(Dp(16.0)), Some(Dp(16.0)), None, None)
-                .hit_passthrough(),
-        )
-        .child(hud_children);
-
-        let focus = remember(FocusRequester::new);
-        let fr_positioned = (*focus).clone();
-        if self.refocus_root {
-            self.refocus_root = false;
-            (*focus).request_focus();
-        }
-        let focus_staging = self.staging.clone();
-        let key_staging = self.staging.clone();
         let button = self.button.clone();
         let button_up = self.button.clone();
         let button_cancel = self.button.clone();
@@ -824,33 +722,12 @@ impl App {
         let secondary_up = self.secondary_held.clone();
         let primary_cancel = self.primary_held.clone();
         let secondary_cancel = self.secondary_held.clone();
-        ZStack(
+        // Pointer state tracks the 3D view only: presses that land on HUD
+        // buttons never reach this wrapper (its hit region is not in their
+        // path), so UI clicks cannot place or erase world blocks.
+        let viewport = ZStack(
             Modifier::new()
                 .fill_max_size()
-                .focusable(true)
-                .focus_requester((*focus).clone())
-                .on_globally_positioned(move |_| {
-                    fr_positioned.request_focus();
-                })
-                .on_focus_changed(move |focused| {
-                    focus_staging.borrow_mut().set_window_focused(focused);
-                })
-                .on_key_event(move |ke: KeyEvent| {
-                    let mut staging = key_staging.borrow_mut();
-                    let down = matches!(ke.event_type, KeyEventType::Down);
-                    match ke.key {
-                        Key::Escape | Key::Enter | Key::Delete => {
-                            let physical = match ke.key {
-                                Key::Escape => PhysicalKey::Escape,
-                                Key::Enter => PhysicalKey::Enter,
-                                _ => PhysicalKey::Delete,
-                            };
-                            staging.stage_physical(physical, down, ke.is_repeat);
-                        }
-                        _ => staging.handle_key(&ke),
-                    }
-                    false
-                })
                 .on_pointer_down(move |ev: PointerEvent| {
                     if let PointerEventKind::Down(b) = ev.event {
                         button.set(Some(b));
@@ -877,12 +754,55 @@ impl App {
                     secondary_cancel.set(false);
                 }),
         )
+        .child(viewport);
+
+        let focus = remember(FocusRequester::new);
+        let fr_positioned = (*focus).clone();
+        if self.refocus_root {
+            self.refocus_root = false;
+            (*focus).request_focus();
+        }
+        let focus_staging = self.staging.clone();
+        let key_staging = self.staging.clone();
+        ZStack(
+            Modifier::new()
+                .fill_max_size()
+                .focusable(true)
+                .focus_requester((*focus).clone())
+                .on_globally_positioned(move |_| {
+                    fr_positioned.request_focus();
+                })
+                .on_focus_changed(move |focused| {
+                    focus_staging.borrow_mut().set_window_focused(focused);
+                })
+                .on_key_event(move |ke: KeyEvent| {
+                    let mut staging = key_staging.borrow_mut();
+                    let down = matches!(ke.event_type, KeyEventType::Down);
+                    match ke.key {
+                        Key::Escape | Key::Enter | Key::Delete => {
+                            let physical = match ke.key {
+                                Key::Escape => PhysicalKey::Escape,
+                                Key::Enter => PhysicalKey::Enter,
+                                _ => PhysicalKey::Delete,
+                            };
+                            staging.stage_physical(physical, down, ke.is_repeat);
+                        }
+                        _ => staging.handle_key(&ke),
+                    }
+                    false
+                }),
+        )
         .child({
+            if self.menus.phase == menus::AppState::InGame
+                && self.menus.block_icon_handles.is_empty()
+            {
+                self.menus.block_icon_handles = menus::icons::register_block_icons(ctx);
+                self.menus.entity_icon_handles = menus::icons::register_entity_icons(ctx);
+            }
             self.sync_menu_state();
             let mut layer: Vec<View> = Vec::new();
             if self.menus.phase == menus::AppState::InGame {
                 layer.push(viewport);
-                layer.push(hud);
             }
             layer.push(menus::compose_root(&self.menus, self.menu_actions.clone()));
             layer
@@ -950,12 +870,14 @@ impl App {
         for action in batch {
             self.apply_menu_action(action);
         }
-        if !matches!(self.menus.overlay, menus::OverlayMenu::Browse) {
+        if !matches!(self.menus.overlay, menus::OverlayMenu::Browse) && !self.menus.sign_editor_open
+        {
             self.menus.keyboard_captured = false;
         }
         self.handle_pause_escape(edges);
         if (drained || self.menus.overlay != prev_overlay || self.menus.phase != prev_phase)
             && self.menus.overlay != menus::OverlayMenu::Browse
+            && !self.menus.sign_editor_open
         {
             self.refocus_root = true;
         }
@@ -1085,7 +1007,454 @@ impl App {
                 self.menus.browse_confirm_delete = None;
                 self.menus.reconcile_browse_nav();
             }
+            UiAction::OpenPartPicker => {
+                self.menus.overlay = OverlayMenu::PartPicker;
+            }
+            UiAction::MakerSetBrushTab(tab) => {
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    *sim.world.resource_mut::<BrushTab>() = match tab {
+                        1 => BrushTab::Entities,
+                        2 => BrushTab::Tracks,
+                        _ => BrushTab::Blocks,
+                    };
+                }
+            }
+            UiAction::MakerSelectBlock(idx) => {
+                if let Ok(mut world) = self.world.try_borrow_mut() {
+                    world.brush.kind = maker::palette::block_from_index(idx);
+                }
+            }
+            UiAction::MakerSelectEntity(idx) => {
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    sim.world.resource_mut::<SelectedEntityKind>().0 =
+                        maker::palette::entity_from_index(idx);
+                }
+            }
+            UiAction::MakerCycleShape => self.announce(self.brush_cycle_shape()),
+            UiAction::MakerRotateBrushBlock => self.announce(self.brush_rotate_block()),
+            UiAction::MakerToggleWaterlog => self.announce(self.brush_toggle_waterlog()),
+            UiAction::MakerCycleLinkChannel => self.announce(self.brush_cycle_link()),
+            UiAction::MakerRotateBrush => {
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    let mut yaw = sim.world.resource_mut::<PlaceYaw>();
+                    yaw.0 = (yaw.0 + 45.0) % 360.0;
+                }
+            }
+            UiAction::MakerUndo => self.undo_once(),
+            UiAction::MakerRedo => self.redo_once(),
+            UiAction::MakerSave => {
+                let saved = {
+                    let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                        return;
+                    };
+                    sim.world
+                        .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                            let key = world
+                                .resource::<win::MakerUi>()
+                                .current_key
+                                .clone()
+                                .unwrap_or_else(|| storage::AUTOSAVE_KEY.to_string());
+                            let store = world.resource::<storage::LevelStorage>();
+                            let res = storage::save_level(store, &mut level, &key);
+                            let mut ui = world.resource_mut::<win::MakerUi>();
+                            match &res {
+                                Ok(()) => {
+                                    if ui.current_key.is_none() {
+                                        ui.current_key = Some(key);
+                                    }
+                                    ui.set_status("Saved");
+                                }
+                                Err(e) => ui.set_status(format!("Save failed: {e}")),
+                            }
+                            res.is_ok()
+                        })
+                };
+                if saved {
+                    self.refresh_level_slots();
+                    self.rebuild_catalog();
+                }
+            }
+            UiAction::MakerOpenLoadPanel => {
+                self.refresh_level_slots();
+                self.menus.overlay = OverlayMenu::LoadLevel;
+            }
+            UiAction::MakerLoadSlot(name) => {
+                let outcome = match self.sim.try_borrow_mut() {
+                    Ok(mut sim) => {
+                        sim.world
+                            .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                                let store = world.resource::<storage::LevelStorage>();
+                                let Ok(mut view) = self.world.try_borrow_mut() else {
+                                    return Err(anyhow::anyhow!("view busy"));
+                                };
+                                view.release_stroke(&mut level);
+                                let res = storage::load_level(
+                                    store,
+                                    &mut level,
+                                    &mut view.history,
+                                    &name,
+                                );
+                                if matches!(res, Ok(true)) {
+                                    view.sync_source(&level);
+                                }
+                                res
+                            })
+                    }
+                    Err(_) => return,
+                };
+                match outcome {
+                    Ok(true) => {
+                        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                            sim.world.resource_mut::<SelectedEntity>().0 = None;
+                            sim.world.resource_mut::<ActiveTrack>().0 = None;
+                            let ui = &mut sim.world.resource_mut::<win::MakerUi>();
+                            ui.current_key = Some(name.clone());
+                            ui.set_status(format!("Loaded '{name}'"));
+                        }
+                        self.menus.overlay = OverlayMenu::None;
+                    }
+                    Ok(false) => self.announce("Slot empty"),
+                    Err(e) => self.announce(format!("Load failed: {e}")),
+                }
+            }
+            UiAction::MakerToggleMode => {
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    let mut mode = sim.world.resource_mut::<MakerMode>();
+                    *mode = match *mode {
+                        MakerMode::Edit => MakerMode::Play,
+                        MakerMode::Play => MakerMode::Edit,
+                    };
+                }
+            }
+            UiAction::MakerInspParamDelta(delta) => {
+                if let Some((id, old)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.param))
+                {
+                    let new = (old + delta).clamp(0.0, 100.0);
+                    if (new - old).abs() > 1e-4 {
+                        self.apply_edit(EditCommand::SetEntityParam { id, old, new });
+                    }
+                }
+            }
+            UiAction::MakerInspYawDelta(delta) => {
+                if let Some((id, old)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.yaw_deg))
+                {
+                    let new = (old + delta).rem_euclid(360.0);
+                    if (new - old).abs() > 1e-3 {
+                        self.apply_edit(EditCommand::SetEntityYaw { id, old, new });
+                    }
+                }
+            }
+            UiAction::MakerInspLinkDelta(delta) => {
+                if let Some((id, old)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.link))
+                {
+                    let new = (old as i32 + delta).clamp(1, 9) as u32;
+                    if new != old {
+                        self.apply_edit(EditCommand::SetEntityLink { id, old, new });
+                    }
+                }
+            }
+            UiAction::MakerInspCycleContents => {
+                let Some((id, kind, old, old_link)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.kind, e.contents, e.link))
+                else {
+                    return;
+                };
+                if !kind.supports_contents() {
+                    return;
+                }
+                let new = match old {
+                    ContainedItem::None => ContainedItem::Glimmers(3),
+                    ContainedItem::Glimmers(_) => ContainedItem::Key,
+                    ContainedItem::Key => ContainedItem::HealOrb,
+                    ContainedItem::HealOrb => ContainedItem::SpeedRing,
+                    ContainedItem::SpeedRing => ContainedItem::None,
+                };
+                if matches!(new, ContainedItem::Key) && old_link == 0 {
+                    let mut cmds = vec![EditCommand::SetEntityLink {
+                        id,
+                        old: old_link,
+                        new: 1,
+                    }];
+                    if new != old {
+                        cmds.push(EditCommand::SetEntityContents { id, old, new });
+                    }
+                    self.with_level(|history, level| history.apply_many(level, cmds));
+                } else if new != old {
+                    self.apply_edit(EditCommand::SetEntityContents { id, old, new });
+                }
+            }
+            UiAction::MakerInspContentsDelta(delta) => {
+                let Some((id, old)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.contents))
+                else {
+                    return;
+                };
+                let ContainedItem::Glimmers(n) = old else {
+                    return;
+                };
+                let new = ContainedItem::Glimmers((n as i32 + delta).clamp(1, 20) as u8);
+                if new != old {
+                    self.apply_edit(EditCommand::SetEntityContents { id, old, new });
+                }
+            }
+            UiAction::MakerInspEditSignText => {
+                if let Some((id, text)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.sign_text.clone()))
+                {
+                    self.menus.sign_editor_open = true;
+                    self.menus.sign_editor_id = id;
+                    self.menus.sign_editor_text = text;
+                }
+            }
+            UiAction::MakerInspSetSignText(text) => {
+                if !self.menus.sign_editor_open {
+                    return;
+                }
+                let id = self.menus.sign_editor_id;
+                let changed = self
+                    .with_level(|history, level| {
+                        let Some(e) = level.entity_by_id(id) else {
+                            return false;
+                        };
+                        let old = e.sign_text.clone();
+                        let new: String =
+                            text.chars().take(rustbox_format::MAX_SIGN_TEXT).collect();
+                        if new != old {
+                            history.apply(level, EditCommand::SetEntitySignText { id, old, new });
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if changed {
+                    self.announce("Sign text updated");
+                }
+                self.menus.sign_editor_open = false;
+                self.menus.sign_editor_text.clear();
+            }
+            UiAction::MakerInspCancelSignText => {
+                self.menus.sign_editor_open = false;
+                self.menus.sign_editor_text.clear();
+            }
+            UiAction::MakerInspTrackCycle => {
+                let Some((id, old)) = self
+                    .menus
+                    .selected_entity_data
+                    .as_ref()
+                    .map(|e| (e.id, e.track))
+                else {
+                    return;
+                };
+                self.with_level(|history, level| {
+                    let new = match old {
+                        Some(_) => None,
+                        None => {
+                            let mut ids =
+                                level.data.tracks.iter().map(|t| t.id).collect::<Vec<_>>();
+                            ids.sort();
+                            ids.first().copied()
+                        }
+                    };
+                    if new != old {
+                        history.apply(level, EditCommand::SetEntityTrack { id, old, new });
+                    }
+                });
+            }
+            UiAction::MakerInspDeleteEntity => {
+                let Some(id) = self.menus.selected_entity_data.as_ref().map(|e| e.id) else {
+                    return;
+                };
+                self.with_level(|history, level| {
+                    if let Some(entity) = level.entity_by_id(id).cloned() {
+                        history.apply(level, EditCommand::RemoveEntity { entity });
+                    }
+                });
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    sim.world.resource_mut::<SelectedEntity>().0 = None;
+                }
+            }
+            UiAction::MakerInspTrackModeToggle => {
+                let Some(id) = self.menus.active_track_data.as_ref().map(|t| t.id) else {
+                    return;
+                };
+                self.with_level(|history, level| {
+                    let Some(t) = level.track(id) else {
+                        return;
+                    };
+                    let old = t.mode;
+                    let new = match old {
+                        TrackMode::PingPong => TrackMode::Loop,
+                        TrackMode::Loop => TrackMode::PingPong,
+                    };
+                    history.apply(
+                        level,
+                        EditCommand::SetTrackMode {
+                            track_id: id,
+                            old,
+                            new,
+                        },
+                    );
+                });
+            }
+            UiAction::MakerInspTrackSpeedDelta(delta) => {
+                let Some((id, old)) = self
+                    .menus
+                    .active_track_data
+                    .as_ref()
+                    .map(|t| (t.id, t.speed))
+                else {
+                    return;
+                };
+                let new = (old + delta).clamp(0.5, 10.0);
+                if (new - old).abs() > 1e-4 {
+                    self.apply_edit(EditCommand::SetTrackSpeed {
+                        track_id: id,
+                        old,
+                        new,
+                    });
+                }
+            }
+            UiAction::MakerInspTrackReverse => {
+                let Some(id) = self.menus.active_track_data.as_ref().map(|t| t.id) else {
+                    return;
+                };
+                self.with_level(|history, level| {
+                    if level.track(id).is_some() {
+                        history.apply(level, EditCommand::ReverseTrackPoints { track_id: id });
+                    }
+                });
+            }
+            UiAction::MakerInspTrackDelete => {
+                let Some(id) = self.menus.active_track_data.as_ref().map(|t| t.id) else {
+                    return;
+                };
+                self.with_level(|history, level| {
+                    if let Some(track) = level.track(id).cloned() {
+                        let detached = maker::commands::detached_for(level, id);
+                        history.apply(level, EditCommand::DeleteTrack { track, detached });
+                    }
+                });
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    sim.world.resource_mut::<ActiveTrack>().0 = None;
+                }
+            }
         }
+    }
+
+    fn apply_edit(&self, cmd: EditCommand) {
+        self.with_level(|history, level| history.apply(level, cmd));
+    }
+
+    fn with_level<R>(
+        &self,
+        f: impl FnOnce(&mut CommandHistory, &mut LevelDocument) -> R,
+    ) -> Option<R> {
+        let mut sim = self.sim.try_borrow_mut().ok()?;
+        let mut world = self.world.try_borrow_mut().ok()?;
+        let mut level = sim.world.resource_mut::<LevelDocument>();
+        Some(f(&mut world.history, &mut level))
+    }
+
+    fn refresh_level_slots(&mut self) {
+        if let Ok(sim) = self.sim.try_borrow() {
+            let store = sim.world.resource::<storage::LevelStorage>();
+            self.menus.level_slots = storage::list_slots(store);
+        }
+    }
+
+    fn undo_once(&mut self) {
+        {
+            let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                return;
+            };
+            let Ok(mut world) = self.world.try_borrow_mut() else {
+                return;
+            };
+            let mut level = sim.world.resource_mut::<LevelDocument>();
+            world.undo(&mut level);
+        }
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            edit_ops::validate_refs(&mut sim.world);
+        }
+    }
+
+    fn redo_once(&mut self) {
+        {
+            let Ok(mut sim) = self.sim.try_borrow_mut() else {
+                return;
+            };
+            let Ok(mut world) = self.world.try_borrow_mut() else {
+                return;
+            };
+            let mut level = sim.world.resource_mut::<LevelDocument>();
+            world.redo(&mut level);
+        }
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            edit_ops::validate_refs(&mut sim.world);
+        }
+    }
+
+    fn brush_cycle_shape(&self) -> String {
+        let Ok(mut world) = self.world.try_borrow_mut() else {
+            return String::new();
+        };
+        let idx = ALL_BLOCK_SHAPES
+            .iter()
+            .position(|s| *s == world.brush.shape)
+            .unwrap_or(0);
+        world.brush.shape = ALL_BLOCK_SHAPES[(idx + 1) % ALL_BLOCK_SHAPES.len()];
+        format!("Block shape: {}", world.brush.shape.name())
+    }
+
+    fn brush_rotate_block(&self) -> String {
+        let Ok(mut world) = self.world.try_borrow_mut() else {
+            return String::new();
+        };
+        world.brush.rot = (world.brush.rot.wrapping_add(1)) % 4;
+        format!("Block rotation: {}°", (world.brush.rot as u16) * 90)
+    }
+
+    fn brush_toggle_waterlog(&self) -> String {
+        let Ok(mut world) = self.world.try_borrow_mut() else {
+            return String::new();
+        };
+        world.brush.waterlogged = !world.brush.waterlogged;
+        if world.brush.waterlogged {
+            "Waterlogged: on (blocks fill their cell with water)".to_string()
+        } else {
+            "Waterlogged: off".to_string()
+        }
+    }
+
+    fn brush_cycle_link(&self) -> String {
+        let Ok(mut sim) = self.sim.try_borrow_mut() else {
+            return String::new();
+        };
+        let mut ch = sim.world.resource_mut::<ActiveLinkChannel>();
+        ch.0 = ch.0 % 9 + 1;
+        format!("Link channel: {}", ch.0)
     }
 
     fn confirm_delete(&mut self, key: &str) {
@@ -1149,7 +1518,9 @@ impl App {
                         return;
                     };
                     sim.world.resource_mut::<SelectedEntity>().0 = None;
+                    sim.world.resource_mut::<ActiveTrack>().0 = None;
                     let ui = &mut sim.world.resource_mut::<win::MakerUi>();
+                    ui.current_key = Some(name.clone());
                     ui.goal_latched = false;
                     if play {
                         ui.play_timer = 0.0;
@@ -1212,6 +1583,11 @@ impl App {
         if self.menus.phase != menus::AppState::InGame || !edges.contains(&PhysicalKey::Escape) {
             return;
         }
+        if self.menus.sign_editor_open {
+            self.menus.sign_editor_open = false;
+            self.menus.sign_editor_text.clear();
+            return;
+        }
         let Ok(mut sim) = self.sim.try_borrow_mut() else {
             return;
         };
@@ -1225,6 +1601,9 @@ impl App {
                 self.menus.overlay = menus::OverlayMenu::None;
                 sim.world.resource_mut::<Paused>().0 = false;
             }
+            menus::OverlayMenu::LoadLevel | menus::OverlayMenu::PartPicker => {
+                self.menus.overlay = menus::OverlayMenu::None;
+            }
             _ => {}
         }
     }
@@ -1233,6 +1612,7 @@ impl App {
         let modal = self.menus.overlay != menus::OverlayMenu::None
             || self.menus.phase != menus::AppState::InGame
             || self.menus.sign_dialog_open
+            || self.menus.sign_editor_open
             || self.menus.keyboard_captured;
         if let Ok(mut sim) = self.sim.try_borrow_mut() {
             let mut capture = sim.world.resource_mut::<InputCapture>();
@@ -1245,10 +1625,61 @@ impl App {
         let Ok(sim) = self.sim.try_borrow() else {
             return;
         };
-        let ui = sim.world.resource::<win::MakerUi>();
-        self.menus.sign_dialog_open = ui.sign_dialog_open;
-        self.menus.sign_dialog_lines = ui.sign_dialog_lines.clone();
+        {
+            let ui = sim.world.resource::<win::MakerUi>();
+            self.menus.sign_dialog_open = ui.sign_dialog_open;
+            self.menus.sign_dialog_lines = ui.sign_dialog_lines.clone();
+            self.menus.maker_status = ui.status.clone();
+            self.menus.play_time_secs = ui.play_timer;
+            self.menus.deaths = ui.deaths;
+            self.menus.glimmers_collected = ui.glimmers_collected;
+            self.menus.glimmers_total = ui.glimmers_total;
+        }
         self.menus.maker_mode_edit = *sim.world.resource::<MakerMode>() == MakerMode::Edit;
+        self.menus.brush_tab = match *sim.world.resource::<BrushTab>() {
+            BrushTab::Blocks => 0,
+            BrushTab::Entities => 1,
+            BrushTab::Tracks => 2,
+        };
+        self.menus.selected_entity =
+            maker::palette::entity_index(sim.world.resource::<SelectedEntityKind>().0);
+        self.menus.link_channel = sim.world.resource::<ActiveLinkChannel>().0;
+        self.menus.mirror = sim.world.resource::<MirrorMode>().0;
+        {
+            let stats = sim.world.resource::<maker::limits::LevelStats>();
+            self.menus.limit_blocks = stats.blocks;
+            self.menus.limit_entities = stats.entities;
+            self.menus.limit_tracks = stats.tracks;
+            self.menus.limit_vertices = stats.estimated_vertices;
+            self.menus.limit_warning = stats.warning;
+            self.menus.limit_over = stats.over_limit;
+        }
+        {
+            let level = sim.world.resource::<LevelDocument>();
+            self.menus.level_name = level.data.name.clone();
+            let sel = sim.world.resource::<SelectedEntity>().0;
+            self.menus.selected_entity_data = sel.and_then(|id| level.entity_by_id(id)).cloned();
+            let track = sim.world.resource::<ActiveTrack>().0;
+            self.menus.active_track_data = track.and_then(|id| level.track(id)).cloned();
+        }
+        {
+            let Ok(view) = self.world.try_borrow() else {
+                return;
+            };
+            self.menus.selected_block = maker::palette::block_index(view.brush.kind);
+            self.menus.brush_shape = view.brush.shape as u8;
+            self.menus.brush_rot = view.brush.rot;
+            self.menus.waterlogged = view.brush.waterlogged;
+            self.menus.can_undo = !view.history.undo.is_empty();
+            self.menus.can_redo = !view.history.redo.is_empty();
+        }
+        if let Some(p) = sim.world.get::<Player>(self.player) {
+            self.menus.player_armor = p.armor;
+            self.menus.player_keys = p.keys;
+        } else {
+            self.menus.player_armor = 0;
+            self.menus.player_keys = [0; 10];
+        }
     }
 
     fn set_paused(&self, paused: bool) {
@@ -1269,22 +1700,10 @@ impl App {
         if !ctrl || (!edges.contains(&PhysicalKey::KeyZ) && !edges.contains(&PhysicalKey::KeyY)) {
             return;
         }
-        {
-            let Ok(mut sim) = self.sim.try_borrow_mut() else {
-                return;
-            };
-            let Ok(mut world) = self.world.try_borrow_mut() else {
-                return;
-            };
-            let mut level = sim.world.resource_mut::<LevelDocument>();
-            if edges.contains(&PhysicalKey::KeyY) {
-                world.redo(&mut level);
-            } else {
-                world.undo(&mut level);
-            }
-        }
-        if let Ok(mut sim) = self.sim.try_borrow_mut() {
-            edit_ops::validate_refs(&mut sim.world);
+        if edges.contains(&PhysicalKey::KeyY) {
+            self.redo_once();
+        } else {
+            self.undo_once();
         }
     }
 
@@ -1451,15 +1870,8 @@ impl App {
         }
 
         if edge(PhysicalKey::KeyL) {
-            let channel = {
-                let Ok(mut sim) = self.sim.try_borrow_mut() else {
-                    return;
-                };
-                let mut ch = sim.world.resource_mut::<ActiveLinkChannel>();
-                ch.0 = ch.0 % 9 + 1;
-                ch.0
-            };
-            self.announce(format!("Link channel: {channel}"));
+            let msg = self.brush_cycle_link();
+            self.announce(msg);
         }
 
         if tab == BrushTab::Blocks {
@@ -1511,34 +1923,14 @@ impl App {
                 }
             }
             let mut status: Option<String> = None;
-            if edge(PhysicalKey::KeyR)
-                && let Ok(mut world) = self.world.try_borrow_mut()
-            {
-                world.brush.rot = (world.brush.rot.wrapping_add(1)) % 4;
-                status = Some(format!(
-                    "Block rotation: {}°",
-                    (world.brush.rot as u16) * 90
-                ));
+            if edge(PhysicalKey::KeyR) {
+                status = Some(self.brush_rotate_block());
             }
-            if edge(PhysicalKey::KeyT)
-                && let Ok(mut world) = self.world.try_borrow_mut()
-            {
-                let idx = ALL_BLOCK_SHAPES
-                    .iter()
-                    .position(|s| *s == world.brush.shape)
-                    .unwrap_or(0);
-                world.brush.shape = ALL_BLOCK_SHAPES[(idx + 1) % ALL_BLOCK_SHAPES.len()];
-                status = Some(format!("Block shape: {}", world.brush.shape.name()));
+            if edge(PhysicalKey::KeyT) {
+                status = Some(self.brush_cycle_shape());
             }
-            if edge(PhysicalKey::KeyU)
-                && let Ok(mut world) = self.world.try_borrow_mut()
-            {
-                world.brush.waterlogged = !world.brush.waterlogged;
-                status = Some(if world.brush.waterlogged {
-                    "Waterlogged: on (blocks fill their cell with water)".to_string()
-                } else {
-                    "Waterlogged: off".to_string()
-                });
+            if edge(PhysicalKey::KeyU) {
+                status = Some(self.brush_toggle_waterlog());
             }
             if let Some(status) = status {
                 self.announce(status);
@@ -1886,13 +2278,6 @@ fn ground() -> repame_view3d::MeshGroup {
         }
     }
     group
-}
-
-fn line(text: impl Into<String>) -> View {
-    Text(text.into())
-        .size(Sp(16.0))
-        .color(Color::from_rgba(255, 255, 255, 255))
-        .single_line()
 }
 
 fn player_box(player: &Player, tf: &PlayerTransform) -> repame_view3d::MeshGroup {

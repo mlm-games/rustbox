@@ -2,7 +2,9 @@ mod action;
 mod browser;
 mod components;
 mod dialogs;
+mod editor;
 mod home;
+pub mod icons;
 mod root;
 mod style;
 
@@ -10,9 +12,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::maker::catalog::{LevelSummary, filter_catalog};
+use crate::maker::entity_data::EntityData;
 use crate::maker::level::LevelTag;
+use crate::maker::track::TrackData;
 
 pub use action::UiAction;
+pub use editor::{ingame_hud, part_picker};
 pub use root::compose_root;
 
 pub type ActionQueue = Arc<Mutex<Vec<UiAction>>>;
@@ -32,11 +37,12 @@ pub enum OverlayMenu {
     None,
     Pause,
     Browse,
+    LoadLevel,
+    PartPicker,
 }
 
-/// Menu-facing app snapshot: phase, overlays and the local browser state.
-/// Trims main's `SharedUi` plus `MakerUi`'s browse fields down to the
-/// ported screens (home, local level browser, pause, sign dialog).
+/// Menu-facing app snapshot: phase, overlays, the local level browser and the
+/// maker HUD state (toolbar, stats, inspector selection, sign editor).
 #[derive(Default)]
 pub struct MenuState {
     pub phase: AppState,
@@ -47,6 +53,43 @@ pub struct MenuState {
     pub sign_dialog_open: bool,
     pub sign_dialog_lines: Vec<String>,
     pub translations: HashMap<String, String>,
+    // Maker toolbar / HUD
+    pub maker_status: String,
+    pub level_name: String,
+    pub level_slots: Vec<String>,
+    pub limit_blocks: u32,
+    pub limit_entities: u32,
+    pub limit_tracks: u32,
+    pub limit_vertices: u32,
+    pub limit_warning: bool,
+    pub limit_over: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub brush_tab: u8,
+    pub selected_block: u8,
+    pub selected_entity: u8,
+    pub brush_shape: u8,
+    pub brush_rot: u8,
+    pub waterlogged: bool,
+    pub mirror: u8,
+    pub link_channel: u32,
+    pub block_icon_handles: Vec<u64>,
+    pub entity_icon_handles: Vec<u64>,
+    // Inspector selection snapshots
+    pub selected_entity_data: Option<EntityData>,
+    pub active_track_data: Option<TrackData>,
+    // Sign text editor (Edit mode): id/text track the open field.
+    pub sign_editor_open: bool,
+    pub sign_editor_id: u32,
+    pub sign_editor_text: String,
+    // Live play stats
+    pub play_time_secs: f32,
+    pub deaths: u32,
+    pub glimmers_collected: u32,
+    pub glimmers_total: u32,
+    pub player_armor: u8,
+    pub player_keys: [u8; 10],
+    // Local level browser
     pub browse_levels: Vec<LevelSummary>,
     pub browse_visible: Vec<LevelSummary>,
     pub browse_query: String,

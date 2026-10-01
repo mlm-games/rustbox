@@ -36,6 +36,20 @@ pub mod tok {
         RColor::from_rgba(110, 114, 130, 255)
     }
 
+    pub fn bg_status() -> RColor {
+        RColor::from_rgba(10, 12, 18, 245)
+    }
+
+    pub fn danger() -> RColor {
+        RColor::from_rgba(220, 72, 72, 255)
+    }
+    pub fn warn() -> RColor {
+        RColor::from_rgba(240, 180, 64, 255)
+    }
+    pub fn ok() -> RColor {
+        RColor::from_rgba(80, 200, 120, 255)
+    }
+
     pub const R_MD: f32 = 12.0;
     pub const R_PILL: f32 = 20.0;
 }

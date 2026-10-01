@@ -17,6 +17,7 @@ pub mod level_file;
 pub mod level_view;
 pub mod limits;
 pub mod mode;
+pub mod palette;
 pub mod player;
 pub mod props;
 pub mod rapier;
