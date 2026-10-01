@@ -713,7 +713,7 @@ impl LevelView {
         self.ghosts.retain(|ghost| ghost.age < GHOST_LIFE_SECS);
     }
 
-    fn sync_source(&mut self, level: &LevelDocument) {
+    pub fn sync_source(&mut self, level: &LevelDocument) {
         self.streamer.set_source(level.clone());
     }
 }

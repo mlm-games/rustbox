@@ -1,11 +1,9 @@
-use bevy::prelude::*;
+use bevy_ecs::prelude::Resource;
 
-use rustbox_format::file::{FORMAT_VERSION, LevelFile, LevelFileV3, upgrade_v3};
 use rustbox_format::level::LevelData;
 
 use super::commands::CommandHistory;
 use super::level::LevelDocument;
-use super::mode::MakerMode;
 
 pub const AUTOSAVE_KEY: &str = "level_autosave";
 pub const COLLECTION_PREFIX: &str = "__col_";
@@ -16,7 +14,7 @@ pub fn list_slots(storage: &LevelStorage) -> Vec<String> {
     match storage.0.list() {
         Ok(v) => v.into_iter().filter(|k| !k.starts_with("__")).collect(),
         Err(e) => {
-            bevy::log::warn!("Failed to list level slots: {e}");
+            eprintln!("Failed to list level slots: {e}");
             Vec::new()
         }
     }
@@ -29,7 +27,7 @@ pub fn list_collection(storage: &LevelStorage) -> Vec<String> {
             .filter(|k| k.starts_with(COLLECTION_PREFIX))
             .collect(),
         Err(e) => {
-            bevy::log::warn!("Failed to list collection: {e}");
+            eprintln!("Failed to list collection: {e}");
             Vec::new()
         }
     }
@@ -100,16 +98,6 @@ impl Default for LevelStorage {
     }
 }
 
-impl LevelStorage {
-    /// In-memory backend for hermetic tests (no filesystem access).
-    #[cfg(test)]
-    pub fn for_testing() -> Self {
-        Self(Box::new(SaveStoreBackend::<
-            game_utils::storage::MemoryStorage,
-        >::new_for_testing()))
-    }
-}
-
 fn sanitize_key(key: &str) -> String {
     let base: String = key
         .chars()
@@ -169,16 +157,6 @@ impl SaveStoreBackend<game_utils::storage::FsStorage> {
         Self {
             dir: levels_dir(),
             storage: game_utils::storage::FsStorage,
-        }
-    }
-}
-
-#[cfg(test)]
-impl SaveStoreBackend<game_utils::storage::MemoryStorage> {
-    pub fn new_for_testing() -> Self {
-        Self {
-            dir: std::path::PathBuf::from("/tmp/rustbox-levels-test"),
-            storage: game_utils::storage::MemoryStorage::new(),
         }
     }
 }
@@ -303,38 +281,4 @@ pub fn load_level(
     let data = deserialize_level(&text)?;
     apply_level_data(level, history, data);
     Ok(true)
-}
-
-pub fn save_load_hotkeys(
-    keys: Res<ButtonInput<KeyCode>>,
-    capture: Res<super::mode::InputCapture>,
-    storage: Res<LevelStorage>,
-    mode: Res<MakerMode>,
-    mut level: ResMut<LevelDocument>,
-    mut history: ResMut<CommandHistory>,
-) {
-    if capture.ui_wants_keyboard {
-        return;
-    }
-    if *mode != MakerMode::Edit {
-        return;
-    }
-    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-    if !ctrl {
-        return;
-    }
-
-    if keys.just_pressed(KeyCode::KeyS) {
-        match save_level(&storage, &mut level, AUTOSAVE_KEY) {
-            Ok(()) => info!("Level saved"),
-            Err(e) => error!("Save failed: {e}"),
-        }
-    }
-    if keys.just_pressed(KeyCode::KeyL) {
-        match load_level(&storage, &mut level, &mut history, AUTOSAVE_KEY) {
-            Ok(true) => info!("Level loaded"),
-            Ok(false) => warn!("No saved level found"),
-            Err(e) => error!("Load failed: {e}"),
-        }
-    }
 }

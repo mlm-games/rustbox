@@ -19,6 +19,7 @@ pub mod mode;
 pub mod player;
 pub mod props;
 pub mod rapier;
+pub mod storage;
 pub mod track;
 pub mod win;
 

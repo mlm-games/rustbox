@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::schedule::IntoScheduleConfigs;
+use bevy_ecs::world::Mut;
 use glam::{IVec3, Vec3};
 use maker::block::{ALL_BLOCK_SHAPES, BlockKind};
 use maker::camera::{CameraRig, play_camera_follow};
@@ -38,7 +39,7 @@ use maker::player::{
 };
 use maker::props::RuntimeSolids;
 use maker::track::{ActiveTrack, TrackMode};
-use maker::{Paused, edit_ops, gizmos, interaction, not_paused, rapier, win};
+use maker::{Paused, edit_ops, gizmos, interaction, not_paused, rapier, storage, win};
 use repame_shell::{Sim, SimTime, Staging};
 use repame_view3d::{BatchDesc, Frame3d, GeomHandle, OrbitCamera, View3dEvent, Viewport3d};
 use repose_core::input::{
@@ -99,6 +100,7 @@ impl App {
         sim.world.insert_resource(CameraRig::default());
         sim.world.insert_resource(Paused(false));
         sim.world.insert_resource(win::MakerUi::default());
+        sim.world.insert_resource(storage::LevelStorage::default());
         sim.world.insert_resource(PulseClock::default());
         sim.world.insert_resource(InteractionMemory::default());
         sim.world.insert_resource(ForcedMotionRequests::default());
@@ -997,6 +999,51 @@ impl App {
         let shift = sched.held_keys.contains(&PhysicalKey::ShiftLeft)
             || sched.held_keys.contains(&PhysicalKey::ShiftRight);
         let edge = |key: PhysicalKey| edges.contains(&key);
+
+        if kb_ok && ctrl && edge(PhysicalKey::KeyS) {
+            let outcome = match self.sim.try_borrow_mut() {
+                Ok(mut sim) => sim
+                    .world
+                    .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                        let store = world.resource::<storage::LevelStorage>();
+                        storage::save_level(store, &mut level, storage::AUTOSAVE_KEY)
+                    }),
+                Err(_) => return,
+            };
+            match outcome {
+                Ok(()) => self.announce("Level saved"),
+                Err(e) => self.announce(format!("Save failed: {e}")),
+            }
+        }
+        if kb_ok && ctrl && edge(PhysicalKey::KeyL) {
+            let outcome = match self.sim.try_borrow_mut() {
+                Ok(mut sim) => sim
+                    .world
+                    .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                        let store = world.resource::<storage::LevelStorage>();
+                        let Ok(mut view) = self.world.try_borrow_mut() else {
+                            return Err(anyhow::anyhow!("view busy"));
+                        };
+                        view.release_stroke(&mut level);
+                        let res = storage::load_level(
+                            store,
+                            &mut level,
+                            &mut view.history,
+                            storage::AUTOSAVE_KEY,
+                        );
+                        if matches!(res, Ok(true)) {
+                            view.sync_source(&level);
+                        }
+                        res
+                    }),
+                Err(_) => return,
+            };
+            match outcome {
+                Ok(true) => self.announce("Level loaded"),
+                Ok(false) => self.announce("No saved level found"),
+                Err(e) => self.announce(format!("Load failed: {e}")),
+            }
+        }
 
         if paste_on {
             if edge(PhysicalKey::Escape) {
