@@ -73,6 +73,8 @@ pub fn title_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
     let tr = &st.translations;
     let a_new = actions.clone();
     let a_browse = actions.clone();
+    let a_campaign = actions.clone();
+    let a_online = actions.clone();
     let a_quit = actions.clone();
     let a_settings = actions.clone();
     let a_credits = actions.clone();
@@ -97,6 +99,17 @@ pub fn title_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
             }),
             half_card("My Worlds", Symbols::FOLDER_OPEN, move || {
                 push(&a_browse, UiAction::BrowseOpen)
+            }),
+        ]),
+    );
+    hero.push(spacer(sp::MD));
+    hero.push(
+        Row(Modifier::new().gap(Dp(sp::MD)).fill_max_width()).children(vec![
+            half_card("Campaign", Symbols::FLAG, move || {
+                push(&a_campaign, UiAction::OpenLevelSelect)
+            }),
+            half_card("Community", Symbols::PUBLIC, move || {
+                push(&a_online, UiAction::OnlineOpen)
             }),
         ]),
     );

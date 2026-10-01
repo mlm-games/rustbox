@@ -38,6 +38,7 @@ use maker::mode::{
     MakerMode, MirrorMode, PastePreview, PlaceYaw, SelectedEntity, SelectedEntityKind,
     SelectionBoxStart, SelectionSet,
 };
+use maker::online::LevelMeta;
 use maker::player::{
     MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, Trauma,
     clear_pressed_latch, latch_play_presses, player_controller, spawn_player, sync_mode,
@@ -79,6 +80,7 @@ struct App {
     last: Instant,
     menu_actions: menus::ActionQueue,
     menus: menus::MenuState,
+    online: maker::online::OnlineRuntime,
     save_manager: SaveManager,
     save: save::SaveData,
     locale: LocaleResources,
@@ -113,6 +115,14 @@ impl App {
         sim.world.insert_resource(Paused(false));
         sim.world.insert_resource(win::MakerUi::default());
         sim.world.insert_resource(storage::LevelStorage::default());
+        let mut campaign = maker::campaign::CampaignProgress::default();
+        {
+            let store = sim.world.resource::<storage::LevelStorage>();
+            maker::campaign::load_campaign_progress(store, &mut campaign);
+        }
+        sim.world
+            .insert_resource(maker::campaign::LevelSource::Editor);
+        sim.world.insert_resource(campaign);
         sim.world.insert_resource(PulseClock::default());
         sim.world.insert_resource(InteractionMemory::default());
         sim.world.insert_resource(ForcedMotionRequests::default());
@@ -181,6 +191,7 @@ impl App {
             looked: Rc::new(Cell::new(false)),
             last: Instant::now(),
             menu_actions: Default::default(),
+            online: Default::default(),
             menus: Default::default(),
             save_manager,
             save,
@@ -214,6 +225,7 @@ impl App {
         );
 
         self.drain_menu_actions(&edges);
+        self.pump_online();
         self.tick_phase(dt.as_secs_f32());
         self.update_input_capture();
 
@@ -873,6 +885,280 @@ impl App {
         }
     }
 
+    fn pump_online(&mut self) {
+        let mut notes: Vec<String> = Vec::new();
+
+        // Creator identity: created on first run, replaced by a recovery-key
+        // import; copied into the request config so every call carries it.
+        if self.menus.creator_recovery_key.is_empty() {
+            let res = {
+                let Ok(sim) = self.sim.try_borrow() else {
+                    return;
+                };
+                let store = sim.world.resource::<storage::LevelStorage>();
+                maker::creator::load_or_create(store)
+            };
+            match res {
+                Ok(id) => {
+                    self.menus.creator_recovery_key = id.recovery_key;
+                    self.menus.creator_device_id = id.device_id;
+                }
+                Err(e) => notes.push(format!("Creator identity unavailable: {e}")),
+            }
+        }
+        if !self.menus.creator_import_code.trim().is_empty() {
+            let code = self.menus.creator_import_code.trim().to_string();
+            self.menus.creator_import_code.clear();
+            let res = {
+                let Ok(sim) = self.sim.try_borrow() else {
+                    return;
+                };
+                let store = sim.world.resource::<storage::LevelStorage>();
+                maker::creator::import_recovery_key(store, &code)
+            };
+            match res {
+                Ok(id) => {
+                    self.menus.creator_recovery_key = id.recovery_key;
+                    self.menus.creator_device_id = id.device_id;
+                    notes.push("Recovery key imported, restoring your levels...".to_string());
+                    self.menus
+                        .online_pending
+                        .push(maker::online::OnlineRequest::Me);
+                    self.menus
+                        .online_pending
+                        .push(maker::online::OnlineRequest::MyLevels);
+                }
+                Err(e) => notes.push(format!("Recovery key import failed: {e}")),
+            }
+        }
+        if self.online.config.recovery_key != self.menus.creator_recovery_key {
+            self.online.config.recovery_key = self.menus.creator_recovery_key.clone();
+        }
+        if self.online.config.device_id != self.menus.creator_device_id {
+            self.online.config.device_id = self.menus.creator_device_id.clone();
+        }
+        let token = self.menus.online_token.trim().to_string();
+        if self.online.config.token != token {
+            self.online.config.token = token;
+        }
+
+        // Dispatch queued requests; downloads answer from cache when possible
+        // (plays always go to the network so `count=1` is honored).
+        for req in std::mem::take(&mut self.menus.online_pending) {
+            if let maker::online::OnlineRequest::Download { play, .. } = &req
+                && *play
+            {
+                maker::online::dispatch(&self.online.config, &self.online.tx, req);
+                continue;
+            }
+            if let maker::online::OnlineRequest::Download { meta, play } = &req {
+                if let Some(data) = self.online.cache.get(&meta.id).cloned() {
+                    if !play {
+                        let preview = maker::thumbnail::render_preview(
+                            &data,
+                            maker::catalog::PREVIEW_COLS,
+                            maker::catalog::PREVIEW_ROWS,
+                        );
+                        self.menus.online_preview_pending.retain(|x| *x != meta.id);
+                        self.menus.online_previews.insert(meta.id, preview);
+                        self.menus.touch_online_preview_lru(meta.id);
+                    }
+                    if *play {
+                        self.apply_online_download(meta, data);
+                    }
+                    continue;
+                }
+            }
+            maker::online::dispatch(&self.online.config, &self.online.tx, req);
+        }
+
+        // Drain completed fetch callbacks (callbacks fire on background
+        // threads; applying happens here on the main thread).
+        let mut events = Vec::new();
+        while let Ok(ev) = self.online.rx.try_recv() {
+            events.push(ev);
+        }
+        for ev in events {
+            self.handle_online_event(ev, &mut notes);
+        }
+
+        for n in notes {
+            self.announce(n);
+        }
+    }
+
+    /// Swap the live document to a downloaded level and start playing it.
+    fn apply_online_download(&mut self, meta: &LevelMeta, data: maker::level::LevelData) {
+        let outcome = match self.sim.try_borrow_mut() {
+            Ok(mut sim) => sim
+                .world
+                .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                    let Ok(mut view) = self.world.try_borrow_mut() else {
+                        return Err(anyhow::anyhow!("view busy"));
+                    };
+                    view.release_stroke(&mut level);
+                    storage::apply_level_data(&mut level, &mut view.history, data);
+                    level.data.name = meta.name.clone();
+                    level.data.author = meta.author.clone();
+                    view.sync_source(&level);
+                    world.resource_mut::<SelectedEntity>().0 = None;
+                    world.resource_mut::<ActiveTrack>().0 = None;
+                    *world.resource_mut::<maker::campaign::LevelSource>() =
+                        maker::campaign::LevelSource::Imported;
+                    let ui = &mut world.resource_mut::<win::MakerUi>();
+                    ui.current_key = None;
+                    ui.goal_latched = false;
+                    ui.play_timer = 0.0;
+                    ui.deaths = 0;
+                    ui.clear_time_secs = 0.0;
+                    ui.clear_deaths = 0;
+                    ui.first_clear = false;
+                    ui.new_record = false;
+                    ui.player_is_author = false;
+                    ui.clear_pending = false;
+                    world.resource_mut::<Paused>().0 = false;
+                    *world.resource_mut::<MakerMode>() = MakerMode::Play;
+                    Ok(())
+                }),
+            Err(_) => return,
+        };
+        let _: anyhow::Result<()> = outcome;
+    }
+
+    fn handle_online_event(&mut self, ev: maker::online::OnlineEvent, notes: &mut Vec<String>) {
+        use maker::online::OnlineEvent;
+        match ev {
+            OnlineEvent::Listed(result) => match result {
+                Ok(resp) => {
+                    self.menus.online_loading = false;
+                    self.menus.online_total = resp.total;
+                    if self.menus.online_last_offset == 0 {
+                        self.menus.online_levels = resp.levels;
+                    } else {
+                        for m in resp.levels {
+                            if !self.menus.online_levels.iter().any(|x| x.id == m.id) {
+                                self.menus.online_levels.push(m);
+                            }
+                        }
+                    }
+                    self.menus.online_confirm_delete = None;
+                    self.menus.sort_online_levels();
+                    self.menus.reconcile_online_nav();
+                    let shown = self.menus.online_levels.len() as u64;
+                    let total = self.menus.online_total;
+                    notes.push(if shown < total {
+                        format!("Showing {shown} of {total} levels online")
+                    } else {
+                        format!("{total} levels online")
+                    });
+                }
+                Err(e) => {
+                    self.menus.online_loading = false;
+                    notes.push(format!("Browse failed: {e}"));
+                }
+            },
+            OnlineEvent::FetchedById { id, result } => match result {
+                Ok(meta) => {
+                    self.menus.online_loading = false;
+                    self.menus.online_levels = vec![meta];
+                    self.menus.online_total = 1;
+                    self.menus.online_last_offset = 0;
+                    self.menus.online_selected = Some(id);
+                    self.menus.online_confirm_delete = None;
+                    self.menus.sort_online_levels();
+                    self.menus.reconcile_online_nav();
+                    notes.push(format!("Found #{id}"));
+                }
+                Err(e) => {
+                    self.menus.online_loading = false;
+                    notes.push(format!("ID search ({id}): {e}"));
+                }
+            },
+            OnlineEvent::Uploaded(result) => match result {
+                Ok(resp) => notes.push(format!("Published as #{}", resp.id)),
+                Err(e) => notes.push(format!("Upload failed: {e}")),
+            },
+            OnlineEvent::Downloaded { meta, result, play } => match result {
+                Ok(data) => {
+                    let preview = maker::thumbnail::render_preview(
+                        &data,
+                        maker::catalog::PREVIEW_COLS,
+                        maker::catalog::PREVIEW_ROWS,
+                    );
+                    self.menus.online_preview_pending.retain(|x| *x != meta.id);
+                    self.menus.online_previews.insert(meta.id, preview);
+                    const MAX_CACHED_LEVELS: usize = 32;
+                    if self.online.cache.len() >= MAX_CACHED_LEVELS
+                        && !self.online.cache.contains_key(&meta.id)
+                        && let Some(old) = self.online.cache.keys().next().copied()
+                    {
+                        self.online.cache.remove(&old);
+                    }
+                    self.online.cache.insert(meta.id, data.clone());
+                    self.menus.touch_online_preview_lru(meta.id);
+                    if play {
+                        self.apply_online_download(&meta, data);
+                        notes.push(format!("Downloaded & playing: {}", meta.name));
+                    } else {
+                        notes.push(format!("Downloaded: {}", meta.name));
+                    }
+                }
+                Err(e) => {
+                    self.menus.online_preview_pending.retain(|x| *x != meta.id);
+                    notes.push(format!("Download failed: {e}"));
+                }
+            },
+            OnlineEvent::Liked { id, result } => match result {
+                Ok(()) => notes.push(format!("Liked #{id}")),
+                Err(e) => notes.push(format!("Like failed: {e}")),
+            },
+            OnlineEvent::Reported { id, result } => match result {
+                Ok(()) => notes.push(format!("Reported #{id} - thanks!")),
+                Err(e) => notes.push(format!("Report failed: {e}")),
+            },
+            OnlineEvent::Deleted { id, result } => match result {
+                Ok(()) => {
+                    self.online.cache.remove(&id);
+                    self.menus.online_previews.remove(&id);
+                    self.menus.online_preview_pending.retain(|x| *x != id);
+                    self.menus.online_preview_lru.retain(|x| *x != id);
+                    self.menus.online_levels.retain(|m| m.id != id);
+                    if self.menus.online_selected == Some(id) {
+                        self.menus.online_selected = None;
+                    }
+                    self.menus.online_confirm_delete = None;
+                    self.menus.reconcile_online_nav();
+                    notes.push(format!("Deleted #{id}"));
+                }
+                Err(e) => notes.push(format!("Delete failed: {e}")),
+            },
+            OnlineEvent::Me(result) => match result {
+                Ok(me) => {
+                    let used = me.uploads_used_this_week;
+                    let cap = used + me.uploads_remaining_this_week;
+                    self.menus.creator_quota_text = format!("{used}/{cap} uploads used this week");
+                }
+                Err(e) => self.menus.creator_quota_text = format!("Quota unknown ({e})"),
+            },
+            OnlineEvent::MyLevels(result) => match result {
+                Ok(resp) => {
+                    self.menus.online_levels = resp.levels;
+                    self.menus.online_total = resp.total;
+                    self.menus.online_last_offset = 0;
+                    self.menus.online_loading = false;
+                    self.menus.online_confirm_delete = None;
+                    self.menus.sort_online_levels();
+                    self.menus.reconcile_online_nav();
+                    notes.push(format!("{} of your levels online", resp.total));
+                }
+                Err(e) => {
+                    self.menus.online_loading = false;
+                    notes.push(format!("My levels failed: {e}"));
+                }
+            },
+        }
+    }
+
     fn drain_menu_actions(&mut self, edges: &[PhysicalKey]) {
         let batch = {
             let Ok(mut queue) = self.menu_actions.lock() else {
@@ -886,9 +1172,20 @@ impl App {
         for action in batch {
             self.apply_menu_action(action);
         }
+        if let Ok(mut sim) = self.sim.try_borrow_mut() {
+            let mut ui = sim.world.resource_mut::<win::MakerUi>();
+            if ui.clear_pending {
+                ui.clear_pending = false;
+                drop(ui);
+                self.menus.overlay = menus::OverlayMenu::LevelClear;
+            }
+        }
         if !matches!(
             self.menus.overlay,
-            menus::OverlayMenu::Browse | menus::OverlayMenu::Share | menus::OverlayMenu::LevelInfo
+            menus::OverlayMenu::Browse
+                | menus::OverlayMenu::Online
+                | menus::OverlayMenu::Share
+                | menus::OverlayMenu::LevelInfo
         ) && !self.menus.sign_editor_open
         {
             self.menus.keyboard_captured = false;
@@ -898,6 +1195,7 @@ impl App {
             && !matches!(
                 self.menus.overlay,
                 menus::OverlayMenu::Browse
+                    | menus::OverlayMenu::Online
                     | menus::OverlayMenu::Share
                     | menus::OverlayMenu::LevelInfo
             )
@@ -925,6 +1223,11 @@ impl App {
                     OverlayMenu::Settings | OverlayMenu::Credits | OverlayMenu::Share if paused => {
                         OverlayMenu::Pause
                     }
+                    OverlayMenu::LevelClear => {
+                        self.set_paused(false);
+                        self.set_mode(MakerMode::Edit);
+                        OverlayMenu::None
+                    }
                     _ => OverlayMenu::None,
                 };
             }
@@ -949,6 +1252,9 @@ impl App {
             }
             UiAction::OpenCredits => {
                 self.menus.overlay = OverlayMenu::Credits;
+            }
+            UiAction::OpenLevelSelect => {
+                self.menus.overlay = OverlayMenu::LevelSelect;
             }
             UiAction::SetMasterVol(v) => self.menus.master_vol = v.clamp(0.0, 1.0),
             UiAction::SetSfxVol(v) => self.menus.sfx_vol = v.clamp(0.0, 1.0),
@@ -982,6 +1288,19 @@ impl App {
                 self.locale.set_locale(&lang);
             }
             UiAction::BrowseAddToCollection => {
+                let bundled = {
+                    let Ok(sim) = self.sim.try_borrow() else {
+                        return;
+                    };
+                    matches!(
+                        *sim.world.resource::<maker::campaign::LevelSource>(),
+                        maker::campaign::LevelSource::Bundled(_)
+                    )
+                };
+                if bundled {
+                    self.announce("Remix bundled levels before saving.");
+                    return;
+                }
                 let res = {
                     let Ok(mut sim) = self.sim.try_borrow_mut() else {
                         return;
@@ -1091,6 +1410,8 @@ impl App {
                     sim.world.resource_mut::<win::MakerUi>().current_key = None;
                     sim.world.resource_mut::<SelectedEntity>().0 = None;
                     sim.world.resource_mut::<ActiveTrack>().0 = None;
+                    *sim.world.resource_mut::<maker::campaign::LevelSource>() =
+                        maker::campaign::LevelSource::Imported;
                 }
                 self.set_mode(MakerMode::Play);
                 self.announce("Level imported!");
@@ -1303,6 +1624,61 @@ impl App {
                     sim.world.resource_mut::<PlayIntent>().reset_pressed = true;
                 }
             }
+            UiAction::MakerDismissClear => {
+                self.menus.overlay = OverlayMenu::None;
+                self.set_paused(false);
+                self.set_mode(MakerMode::Edit);
+            }
+            UiAction::MakerRemix => {
+                self.menus.overlay = OverlayMenu::None;
+                self.set_paused(false);
+                if let Ok(mut sim) = self.sim.try_borrow_mut() {
+                    sim.world
+                        .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                            level.data.name = format!("Remix of {}", level.data.name);
+                            maker::commands::invalidate_verification(&mut level);
+                            *world.resource_mut::<maker::campaign::LevelSource>() =
+                                maker::campaign::LevelSource::Editor;
+                            world.resource_mut::<win::MakerUi>().current_key = None;
+                            world.resource_mut::<SelectedEntity>().0 = None;
+                            world.resource_mut::<ActiveTrack>().0 = None;
+                        });
+                }
+                self.set_mode(MakerMode::Edit);
+                self.announce("Remixing... level is yours now. Beat it to share!");
+            }
+            UiAction::PlayBundledLevel(i) => {
+                let Some(data) = maker::campaign::load_bundled(i as usize) else {
+                    return;
+                };
+                let name = data.name.clone();
+                let outcome = match self.sim.try_borrow_mut() {
+                    Ok(mut sim) => {
+                        sim.world
+                            .resource_scope(|world, mut level: Mut<LevelDocument>| {
+                                let Ok(mut view) = self.world.try_borrow_mut() else {
+                                    return Err(anyhow::anyhow!("view busy"));
+                                };
+                                view.release_stroke(&mut level);
+                                storage::apply_level_data(&mut level, &mut view.history, data);
+                                view.sync_source(&level);
+                                *world.resource_mut::<maker::campaign::LevelSource>() =
+                                    maker::campaign::LevelSource::Bundled(i as usize);
+                                world.resource_mut::<win::MakerUi>().current_key = None;
+                                world.resource_mut::<SelectedEntity>().0 = None;
+                                world.resource_mut::<ActiveTrack>().0 = None;
+                                Ok(())
+                            })
+                    }
+                    Err(_) => return,
+                };
+                if outcome.is_err() {
+                    return;
+                }
+                self.pending_mode = Some(MakerMode::Play);
+                self.begin_loading();
+                self.announce(format!("Playing: {name}"));
+            }
             UiAction::MakerCloseSignDialog => {
                 if let Ok(mut sim) = self.sim.try_borrow_mut() {
                     let ui = &mut sim.world.resource_mut::<win::MakerUi>();
@@ -1391,6 +1767,293 @@ impl App {
                 self.menus.browse_query.clear();
                 self.menus.browse_confirm_delete = None;
                 self.menus.reconcile_browse_nav();
+            }
+            UiAction::BrowsePublish(key) => {
+                let loaded = {
+                    let Ok(sim) = self.sim.try_borrow() else {
+                        return;
+                    };
+                    let store = sim.world.resource::<storage::LevelStorage>();
+                    store.0.load(&key)
+                };
+                let data = match loaded {
+                    Ok(Some(text)) => storage::deserialize_level(&text),
+                    Ok(None) => {
+                        self.announce("Level not found.");
+                        return;
+                    }
+                    Err(e) => Err(anyhow::anyhow!("Load failed: {e}")),
+                };
+                let data = match data {
+                    Ok(d) => d,
+                    Err(e) => {
+                        self.announce(format!("{e}"));
+                        return;
+                    }
+                };
+                if !data.is_verified {
+                    self.announce("Beat the level before publishing.");
+                    return;
+                }
+                let meta = rustbox_format::api::UploadMetadata {
+                    name: data.name.clone(),
+                    description: data.description.clone(),
+                    tags: data.tags.iter().map(|t| t.label().to_string()).collect(),
+                    format_version: rustbox_format::file::FORMAT_VERSION,
+                    game_version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Upload { meta, data });
+                self.announce("Uploading...");
+            }
+            UiAction::OnlineOpen => {
+                self.menus.browse_confirm_delete = None;
+                self.menus.online_confirm_delete = None;
+                let query = self.menus.online_query.clone();
+                self.menus.online_loading = true;
+                self.menus.online_last_offset = 0;
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::List {
+                        query,
+                        limit: 50,
+                        offset: 0,
+                    });
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Me);
+                self.menus.overlay = OverlayMenu::Online;
+                self.announce("Loading online levels...");
+            }
+            UiAction::OnlineRefresh => {
+                let query = self.menus.online_query.clone();
+                self.menus.online_loading = true;
+                self.menus.online_last_offset = 0;
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::List {
+                        query,
+                        limit: 50,
+                        offset: 0,
+                    });
+                self.announce("Loading online levels...");
+            }
+            UiAction::OnlineLoadMore => {
+                let offset = self.menus.online_levels.len() as u64;
+                if offset < self.menus.online_total && !self.menus.online_loading {
+                    let query = self.menus.online_query.clone();
+                    self.menus.online_loading = true;
+                    self.menus.online_last_offset = offset;
+                    self.menus
+                        .online_pending
+                        .push(maker::online::OnlineRequest::List {
+                            query,
+                            limit: 50,
+                            offset,
+                        });
+                    self.announce("Loading more levels...");
+                }
+            }
+            UiAction::OnlineSelect(id) => {
+                self.menus.online_selected = Some(id);
+                self.menus.online_confirm_delete = None;
+                self.menus.reconcile_online_nav();
+            }
+            UiAction::OnlineClearSelection => {
+                self.menus.online_selected = None;
+                self.menus.online_confirm_delete = None;
+            }
+            UiAction::OnlinePreview(id) => {
+                // Cap concurrent preview downloads so a 50-level grid doesn't
+                // stampede the network just to draw cards (LRU evicts later).
+                const MAX_PREVIEW_IN_FLIGHT: usize = 4;
+
+                if self.menus.online_previews.contains_key(&id)
+                    || self.menus.online_preview_pending.contains(&id)
+                    || self.menus.online_preview_pending.len() >= MAX_PREVIEW_IN_FLIGHT
+                {
+                    return;
+                }
+                let Some(meta) = self
+                    .menus
+                    .online_levels
+                    .iter()
+                    .find(|x| x.id == id)
+                    .cloned()
+                else {
+                    return;
+                };
+                self.menus.online_preview_pending.push(meta.id);
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Download { meta, play: false });
+            }
+            UiAction::OnlineSetShelf(shelf) => {
+                self.menus.online_shelf = shelf;
+                self.menus.online_confirm_delete = None;
+                self.menus.sort_online_levels();
+                self.menus.reconcile_online_nav();
+                if shelf == 3 {
+                    self.menus.online_loading = true;
+                    self.menus
+                        .online_pending
+                        .push(maker::online::OnlineRequest::MyLevels);
+                    self.announce("Loading your levels...");
+                }
+            }
+            UiAction::OnlineSetIdQuery(q) => {
+                self.menus.online_id_query = q;
+            }
+            UiAction::OnlineSearchId => {
+                let id: u64 = self.menus.online_id_query.trim().parse().unwrap_or(0);
+                if id == 0 {
+                    self.announce("Enter a numeric level ID.");
+                } else {
+                    self.menus.online_loading = true;
+                    self.menus
+                        .online_pending
+                        .push(maker::online::OnlineRequest::FetchById(id));
+                    self.announce(format!("Searching #{id}"));
+                }
+            }
+            UiAction::OnlinePlay(id) => {
+                let meta = self
+                    .menus
+                    .online_levels
+                    .iter()
+                    .find(|x| x.id == id)
+                    .cloned()
+                    .unwrap_or_else(|| LevelMeta {
+                        id,
+                        author: String::new(),
+                        name: format!("#{id}"),
+                        description: String::new(),
+                        tags: Vec::new(),
+                        format_version: 0,
+                        game_version: String::new(),
+                        size_bytes: 0,
+                        sha256: String::new(),
+                        likes: 0,
+                        plays: 0,
+                        created_at: String::new(),
+                        updated_at: String::new(),
+                    });
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Download { meta, play: true });
+                self.menus.overlay = OverlayMenu::None;
+                self.pending_mode = Some(MakerMode::Play);
+                self.begin_loading();
+                self.announce("Downloading level...");
+            }
+            UiAction::OnlineLike(id) => {
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Like { id });
+            }
+            UiAction::OnlineReport(id) => {
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Report { id });
+            }
+            UiAction::OnlineDelete(id) => {
+                if self.menus.online_confirm_delete == Some(id) {
+                    self.menus.online_confirm_delete = None;
+                    self.menus
+                        .online_pending
+                        .push(maker::online::OnlineRequest::Delete { id });
+                    self.announce(format!("Deleting #{id}..."));
+                } else {
+                    self.menus.online_confirm_delete = Some(id);
+                }
+            }
+            UiAction::OnlineDeleteCancel => {
+                self.menus.online_confirm_delete = None;
+            }
+            UiAction::OnlineClearQuery => {
+                self.menus.online_query.clear();
+                self.menus.online_loading = true;
+                self.menus.online_last_offset = 0;
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::List {
+                        query: String::new(),
+                        limit: 50,
+                        offset: 0,
+                    });
+                self.announce("Loading online levels...");
+            }
+            UiAction::OnlineSearch => {
+                let query = self.menus.online_query.clone();
+                self.menus.online_loading = true;
+                self.menus.online_last_offset = 0;
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::List {
+                        query,
+                        limit: 50,
+                        offset: 0,
+                    });
+                self.announce("Searching online levels...");
+            }
+            UiAction::OnlineSetQuery(q) => {
+                self.menus.online_query = q;
+            }
+            UiAction::OnlineCycleSort => {
+                self.menus.online_sort = (self.menus.online_sort + 1) % 4;
+                self.menus.sort_online_levels();
+                self.menus.reconcile_online_nav();
+            }
+            UiAction::OnlineSetToken(token) => {
+                let token = token.trim().to_string();
+                self.menus.online_token = token.clone();
+                let msg = if token.is_empty() {
+                    "Upload token cleared."
+                } else {
+                    "Upload token set."
+                };
+                self.announce(msg);
+            }
+            UiAction::CreatorImport(code) => {
+                self.menus.creator_import_code = code;
+            }
+            UiAction::CreatorCopyKey => {
+                let key = self.menus.creator_recovery_key.clone();
+                if key.is_empty() {
+                    self.announce("No recovery key yet, open the online browser once.");
+                } else {
+                    repose_core::clipboard::copy_to_clipboard(&key);
+                    self.announce("Recovery key copied! Keep it private!! It is your account!!!");
+                }
+            }
+            UiAction::OnlineUpload => {
+                let checked = {
+                    let Ok(sim) = self.sim.try_borrow() else {
+                        return;
+                    };
+                    let level = sim.world.resource::<LevelDocument>();
+                    if level.data.is_verified {
+                        Some(level.data.clone())
+                    } else {
+                        None
+                    }
+                };
+                let Some(data) = checked else {
+                    self.announce("Beat the level before publishing.");
+                    return;
+                };
+                let meta = rustbox_format::api::UploadMetadata {
+                    name: data.name.clone(),
+                    description: data.description.clone(),
+                    tags: data.tags.iter().map(|t| t.label().to_string()).collect(),
+                    format_version: rustbox_format::file::FORMAT_VERSION,
+                    game_version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                self.menus
+                    .online_pending
+                    .push(maker::online::OnlineRequest::Upload { meta, data });
+                self.announce("Uploading...");
             }
             UiAction::OpenPartPicker => {
                 self.menus.overlay = OverlayMenu::PartPicker;
@@ -1904,9 +2567,19 @@ impl App {
                     };
                     sim.world.resource_mut::<SelectedEntity>().0 = None;
                     sim.world.resource_mut::<ActiveTrack>().0 = None;
+                    *sim.world.resource_mut::<maker::campaign::LevelSource>() = if play {
+                        maker::campaign::LevelSource::Imported
+                    } else {
+                        maker::campaign::LevelSource::Editor
+                    };
                     let ui = &mut sim.world.resource_mut::<win::MakerUi>();
-                    ui.current_key = Some(name.clone());
+                    ui.current_key = Some(key.to_string());
                     ui.goal_latched = false;
+                    ui.clear_deaths = 0;
+                    ui.first_clear = false;
+                    ui.new_record = false;
+                    ui.player_is_author = false;
+                    ui.clear_pending = false;
                     if play {
                         ui.play_timer = 0.0;
                         ui.deaths = 0;
@@ -1996,7 +2669,9 @@ impl App {
                     menus::OverlayMenu::None
                 };
             }
-            menus::OverlayMenu::LevelInfo => {
+            menus::OverlayMenu::LevelInfo
+            | menus::OverlayMenu::LevelClear
+            | menus::OverlayMenu::Online => {
                 self.menus.overlay = menus::OverlayMenu::None;
                 sim.world.resource_mut::<Paused>().0 = false;
             }
@@ -2041,6 +2716,11 @@ impl App {
             self.menus.deaths = ui.deaths;
             self.menus.glimmers_collected = ui.glimmers_collected;
             self.menus.glimmers_total = ui.glimmers_total;
+            self.menus.clear_time_secs = ui.clear_time_secs;
+            self.menus.clear_deaths = ui.clear_deaths;
+            self.menus.first_clear = ui.first_clear;
+            self.menus.new_record = ui.new_record;
+            self.menus.player_is_author = ui.player_is_author;
         }
         self.menus.maker_mode_edit = *sim.world.resource::<MakerMode>() == MakerMode::Edit;
         self.menus.brush_tab = match *sim.world.resource::<BrushTab>() {
@@ -2060,15 +2740,35 @@ impl App {
             self.menus.limit_vertices = stats.estimated_vertices;
             self.menus.limit_warning = stats.warning;
             self.menus.limit_over = stats.over_limit;
+            self.menus.blocks_placed = stats.blocks;
         }
         {
             let level = sim.world.resource::<LevelDocument>();
             self.menus.level_name = level.data.name.clone();
             self.menus.level_verified = level.data.is_verified;
+            self.menus.record_ms = level.data.record_ms;
             let sel = sim.world.resource::<SelectedEntity>().0;
             self.menus.selected_entity_data = sel.and_then(|id| level.entity_by_id(id)).cloned();
             let track = sim.world.resource::<ActiveTrack>().0;
             self.menus.active_track_data = track.and_then(|id| level.track(id)).cloned();
+        }
+        self.menus.is_bundled = *sim.world.resource::<maker::campaign::LevelSource>()
+            != maker::campaign::LevelSource::Editor;
+        {
+            let progress = sim.world.resource::<maker::campaign::CampaignProgress>();
+            self.menus.campaign_levels = maker::campaign::BUNDLED_LEVELS
+                .iter()
+                .map(|b| {
+                    let rec = progress.record(b.id);
+                    maker::campaign::CampaignLevelUi {
+                        title: b.name.to_string(),
+                        teaches: b.teaches.to_string(),
+                        completed: rec.completed,
+                        best_time: rec.best_time,
+                        best_deaths: rec.best_deaths,
+                    }
+                })
+                .collect();
         }
         {
             let Ok(view) = self.world.try_borrow() else {

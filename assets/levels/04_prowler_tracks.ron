@@ -16,7 +16,6 @@
         (position: (0, 0, -7), kind: Grass),
         (position: (0, 0, -6), kind: Grass),
         (position: (0, 0, -5), kind: Grass),
-        (position: (0, 0, -5), kind: Stone),
         (position: (0, 0, -4), kind: Grass),
         (position: (0, 0, -3), kind: Grass),
         (position: (0, 0, -2), kind: Grass),

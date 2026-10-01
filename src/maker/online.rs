@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
+pub use rustbox_format::api::LevelMeta;
 use rustbox_format::api::{
-    ApiError, LevelListResponse, LevelMeta, MeResponse, UploadMetadata, UploadResponse,
+    ApiError, LevelListResponse, MeResponse, UploadMetadata, UploadResponse,
 };
 use rustbox_format::file::decode_level;
 use rustbox_format::level::LevelData;
@@ -97,27 +97,6 @@ pub struct OnlineConfig {
     pub device_id: String,
 }
 
-/// Everything the UI needs to make an online request. Held as one resource so
-/// the (already large) `drain_ui_commands` system stays within Bevy's 16-param
-/// limit: commands push into `pending`, which `flush_online_requests` drains.
-#[derive(Resource)]
-pub struct OnlineContext {
-    pub config: OnlineConfig,
-    pub tx: Sender<OnlineEvent>,
-    pub pending: Vec<OnlineRequest>,
-}
-
-#[derive(Resource)]
-pub struct OnlineEventRx(pub Receiver<OnlineEvent>);
-
-/// Cache of downloaded levels, keyed by server id, so re-downloads are free.
-#[derive(Resource, Default)]
-pub struct OnlineCache(pub HashMap<u64, LevelData>);
-
-/// Most recently fetched listing, so the UI can re-render without a round trip.
-#[derive(Resource, Default)]
-pub struct OnlineListing(pub Vec<LevelMeta>);
-
 impl Default for OnlineConfig {
     fn default() -> Self {
         Self {
@@ -125,6 +104,29 @@ impl Default for OnlineConfig {
             token: String::new(),
             recovery_key: String::new(),
             device_id: String::new(),
+        }
+    }
+}
+
+/// Runtime half of the online feature: request config, the event channel and
+/// the downloaded-level cache. Pending requests live in `MenuState`; each frame
+/// `pump_online` dispatches them and drains completed fetches back.
+pub struct OnlineRuntime {
+    pub config: OnlineConfig,
+    pub tx: Sender<OnlineEvent>,
+    pub rx: Receiver<OnlineEvent>,
+    /// Cache of downloaded levels, keyed by server id, so re-downloads are free.
+    pub cache: HashMap<u64, LevelData>,
+}
+
+impl Default for OnlineRuntime {
+    fn default() -> Self {
+        let (tx, rx) = unbounded();
+        Self {
+            config: OnlineConfig::default(),
+            tx,
+            rx,
+            cache: HashMap::new(),
         }
     }
 }
@@ -139,7 +141,7 @@ fn base_url(cfg: &OnlineConfig) -> String {
 
 /// Attach whatever write-credentials the client has: the admin token (if set)
 /// and the anonymous creator identity (recovery key + device id). Identity
-/// headers are only meaningful once `flush_online_requests` bootstrapped them.
+/// headers are only meaningful once `pump_online` bootstrapped them.
 fn with_auth(cfg: &OnlineConfig, req: ehttp::Request) -> ehttp::Request {
     let mut req = req;
     if !cfg.token.trim().is_empty() {
@@ -189,7 +191,7 @@ fn send_empty(
     });
 }
 
-/// Forward a request to a fetch. Called from the UI command drainer (main
+/// Forward a request to a fetch. Called from the per-frame pump (main
 /// thread); the fetch itself returns immediately and the response arrives
 /// later on the event channel.
 pub fn dispatch(cfg: &OnlineConfig, ev_tx: &Sender<OnlineEvent>, req: OnlineRequest) {
@@ -423,305 +425,4 @@ fn age_hours_from_created_at(created_at: &str) -> Option<f64> {
         .unwrap_or(created);
 
     Some(((now - created).max(0) as f64) / 3600.0)
-}
-
-pub struct OnlinePlugin;
-
-impl Plugin for OnlinePlugin {
-    fn build(&self, app: &mut App) {
-        let (ev_tx, ev_rx) = unbounded();
-        let ctx = OnlineContext {
-            config: OnlineConfig::default(),
-            tx: ev_tx.clone(),
-            pending: Vec::new(),
-        };
-        app.insert_resource(ctx)
-            .insert_resource(OnlineEventRx(ev_rx))
-            .insert_resource(OnlineCache::default())
-            .insert_resource(OnlineListing::default())
-            .add_systems(Update, flush_online_requests)
-            .add_systems(Update, poll_online_events);
-    }
-}
-
-/// Drain UI-queued online requests into fetches (non-blocking; responses arrive
-/// later on the event channel) and sync the upload token from the UI. Download
-/// requests for already-cached levels are answered locally without a round trip.
-///
-/// Also owns the anonymous creator identity: it is silently created on first
-/// run, refreshed from `storage` whenever the UI field changes (import), and
-/// copied into `ctx.config` so every request carries it.
-pub fn flush_online_requests(
-    mut ctx: ResMut<OnlineContext>,
-    cache: Res<OnlineCache>,
-    mut ui: ResMut<super::ui_bridge::MakerUi>,
-    mut level: ResMut<super::level::LevelDocument>,
-    mut history: ResMut<super::commands::CommandHistory>,
-    mut mode: ResMut<super::mode::MakerMode>,
-    mut source: ResMut<super::campaign::LevelSource>,
-    mut sel_ent: ResMut<super::mode::SelectedEntity>,
-    storage: Res<super::storage::LevelStorage>,
-) {
-    if ui.creator_recovery_key.is_empty() {
-        match super::creator::load_or_create(&storage) {
-            Ok(id) => {
-                ui.creator_recovery_key = id.recovery_key.clone();
-                ui.creator_device_id = id.device_id.clone();
-            }
-            Err(e) => ui.set_status(format!("Creator identity unavailable: {e}")),
-        }
-    }
-    if !ui.creator_import_code.trim().is_empty() {
-        let code = ui.creator_import_code.trim().to_string();
-        ui.creator_import_code.clear();
-        match super::creator::import_recovery_key(&storage, &code) {
-            Ok(id) => {
-                ui.creator_recovery_key = id.recovery_key.clone();
-                ui.creator_device_id = id.device_id.clone();
-                ui.set_status("Recovery key imported, restoring your levels...");
-                ctx.pending.push(OnlineRequest::Me);
-                ctx.pending.push(OnlineRequest::MyLevels);
-            }
-            Err(e) => ui.set_status(format!("Recovery key import failed: {e}")),
-        }
-    }
-    if ctx.config.recovery_key != ui.creator_recovery_key {
-        ctx.config.recovery_key = ui.creator_recovery_key.clone();
-    }
-    if ctx.config.device_id != ui.creator_device_id {
-        ctx.config.device_id = ui.creator_device_id.clone();
-    }
-
-    ctx.pending
-        .extend(ui.online_pending.drain(..).collect::<Vec<_>>());
-    for req in std::mem::take(&mut ctx.pending) {
-        if let OnlineRequest::Download { play, .. } = &req
-            && *play
-        {
-            dispatch(&ctx.config, &ctx.tx, req);
-            continue;
-        }
-        if let OnlineRequest::Download { meta, play } = &req {
-            if let Some(data) = cache.0.get(&meta.id).cloned() {
-                if !play {
-                    let preview = super::thumbnail::render_preview(
-                        &data,
-                        super::catalog::PREVIEW_COLS,
-                        super::catalog::PREVIEW_ROWS,
-                    );
-                    ui.online_preview_pending.retain(|id| *id != meta.id);
-                    ui.online_previews.insert(meta.id, preview);
-                    touch_online_preview_lru(&mut ui, meta.id);
-                }
-                apply_download(
-                    &mut level,
-                    &mut history,
-                    &mut mode,
-                    &mut source,
-                    &mut sel_ent,
-                    meta,
-                    data,
-                    *play,
-                );
-                continue;
-            }
-        }
-        dispatch(&ctx.config, &ctx.tx, req);
-    }
-    if ctx.config.token != ui.online_token {
-        ctx.config.token = ui.online_token.trim().to_string();
-    }
-}
-
-/// Bound the generated-preview cache: mark `id` most-recently-used and evict
-/// the oldest previews once we pass `MAX_PREVIEWS_CACHED`.
-pub fn touch_online_preview_lru(ui: &mut super::ui_bridge::MakerUi, id: u64) {
-    const MAX_PREVIEWS_CACHED: usize = 96;
-
-    ui.online_preview_lru.retain(|x| *x != id);
-    ui.online_preview_lru.push(id);
-
-    while ui.online_preview_lru.len() > MAX_PREVIEWS_CACHED {
-        let evict = ui.online_preview_lru.remove(0);
-        ui.online_previews.remove(&evict);
-    }
-    ui.online_preview_pending.retain(|x| *x != id);
-}
-
-fn apply_download(
-    level: &mut super::level::LevelDocument,
-    history: &mut super::commands::CommandHistory,
-    mode: &mut super::mode::MakerMode,
-    source: &mut super::campaign::LevelSource,
-    sel_ent: &mut super::mode::SelectedEntity,
-    meta: &LevelMeta,
-    data: LevelData,
-    play: bool,
-) {
-    if play {
-        super::storage::apply_level_data(level, history, data);
-        level.data.name = meta.name.clone();
-        level.data.author = meta.author.clone();
-        *sel_ent = super::mode::SelectedEntity(None);
-        *source = super::campaign::LevelSource::Imported;
-        *mode = super::mode::MakerMode::Play;
-    }
-}
-
-/// Drain completed fetch callbacks on the main thread and apply side effects:
-/// cache downloaded levels, refresh the listing, surface errors as status text.
-pub fn poll_online_events(
-    events: Res<OnlineEventRx>,
-    mut listing: ResMut<OnlineListing>,
-    mut cache: ResMut<OnlineCache>,
-    mut ui: ResMut<super::ui_bridge::MakerUi>,
-    mut level: ResMut<super::level::LevelDocument>,
-    mut history: ResMut<super::commands::CommandHistory>,
-    mut mode: ResMut<super::mode::MakerMode>,
-    mut source: ResMut<super::campaign::LevelSource>,
-    mut sel_ent: ResMut<super::mode::SelectedEntity>,
-) {
-    while let Ok(event) = events.0.try_recv() {
-        match event {
-            OnlineEvent::Listed(result) => match result {
-                Ok(resp) => {
-                    ui.online_loading = false;
-                    ui.online_total = resp.total;
-                    if ui.online_last_offset == 0 {
-                        ui.online_levels = resp.levels;
-                    } else {
-                        for m in resp.levels {
-                            if !ui.online_levels.iter().any(|x| x.id == m.id) {
-                                ui.online_levels.push(m);
-                            }
-                        }
-                    }
-                    listing.0 = ui.online_levels.clone();
-                    ui.online_confirm_delete = None;
-                    super::ui_bridge::reconcile_online_nav(&mut ui);
-                    let shown = listing.0.len() as u64;
-                    ui.set_status(if shown < resp.total {
-                        format!("Showing {shown} of {} levels online", resp.total)
-                    } else {
-                        format!("{} levels online", resp.total)
-                    });
-                }
-                Err(e) => {
-                    ui.online_loading = false;
-                    ui.set_status(format!("Browse failed: {e}"));
-                }
-            },
-            OnlineEvent::FetchedById { id, result } => match result {
-                Ok(meta) => {
-                    ui.online_loading = false;
-                    ui.online_levels = vec![meta];
-                    ui.online_total = 1;
-                    ui.online_last_offset = 0;
-                    ui.online_selected = Some(id);
-                    ui.online_confirm_delete = None;
-                    super::ui_bridge::reconcile_online_nav(&mut ui);
-                    ui.set_status(format!("Found #{id}"));
-                }
-                Err(e) => {
-                    ui.online_loading = false;
-                    ui.set_status(format!("ID search ({id}): {e}"));
-                }
-            },
-            OnlineEvent::Uploaded(result) => match result {
-                Ok(resp) => ui.set_status(format!("Published as #{}", resp.id)),
-                Err(e) => ui.set_status(format!("Upload failed: {e}")),
-            },
-            OnlineEvent::Downloaded { meta, result, play } => match result {
-                Ok(data) => {
-                    let preview = super::thumbnail::render_preview(
-                        &data,
-                        super::catalog::PREVIEW_COLS,
-                        super::catalog::PREVIEW_ROWS,
-                    );
-
-                    ui.online_preview_pending.retain(|id| *id != meta.id);
-                    ui.online_previews.insert(meta.id, preview);
-                    const MAX_CACHED_LEVELS: usize = 32;
-                    if cache.0.len() >= MAX_CACHED_LEVELS && !cache.0.contains_key(&meta.id) {
-                        if let Some(old) = cache.0.keys().next().copied() {
-                            cache.0.remove(&old);
-                        }
-                    }
-                    cache.0.insert(meta.id, data.clone());
-                    touch_online_preview_lru(&mut ui, meta.id);
-                    apply_download(
-                        &mut level,
-                        &mut history,
-                        &mut mode,
-                        &mut source,
-                        &mut sel_ent,
-                        &meta,
-                        data,
-                        play,
-                    );
-                    if play {
-                        ui.set_status(format!("Downloaded & playing: {}", level.data.name));
-                    } else {
-                        ui.set_status(format!("Downloaded: {}", meta.name));
-                    }
-                }
-                Err(e) => {
-                    ui.online_preview_pending.retain(|id| *id != meta.id);
-                    ui.set_status(format!("Download failed: {e}"));
-                }
-            },
-            OnlineEvent::Liked { id, result } => match result {
-                Ok(()) => ui.set_status(format!("Liked #{id}")),
-                Err(e) => ui.set_status(format!("Like failed: {e}")),
-            },
-            OnlineEvent::Reported { id, result } => match result {
-                Ok(()) => ui.set_status(format!("Reported #{id} - thanks!")),
-                Err(e) => ui.set_status(format!("Report failed: {e}")),
-            },
-            OnlineEvent::Deleted { id, result } => match result {
-                Ok(()) => {
-                    cache.0.remove(&id);
-                    ui.online_previews.remove(&id);
-                    ui.online_preview_pending.retain(|x| *x != id);
-                    ui.online_preview_lru.retain(|x| *x != id);
-                    ui.online_levels.retain(|m| m.id != id);
-                    listing.0.retain(|m| m.id != id);
-
-                    if ui.online_selected == Some(id) {
-                        ui.online_selected = None;
-                    }
-
-                    ui.online_confirm_delete = None;
-                    super::ui_bridge::reconcile_online_nav(&mut ui);
-                    ui.set_status(format!("Deleted #{id}"));
-                }
-                Err(e) => ui.set_status(format!("Delete failed: {e}")),
-            },
-            OnlineEvent::Me(result) => match result {
-                Ok(me) => {
-                    let used = me.uploads_used_this_week;
-                    let cap = used + me.uploads_remaining_this_week;
-                    ui.creator_quota_text = format!("{used}/{cap} uploads used this week");
-                    let _ = me.owner_id_short;
-                }
-                Err(e) => ui.creator_quota_text = format!("Quota unknown ({e})"),
-            },
-            OnlineEvent::MyLevels(result) => match result {
-                Ok(resp) => {
-                    ui.online_levels = resp.levels;
-                    ui.online_total = resp.total;
-                    ui.online_last_offset = 0;
-                    listing.0 = ui.online_levels.clone();
-                    ui.online_loading = false;
-                    ui.online_confirm_delete = None;
-                    super::ui_bridge::reconcile_online_nav(&mut ui);
-                    ui.set_status(format!("{} of your levels online", resp.total));
-                }
-                Err(e) => {
-                    ui.online_loading = false;
-                    ui.set_status(format!("My levels failed: {e}"));
-                }
-            },
-        }
-    }
 }

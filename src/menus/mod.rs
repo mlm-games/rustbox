@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 use crate::maker::catalog::{LevelSummary, filter_catalog};
 use crate::maker::entity_data::EntityData;
 use crate::maker::level::{BoundaryPreset, ClearCondition, LevelTag};
+use crate::maker::online::{LevelMeta, OnlineRequest};
+use crate::maker::thumbnail::ThumbPreview;
 use crate::maker::track::TrackData;
 
 pub use action::UiAction;
@@ -36,7 +38,10 @@ pub enum OverlayMenu {
     #[default]
     None,
     Pause,
+    LevelClear,
     Browse,
+    LevelSelect,
+    Online,
     LoadLevel,
     PartPicker,
     Settings,
@@ -128,6 +133,48 @@ pub struct MenuState {
     pub browse_confirm_delete: Option<String>,
     pub browse_selected: Option<String>,
     pub browse_cursor: usize,
+    // Level clear
+    pub clear_time_secs: f32,
+    pub clear_deaths: u32,
+    pub first_clear: bool,
+    pub new_record: bool,
+    pub player_is_author: bool,
+    pub record_ms: Option<u32>,
+    pub blocks_placed: u32,
+    // Campaign / bundled levels
+    pub is_bundled: bool,
+    pub campaign_levels: Vec<crate::maker::campaign::CampaignLevelUi>,
+    // Online / community browser
+    pub online_levels: Vec<LevelMeta>,
+    /// Server-reported total for the current query; drives "showing X of N"
+    /// and the Load More button.
+    pub online_total: u64,
+    /// Offset of the last requested page; non-zero responses append.
+    pub online_last_offset: u64,
+    /// Previews generated locally from downloaded level data.
+    pub online_previews: HashMap<u64, ThumbPreview>,
+    pub online_preview_pending: Vec<u64>,
+    /// Bounded recency order for the preview cache (LRU eviction).
+    pub online_preview_lru: Vec<u64>,
+    pub online_query: String,
+    pub online_token: String,
+    /// Anonymous creator identity (recovery key = the account).
+    pub creator_recovery_key: String,
+    pub creator_device_id: String,
+    /// Human-readable weekly upload quota from `/v1/me`.
+    pub creator_quota_text: String,
+    /// Non-empty triggers a recovery-key import (cleared after handling).
+    pub creator_import_code: String,
+    /// 0 = new, 1 = name, 2 = likes, 3 = plays.
+    pub online_sort: u8,
+    /// Shelf tab: 0 = New, 1 = Popular, 2 = Hot, 3 = Mine.
+    pub online_shelf: u8,
+    pub online_selected: Option<u64>,
+    pub online_confirm_delete: Option<u64>,
+    /// Dedicated "Level ID" search field (FetchById lookup, not a query).
+    pub online_id_query: String,
+    pub online_loading: bool,
+    pub online_pending: Vec<OnlineRequest>,
 }
 
 impl MenuState {
@@ -167,5 +214,45 @@ impl MenuState {
             self.browse_selected = Some(visible[self.browse_cursor].key.clone());
         }
         self.browse_visible = visible;
+    }
+
+    /// Client-side ordering for the online grid (raw list is kept sorted in
+    /// place so compose can render it directly).
+    pub fn sort_online_levels(&mut self) {
+        self.online_levels = crate::maker::online::sort_online(
+            &self.online_levels,
+            self.online_sort,
+            self.online_shelf,
+        );
+    }
+
+    /// Keep the online selection consistent after list mutations. No grid
+    /// keyboard cursor here, so a selection that vanished clears instead of
+    /// snapping to a cursor item.
+    pub fn reconcile_online_nav(&mut self) {
+        if self.online_levels.is_empty() {
+            self.online_selected = None;
+            self.online_confirm_delete = None;
+            return;
+        }
+        if let Some(sel) = self.online_selected
+            && !self.online_levels.iter().any(|m| m.id == sel)
+        {
+            self.online_selected = None;
+            self.online_confirm_delete = None;
+        }
+    }
+
+    /// Bounded recency order for the generated-preview cache (LRU eviction).
+    pub fn touch_online_preview_lru(&mut self, id: u64) {
+        const MAX_PREVIEWS_CACHED: usize = 96;
+
+        self.online_preview_lru.retain(|x| *x != id);
+        self.online_preview_lru.push(id);
+        while self.online_preview_lru.len() > MAX_PREVIEWS_CACHED {
+            let evict = self.online_preview_lru.remove(0);
+            self.online_previews.remove(&evict);
+        }
+        self.online_preview_pending.retain(|x| *x != id);
     }
 }

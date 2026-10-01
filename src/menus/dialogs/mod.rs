@@ -18,8 +18,8 @@ use crate::menus::MenuState;
 use crate::menus::OverlayMenu;
 use crate::menus::action::UiAction;
 use crate::menus::components::{
-    Symbols, icon_label, mk_button, mk_button_sm, mk_chip, mk_pill_button, mk_primary_button,
-    modal_shell, push, spacer,
+    Symbols, icon_label, icon_text, mk_button, mk_button_sm, mk_chip, mk_pill_button,
+    mk_primary_button, modal_shell, push, spacer,
 };
 use crate::menus::style::{col, t, tag_color};
 
@@ -435,12 +435,14 @@ pub(crate) fn share_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> Vi
     );
 
     let mut tail: Vec<View> = Vec::new();
-    tail.push(mk_primary_button(
-        RText("Save to My Collection").size(Sp(15.0)),
-        col(150, 110, 200),
-        move || push(&a_collection, UiAction::BrowseAddToCollection),
-    ));
-    tail.push(spacer(16.0));
+    if !st.is_bundled {
+        tail.push(mk_primary_button(
+            RText("Save to My Collection").size(Sp(15.0)),
+            col(150, 110, 200),
+            move || push(&a_collection, UiAction::BrowseAddToCollection),
+        ));
+        tail.push(spacer(16.0));
+    }
     tail.push(mk_button(
         &t(tr, "back", "Back"),
         col(70, 70, 90),
@@ -876,6 +878,213 @@ pub(crate) fn level_info_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) 
         col(70, 70, 90),
         move || push(&a_close, UiAction::LevelInfoClose),
     ));
+
+    modal_shell(inner)
+}
+
+pub(crate) fn level_select_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_back = actions.clone();
+
+    let row = |i: u8, lvl: &crate::maker::campaign::CampaignLevelUi| -> View {
+        let a = actions.clone();
+        let title = lvl.title.clone();
+        let teaches = lvl.teaches.clone();
+        let status = if lvl.completed {
+            match (lvl.best_time, lvl.best_deaths) {
+                (Some(best), Some(d)) => icon_text(
+                    Symbols::CHECK,
+                    format!("{:.1}s · {} {}", best, d, t(tr, "maker-deaths", "deaths")),
+                    12.0,
+                    col(220, 210, 120),
+                ),
+                _ => RText(t(tr, "completed", "Completed"))
+                    .size(Sp(12.0))
+                    .color(col(220, 210, 120)),
+            }
+        } else {
+            RText(t(tr, "uncleared", "Uncleared"))
+                .size(Sp(12.0))
+                .color(col(120, 125, 140))
+        };
+        Column(Modifier::new().align_items(AlignItems::CENTER)).child((
+            mk_button(
+                &format!("{}. {}", i + 1, title),
+                col(70, 90, 120),
+                move || push(&a, UiAction::PlayBundledLevel(i)),
+            ),
+            RText(teaches).size(Sp(12.0)).color(col(160, 165, 180)),
+            status,
+            spacer(4.0),
+        ))
+    };
+
+    let mut inner = Column(
+        Modifier::new()
+            .width(Dp(420.0))
+            .padding(Dp(24.0))
+            .background(col(20, 20, 28))
+            .clip_rounded(Dp(12.0))
+            .align_items(AlignItems::CENTER),
+    )
+    .child((
+        RText(t(tr, "level-select-title", "Tutorial Levels"))
+            .size(Sp(32.0))
+            .color(RColor::WHITE),
+        spacer(12.0),
+    ));
+
+    for (i, lvl) in st.campaign_levels.iter().enumerate() {
+        inner = inner.child(row(i as u8, lvl));
+    }
+
+    inner = inner.child(spacer(12.0)).child(mk_button(
+        &t(tr, "back", "Back"),
+        col(70, 70, 90),
+        move || push(&a_back, UiAction::CloseOverlay),
+    ));
+
+    modal_shell(inner)
+}
+
+pub(crate) fn level_clear_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View {
+    let tr = &st.translations;
+    let a_edit = actions.clone();
+    let a_retry = actions.clone();
+    let a_remix = actions.clone();
+    let a_menu = actions.clone();
+
+    let mut body: Vec<View> = vec![
+        RText(t(tr, "maker-clear-title", "Level Clear!"))
+            .size(Sp(38.0))
+            .color(RColor::WHITE),
+        spacer(12.0),
+        RText(if st.level_verified {
+            t(tr, "maker-clear-verified", "Level Verified!")
+        } else {
+            String::new()
+        })
+        .size(Sp(20.0))
+        .color(col(90, 200, 120)),
+        spacer(6.0),
+        RText(format!(
+            "{}: {:.2}s",
+            t(tr, "maker-time", "Time"),
+            st.clear_time_secs
+        ))
+        .size(Sp(18.0))
+        .color(RColor::WHITE),
+    ];
+
+    if st.player_is_author {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{} ({:.2}s)",
+                t(tr, "maker-cleared", "Cleared!"),
+                st.clear_time_secs
+            ),
+            16.0,
+            col(120, 230, 140),
+        ));
+    } else if st.new_record {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{} ({:.2}s)",
+                t(tr, "maker-new-record", "New record!"),
+                st.clear_time_secs
+            ),
+            16.0,
+            col(120, 230, 140),
+        ));
+    } else if let Some(record) = st.record_ms {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{}: {:.2}s",
+                t(tr, "maker-record", "Record"),
+                record as f32 / 1000.0
+            ),
+            16.0,
+            col(255, 200, 90),
+        ));
+    } else if st.first_clear {
+        body.push(icon_text(
+            Symbols::STAR,
+            format!(
+                "{} ({:.2}s)",
+                t(tr, "maker-first-clear", "First clear!"),
+                st.clear_time_secs
+            ),
+            16.0,
+            col(120, 230, 140),
+        ));
+    }
+
+    body.push(
+        RText(format!(
+            "{}: {}",
+            t(tr, "maker-deaths", "Deaths"),
+            st.clear_deaths
+        ))
+        .size(Sp(18.0))
+        .color(RColor::WHITE),
+    );
+    body.push(
+        RText(format!(
+            "{}: {}/{}",
+            t(tr, "maker-glimmers-count", "Glimmers"),
+            st.glimmers_collected,
+            st.glimmers_total
+        ))
+        .size(Sp(18.0))
+        .color(col(255, 220, 100)),
+    );
+    body.push(
+        RText(format!(
+            "{}: {}",
+            t(tr, "maker-blocks-count", "Blocks"),
+            st.blocks_placed
+        ))
+        .size(Sp(18.0))
+        .color(RColor::WHITE),
+    );
+
+    body.push(spacer(16.0));
+    if st.is_bundled {
+        body.push(mk_button(
+            &t(tr, "maker-remix", "Remix This Level"),
+            col(150, 100, 220),
+            move || push(&a_remix, UiAction::MakerRemix),
+        ));
+    } else {
+        body.push(mk_button(
+            &t(tr, "maker-btn-edit", "Edit Level"),
+            col(70, 110, 170),
+            move || push(&a_edit, UiAction::MakerDismissClear),
+        ));
+    }
+    body.push(mk_button(
+        &t(tr, "maker-retry", "Retry"),
+        col(60, 140, 90),
+        move || push(&a_retry, UiAction::MakerRetry),
+    ));
+    body.push(mk_button(
+        &t(tr, "back-to-menu", "Back to Menu"),
+        col(180, 60, 60),
+        move || push(&a_menu, UiAction::QuitToTitle),
+    ));
+
+    let inner = Column(
+        Modifier::new()
+            .width(Dp(380.0))
+            .padding(Dp(24.0))
+            .background(col(20, 20, 28))
+            .clip_rounded(Dp(12.0))
+            .align_items(AlignItems::CENTER),
+    )
+    .children(body);
 
     modal_shell(inner)
 }

@@ -6,11 +6,11 @@ use repose_ui::anim_ext::AnimatedVisibility;
 use repose_ui::{ViewExt, ZStack};
 
 use crate::menus::action::UiAction;
-use crate::menus::browser::browse_ui;
+use crate::menus::browser::{browse_ui, online_ui};
 use crate::menus::components::popup_anim_config;
 use crate::menus::dialogs::{
-    credits_ui, level_info_ui, load_level_ui, pause_overlay, settings_ui, share_ui, sign_dialog_ui,
-    sign_editor_ui,
+    credits_ui, level_clear_ui, level_info_ui, level_select_ui, load_level_ui, pause_overlay,
+    settings_ui, share_ui, sign_dialog_ui, sign_editor_ui,
 };
 use crate::menus::home::{loading_ui, splash_ui, title_ui};
 use crate::menus::{AppState, MenuState, OverlayMenu, ingame_hud, part_picker};
@@ -23,9 +23,19 @@ pub fn compose_root(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View 
         AppState::Title => ZStack(Modifier::new().fill_max_size())
             .child(title_ui(st, actions.clone()))
             .child(AnimatedVisibility(
+                st.overlay == OverlayMenu::LevelSelect,
+                level_select_ui(st, actions.clone()),
+                popup_anim_config("level_select"),
+            ))
+            .child(AnimatedVisibility(
                 st.overlay == OverlayMenu::Browse,
                 browse_ui(st, actions.clone()),
                 popup_anim_config("browse"),
+            ))
+            .child(AnimatedVisibility(
+                st.overlay == OverlayMenu::Online,
+                online_ui(st, actions.clone()),
+                popup_anim_config("online"),
             ))
             .child(AnimatedVisibility(
                 st.overlay == OverlayMenu::Settings,
@@ -55,6 +65,11 @@ pub fn compose_root(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View 
                 popup_anim_config("part_picker"),
             ))
             .child(AnimatedVisibility(
+                st.overlay == OverlayMenu::LevelClear,
+                level_clear_ui(st, actions.clone()),
+                popup_anim_config("level_clear"),
+            ))
+            .child(AnimatedVisibility(
                 st.overlay == OverlayMenu::Settings,
                 settings_ui(st, actions.clone()),
                 popup_anim_config("ingame_settings"),
@@ -73,6 +88,11 @@ pub fn compose_root(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> View 
                 st.overlay == OverlayMenu::Share,
                 share_ui(st, actions.clone()),
                 popup_anim_config("share"),
+            ))
+            .child(AnimatedVisibility(
+                st.overlay == OverlayMenu::Online,
+                online_ui(st, actions.clone()),
+                popup_anim_config("online"),
             ))
             .child(AnimatedVisibility(
                 st.sign_dialog_open && !st.sign_editor_open,

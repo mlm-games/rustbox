@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 
 use super::block::BlockKind;
+use super::campaign::{BUNDLED_LEVELS, CampaignProgress, LevelSource, save_campaign_progress};
 use super::collision::overlaps_kind;
 use super::entities_runtime::{LinkState, Prowler};
 use super::entity_data::{ContainedItem, EntityKind};
@@ -14,6 +15,7 @@ pub struct MakerUi {
     pub play_timer: f32,
     pub goal_latched: bool,
     pub clear_time_secs: f32,
+    pub clear_deaths: u32,
     pub deaths: u32,
     pub status: String,
     pub status_timer: f32,
@@ -22,6 +24,10 @@ pub struct MakerUi {
     pub sign_dialog_open: bool,
     pub sign_dialog_lines: Vec<String>,
     pub score: u32,
+    pub first_clear: bool,
+    pub new_record: bool,
+    pub player_is_author: bool,
+    pub clear_pending: bool,
     /// Collection key of the level being edited; `None` saves to the
     /// autosave slot.
     pub current_key: Option<String>,
@@ -127,13 +133,63 @@ pub fn detect_goal(world: &mut World, mode: MakerMode) {
             world.resource_mut::<MakerUi>().set_status(msg);
         }
         Decision::Clear => {
-            let mut ui = world.resource_mut::<MakerUi>();
-            ui.goal_latched = true;
-            ui.clear_time_secs = ui.play_timer;
-            drop(ui);
-            let mut trauma = world.resource_mut::<Trauma>();
-            trauma.add(0.45);
+            let clear_ms = {
+                let ui = world.resource::<MakerUi>();
+                (ui.play_timer * 1000.0).round() as u32
+            };
+            let source = world
+                .get_resource::<LevelSource>()
+                .copied()
+                .unwrap_or(LevelSource::Editor);
+            let is_author = source == LevelSource::Editor;
+            {
+                let mut ui = world.resource_mut::<MakerUi>();
+                ui.goal_latched = true;
+                ui.clear_time_secs = ui.play_timer;
+                ui.clear_deaths = ui.deaths;
+                ui.player_is_author = is_author;
+            }
+            if let LevelSource::Bundled(i) = source {
+                let id = BUNDLED_LEVELS[i].id.to_string();
+                world.resource_scope(|world, mut progress: Mut<CampaignProgress>| {
+                    let (time, deaths) = {
+                        let ui = world.resource::<MakerUi>();
+                        (ui.clear_time_secs, ui.clear_deaths)
+                    };
+                    progress.record_clear(&id, time, deaths);
+                    let store = world.resource::<super::storage::LevelStorage>();
+                    save_campaign_progress(store, &progress);
+                });
+            }
+            world.resource_scope(|world, mut level: Mut<LevelDocument>| {
+                let mut ui = world.resource_mut::<MakerUi>();
+                if !level.data.is_verified {
+                    level.data.is_verified = true;
+                    if is_author {
+                        level.data.author_time = Some(clear_ms);
+                        level.data.author_deaths = ui.deaths;
+                        ui.first_clear = true;
+                        ui.new_record = false;
+                        ui.set_status("Level verified! First clear recorded.");
+                    } else {
+                        level.data.record_ms = Some(clear_ms);
+                        ui.first_clear = true;
+                        ui.new_record = true;
+                        ui.set_status("First clear! You set the world record.");
+                    }
+                } else if !is_author {
+                    if level.data.record_ms.is_none_or(|r| clear_ms < r) {
+                        level.data.record_ms = Some(clear_ms);
+                        ui.new_record = true;
+                    } else {
+                        ui.new_record = false;
+                    }
+                    ui.first_clear = false;
+                }
+            });
+            world.resource_mut::<Trauma>().add(0.45);
             world.resource_mut::<super::Paused>().0 = true;
+            world.resource_mut::<MakerUi>().clear_pending = true;
             world.resource_mut::<MakerUi>().set_status("Level clear!");
         }
     }
@@ -197,6 +253,11 @@ pub fn on_mode_changed(world: &mut World, prev_mode: MakerMode, mode: MakerMode)
     ui.deaths = 0;
     ui.goal_latched = false;
     ui.clear_time_secs = 0.0;
+    ui.clear_deaths = 0;
+    ui.first_clear = false;
+    ui.new_record = false;
+    ui.player_is_author = false;
+    ui.clear_pending = false;
     ui.glimmers_collected = 0;
     ui.glimmers_total = glimmers_total;
     ui.score = 0;
@@ -228,6 +289,11 @@ pub fn retry_play(world: &mut World, mode: MakerMode) {
             ui.glimmers_collected = 0;
             ui.score = 0;
             ui.clear_time_secs = 0.0;
+            ui.clear_deaths = 0;
+            ui.first_clear = false;
+            ui.new_record = false;
+            ui.player_is_author = false;
+            ui.clear_pending = false;
             ui.status.clear();
             ui.status_timer = 0.0;
             ui.sign_dialog_open = false;

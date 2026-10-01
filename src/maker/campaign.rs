@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bevy::prelude::*;
+use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 use super::level::LevelData;
@@ -59,7 +59,7 @@ pub fn load_bundled(index: usize) -> Option<LevelData> {
     match deserialize_level(entry.source) {
         Ok(data) => Some(data),
         Err(e) => {
-            error!("Bundled level '{}' failed to parse: {e}", entry.id);
+            eprintln!("Bundled level '{}' failed to parse: {e}", entry.id);
             None
         }
     }
@@ -109,30 +109,30 @@ impl CampaignProgress {
 
 const CAMPAIGN_PROGRESS_KEY: &str = "__campaign_progress";
 
-pub fn load_campaign_progress(storage: Res<LevelStorage>, mut progress: ResMut<CampaignProgress>) {
+pub fn load_campaign_progress(storage: &LevelStorage, progress: &mut CampaignProgress) {
     let text = match storage.0.load(CAMPAIGN_PROGRESS_KEY) {
         Ok(Some(t)) => t,
         Ok(None) => return,
         Err(e) => {
-            bevy::log::warn!("Failed to load campaign progress: {e}");
+            eprintln!("Failed to load campaign progress: {e}");
             return;
         }
     };
     match ron::from_str::<CampaignProgress>(&text) {
         Ok(p) => *progress = p,
-        Err(e) => bevy::log::warn!("Corrupted campaign progress, ignoring: {e}"),
+        Err(e) => eprintln!("Corrupted campaign progress, ignoring: {e}"),
     }
 }
 
-pub fn save_campaign_progress(storage: Res<LevelStorage>, progress: Res<CampaignProgress>) {
-    if !progress.is_changed() || progress.records.is_empty() {
+pub fn save_campaign_progress(storage: &LevelStorage, progress: &CampaignProgress) {
+    if progress.records.is_empty() {
         return;
     }
-    let Ok(text) = ron::ser::to_string_pretty(&*progress, ron::ser::PrettyConfig::default()) else {
+    let Ok(text) = ron::ser::to_string_pretty(progress, ron::ser::PrettyConfig::default()) else {
         return;
     };
     if let Err(e) = storage.0.save(CAMPAIGN_PROGRESS_KEY, &text) {
-        error!("Failed to save campaign progress: {e}");
+        eprintln!("Failed to save campaign progress: {e}");
     }
 }
 
