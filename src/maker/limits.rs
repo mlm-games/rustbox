@@ -1,10 +1,11 @@
-use bevy::prelude::*;
+use bevy_ecs::prelude::{Res, ResMut, Resource};
+use glam::IVec3;
 
 use super::level::LevelDocument;
 
 /// Editor soft limits for a level (a UX guide; the wire format keeps its own
 /// harder safety caps in `rustbox_format::file`).
-#[derive(Resource, Clone, Debug)]
+#[derive(Resource, Clone, Copy, Debug)]
 pub struct LevelLimits {
     pub max_blocks: u32,
     pub max_entities: u32,

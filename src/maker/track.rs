@@ -1,3 +1,4 @@
+use bevy_ecs::prelude::Resource;
 use glam::{IVec3, Vec3};
 
 pub use rustbox_format::track::{TrackData, TrackId, TrackMode};
@@ -109,5 +110,5 @@ impl TrackDataExt for TrackData {
 }
 
 /// The track currently being edited (Edit mode only).
-#[derive(Default, Clone, Copy)]
+#[derive(Resource, Default, Clone, Copy)]
 pub struct ActiveTrack(pub Option<TrackId>);

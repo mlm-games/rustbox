@@ -35,7 +35,7 @@ impl Default for BlockBrush {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BrushTab {
     #[default]
     Blocks,
@@ -43,7 +43,17 @@ pub enum BrushTab {
     Tracks,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl BrushTab {
+    pub fn label(self) -> &'static str {
+        match self {
+            BrushTab::Blocks => "blocks",
+            BrushTab::Entities => "entities",
+            BrushTab::Tracks => "tracks",
+        }
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
 pub struct SelectedEntityKind(pub EntityKind);
 
 impl Default for SelectedEntityKind {
@@ -52,7 +62,7 @@ impl Default for SelectedEntityKind {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Resource, Clone, Copy, Debug)]
 pub struct PlaceYaw(pub f32);
 
 impl Default for PlaceYaw {
@@ -68,7 +78,7 @@ pub struct InputCapture {
 }
 
 /// The entity currently selected in the inspector (Edit mode only).
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct SelectedEntity(pub Option<LevelEntityId>);
 
 /// Mirror brush mode: bit 0 = X mirror, bit 1 = Z mirror.
@@ -78,7 +88,7 @@ pub struct MirrorMode(pub u8);
 /// Editor paint state: `start` is the first corner of an in-progress
 /// Shift+click box fill; `last_paint`/`last_erase` track the last cell of a
 /// hold-drag.
-#[derive(Default, Clone, Debug)]
+#[derive(Resource, Default, Clone, Debug)]
 pub struct BoxFillStart {
     pub start: Option<IVec3>,
     pub last_paint: Option<IVec3>,
@@ -90,7 +100,7 @@ pub struct BoxFillStart {
 }
 
 /// Active link channel stamped onto newly placed orbs/gates (1-9).
-#[derive(Clone, Copy, Debug)]
+#[derive(Resource, Clone, Copy, Debug)]
 pub struct ActiveLinkChannel(pub u32);
 
 impl Default for ActiveLinkChannel {
@@ -135,7 +145,7 @@ pub struct MakerStats {
 }
 
 /// Multi-selection used by build-mode structure editing.
-#[derive(Default, Clone, Debug)]
+#[derive(Resource, Default, Clone, Debug)]
 pub struct SelectionSet {
     pub blocks: HashSet<IVec3>,
     pub entities: HashSet<LevelEntityId>,
@@ -169,7 +179,7 @@ impl SelectionSet {
 }
 
 /// First corner for two-click volume selection.
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct SelectionBoxStart {
     pub start: Option<IVec3>,
 }
@@ -189,7 +199,7 @@ pub struct ClipboardEntity {
 }
 
 /// Internal editor clipboard for selected structures.
-#[derive(Default, Clone, Debug)]
+#[derive(Resource, Default, Clone, Debug)]
 pub struct EditorClipboard {
     pub blocks: Vec<ClipboardBlock>,
     pub entities: Vec<ClipboardEntity>,
@@ -211,7 +221,7 @@ impl EditorClipboard {
 }
 
 /// Live preview of a clipboard structure while the user positions it.
-#[derive(Default, Debug)]
+#[derive(Resource, Default, Debug)]
 pub struct PastePreview {
     pub active: bool,
     pub clipboard: EditorClipboard,
