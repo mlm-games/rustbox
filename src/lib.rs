@@ -44,12 +44,16 @@ use web_time::Instant;
 use wasm_bindgen::prelude::*;
 
 const BUNDLED_LEVEL: &str = include_str!("../assets/levels/01_first_steps.ron");
+const PLACE_REPEAT: Duration = Duration::from_millis(100);
 
 struct App {
     sim: Rc<RefCell<Sim>>,
     cam: Rc<Cell<OrbitCamera>>,
     world: Rc<RefCell<LevelView>>,
     button: Rc<Cell<Option<PointerButton>>>,
+    primary_held: Rc<Cell<bool>>,
+    secondary_held: Rc<Cell<bool>>,
+    place_repeat: Instant,
     ctrl: Rc<Cell<bool>>,
     staging: Rc<RefCell<Staging>>,
     player: Entity,
@@ -122,6 +126,9 @@ impl App {
             })),
             world,
             button: Rc::new(Cell::new(None)),
+            primary_held: Rc::new(Cell::new(false)),
+            secondary_held: Rc::new(Cell::new(false)),
+            place_repeat: Instant::now(),
             ctrl: Rc::new(Cell::new(false)),
             staging: Staging::shared(),
             player,
@@ -242,7 +249,21 @@ impl App {
                 cursor.place = hit.map(|(cell, normal)| cell + normal);
                 preview_cell = cursor.place;
             }
-            if self.button.get().is_none()
+            if self.primary_held.get()
+                && !self.secondary_held.get()
+                && !self.ctrl.get()
+                && let Some(cell) = preview_cell
+                && self.place_repeat.elapsed() >= PLACE_REPEAT
+            {
+                self.place_repeat = Instant::now();
+                if let Ok(mut world) = self.world.try_borrow_mut() {
+                    let mirror = sim.world.resource::<MirrorMode>().0;
+                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                    world.stroke_paint(&mut level, mirror, cell);
+                }
+            }
+            if !self.primary_held.get()
+                && !self.secondary_held.get()
                 && let Ok(mut world) = self.world.try_borrow_mut()
             {
                 let mut level = sim.world.resource_mut::<LevelDocument>();
@@ -344,6 +365,7 @@ impl App {
         let world_rc = self.world.clone();
         let sim_rc = self.sim.clone();
         let button_rc = self.button.clone();
+        let secondary_rc = self.secondary_held.clone();
         let ctrl_rc = self.ctrl.clone();
         let looked_rc = self.looked.clone();
         let viewport = Viewport3d(
@@ -404,55 +426,10 @@ impl App {
                         }
                     }
                     View3dEvent::Hover { .. } | View3dEvent::HoverMesh { .. } => {}
-                    View3dEvent::Drag { button, dx, dy } => {
-                        if in_edit && !ui_wants_pointer && !ctrl {
-                            match button {
-                                PointerButton::Secondary => {
-                                    c.yaw += dx * 0.005;
-                                    c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
-                                    if let Ok(mut sim) = sim_rc.try_borrow_mut() {
-                                        let ray = sim.world.resource::<EditorCursor>().ray;
-                                        let mirror = sim.world.resource::<MirrorMode>().0;
-                                        let hit = ray.and_then(|(eye, dir)| {
-                                            raycast_present(
-                                                sim.world.resource::<LevelDocument>(),
-                                                Vec3::from_array(eye),
-                                                Vec3::from_array(dir),
-                                                200.0,
-                                            )
-                                        });
-                                        if let Some((cell, _)) = hit
-                                            && let Ok(mut world) = world_rc.try_borrow_mut()
-                                        {
-                                            let mut level =
-                                                sim.world.resource_mut::<LevelDocument>();
-                                            world.stroke_erase(&mut level, mirror, cell);
-                                        }
-                                    }
-                                }
-                                PointerButton::Primary => {
-                                    if let Ok(mut sim) = sim_rc.try_borrow_mut() {
-                                        let ray = sim.world.resource::<EditorCursor>().ray;
-                                        let mirror = sim.world.resource::<MirrorMode>().0;
-                                        let hit = ray.and_then(|(eye, dir)| {
-                                            raycast_present(
-                                                sim.world.resource::<LevelDocument>(),
-                                                Vec3::from_array(eye),
-                                                Vec3::from_array(dir),
-                                                200.0,
-                                            )
-                                        });
-                                        if let Some((cell, normal)) = hit
-                                            && let Ok(mut world) = world_rc.try_borrow_mut()
-                                        {
-                                            let mut level =
-                                                sim.world.resource_mut::<LevelDocument>();
-                                            world.stroke_paint(&mut level, mirror, cell + normal);
-                                        }
-                                    }
-                                }
-                                PointerButton::Tertiary => {}
-                            }
+                    View3dEvent::Drag { dx, dy, .. } => {
+                        if in_edit && !ui_wants_pointer && !ctrl && secondary_rc.get() {
+                            c.yaw += dx * 0.005;
+                            c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
                         }
                     }
                     click @ (View3dEvent::GroundClick { .. } | View3dEvent::MeshClick { .. }) => {
@@ -506,6 +483,12 @@ impl App {
         let button = self.button.clone();
         let button_up = self.button.clone();
         let button_cancel = self.button.clone();
+        let primary_down = self.primary_held.clone();
+        let secondary_down = self.secondary_held.clone();
+        let primary_up = self.primary_held.clone();
+        let secondary_up = self.secondary_held.clone();
+        let primary_cancel = self.primary_held.clone();
+        let secondary_cancel = self.secondary_held.clone();
         ZStack(
             Modifier::new()
                 .fill_max_size()
@@ -524,15 +507,27 @@ impl App {
                 .on_pointer_down(move |ev: PointerEvent| {
                     if let PointerEventKind::Down(b) = ev.event {
                         button.set(Some(b));
+                        match b {
+                            PointerButton::Primary => primary_down.set(true),
+                            PointerButton::Secondary => secondary_down.set(true),
+                            _ => {}
+                        }
                     }
                 })
                 .on_pointer_up(move |ev: PointerEvent| {
-                    if matches!(ev.event, PointerEventKind::Up(_)) {
+                    if let PointerEventKind::Up(b) = ev.event {
                         button_up.set(None);
+                        match b {
+                            PointerButton::Primary => primary_up.set(false),
+                            PointerButton::Secondary => secondary_up.set(false),
+                            _ => {}
+                        }
                     }
                 })
                 .on_pointer_cancel(move |_| {
                     button_cancel.set(None);
+                    primary_cancel.set(false);
+                    secondary_cancel.set(false);
                 }),
         )
         .child(vec![viewport, hud])
