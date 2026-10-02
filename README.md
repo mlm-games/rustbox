@@ -1,6 +1,6 @@
 # Rustbox
 
-A WIP Bevy 3D course maker / block-builder (Mario Maker–style) with a full Edit/Play loop: place blocks, wire logic, and ship levels. Built on [Repose UI](https://github.com/mlm-games/repose-bevy).
+A WIP Bevy 3D course maker / block-builder (MMaker–style) with a full Edit/Play loop: place blocks, wire logic, and ship levels. Built on [Repose UI](https://github.com/mlm-games/repose-bevy).
 
 ## Features
 

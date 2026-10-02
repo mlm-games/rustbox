@@ -2,7 +2,7 @@ name: rustbox
 version: '0.2.0'
 summary: 3D level builder
 description: |
-  A 3D Mario Maker–style builder with blocks, logic, and sharing.
+  A 3D MMaker–style builder with blocks, logic, and sharing.
 grade: stable
 confinement: strict
 
