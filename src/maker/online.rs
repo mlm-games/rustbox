@@ -108,9 +108,7 @@ impl Default for OnlineConfig {
     }
 }
 
-/// Runtime half of the online feature: request config, the event channel and
-/// the downloaded-level cache. Pending requests live in `MenuState`; each frame
-/// `pump_online` dispatches them and drains completed fetches back.
+/// Online request config, event channel and downloaded-level cache.
 pub struct OnlineRuntime {
     pub config: OnlineConfig,
     pub tx: Sender<OnlineEvent>,

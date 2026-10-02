@@ -17,7 +17,7 @@ const CRATE_HALF: f32 = 0.4;
 
 /// `spawn_bodies` applies this as *additional* mass on top of the collider's
 /// own density-derived mass (0.512 kg for a 0.8 m cube at density 1.0), so 0
-/// keeps the bevy_rapier-equivalent total of 0.512 kg.
+/// keeps that total.
 const CRATE_MASS: f32 = 0.0;
 
 const THROW_SPEED: f32 = 14.0;
@@ -217,7 +217,7 @@ pub fn pickup_throwables(world: &mut World) {
 }
 
 /// Body state is authoritative for the Transform/Velocity of anything that
-/// carries a rigid body: mirrors bevy_rapier's per-frame Transform writeback.
+/// carries a rigid body, written back after each step.
 /// Held crates have no body, so their Transform stays game-authoritative.
 pub fn write_back_bodies(world: &mut World) {
     if !world.contains_resource::<RapierWorld3d>() {

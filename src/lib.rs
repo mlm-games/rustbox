@@ -750,9 +750,8 @@ impl App {
         let secondary_up = self.secondary_held.clone();
         let primary_cancel = self.primary_held.clone();
         let secondary_cancel = self.secondary_held.clone();
-        // Pointer state tracks the 3D view only: presses that land on HUD
-        // buttons never reach this wrapper (its hit region is not in their
-        // path), so UI clicks cannot place or erase world blocks.
+        // Pointer state tracks the 3D view only: HUD buttons never hit this
+        // wrapper, so UI clicks can't place or erase blocks.
         let viewport = ZStack(
             Modifier::new()
                 .fill_max_size()
@@ -888,8 +887,7 @@ impl App {
     fn pump_online(&mut self) {
         let mut notes: Vec<String> = Vec::new();
 
-        // Creator identity: created on first run, replaced by a recovery-key
-        // import; copied into the request config so every call carries it.
+        // Creator identity: created on first run, replaced by a recovery-key import.
         if self.menus.creator_recovery_key.is_empty() {
             let res = {
                 let Ok(sim) = self.sim.try_borrow() else {
@@ -942,8 +940,8 @@ impl App {
             self.online.config.token = token;
         }
 
-        // Dispatch queued requests; downloads answer from cache when possible
-        // (plays always go to the network so `count=1` is honored).
+        // Dispatch queued requests; cached downloads answer locally, plays go
+        // to the network so the server records them.
         for req in std::mem::take(&mut self.menus.online_pending) {
             if let maker::online::OnlineRequest::Download { play, .. } = &req
                 && *play
@@ -972,8 +970,7 @@ impl App {
             maker::online::dispatch(&self.online.config, &self.online.tx, req);
         }
 
-        // Drain completed fetch callbacks (callbacks fire on background
-        // threads; applying happens here on the main thread).
+        // Drain completed fetch callbacks (fired on background threads).
         let mut events = Vec::new();
         while let Ok(ev) = self.online.rx.try_recv() {
             events.push(ev);
@@ -987,7 +984,6 @@ impl App {
         }
     }
 
-    /// Swap the live document to a downloaded level and start playing it.
     fn apply_online_download(&mut self, meta: &LevelMeta, data: maker::level::LevelData) {
         let outcome = match self.sim.try_borrow_mut() {
             Ok(mut sim) => sim

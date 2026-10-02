@@ -98,7 +98,7 @@ pub(crate) fn browse_ui(st: &MenuState, actions: Arc<Mutex<Vec<UiAction>>>) -> V
         .clip_rounded(Dp(18.0)))
     .child(search_children);
 
-    // Tell the Bevy-side browser nav to stand down while a text field owns focus.
+    // Stand down game/editor input while a text field owns focus.
     if matches!(st.overlay, OverlayMenu::Browse) {
         push(&actions, UiAction::SetKeyboardCaptured(query_focus.get()));
     }
@@ -1124,8 +1124,8 @@ fn online_card(m: &LevelMeta, st: &MenuState, actions: &Arc<Mutex<Vec<UiAction>>
     let id = m.id;
     let selected = st.online_selected == Some(m.id);
 
-    // Lazy-preview request: download level data once, generate ThumbPreview
-    // locally. Data-driven, not stored-thumbnail-driven.
+    // Lazy-preview request. This is intentionally data-driven, not stored
+    // thumbnail-driven: download level data once, generate ThumbPreview locally.
     let needs_preview =
         !st.online_previews.contains_key(&m.id) && !st.online_preview_pending.contains(&m.id);
     if needs_preview {

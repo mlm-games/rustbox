@@ -216,8 +216,7 @@ impl MenuState {
         self.browse_visible = visible;
     }
 
-    /// Client-side ordering for the online grid (raw list is kept sorted in
-    /// place so compose can render it directly).
+    /// Client-side ordering for the online grid.
     pub fn sort_online_levels(&mut self) {
         self.online_levels = crate::maker::online::sort_online(
             &self.online_levels,
@@ -226,9 +225,7 @@ impl MenuState {
         );
     }
 
-    /// Keep the online selection consistent after list mutations. No grid
-    /// keyboard cursor here, so a selection that vanished clears instead of
-    /// snapping to a cursor item.
+    /// Keep the online selection consistent after list mutations.
     pub fn reconcile_online_nav(&mut self) {
         if self.online_levels.is_empty() {
             self.online_selected = None;
