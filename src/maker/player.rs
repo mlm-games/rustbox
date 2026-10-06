@@ -18,6 +18,7 @@ use super::interactive_blocks::OnOffState;
 use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::props::{DriftPlate, RuntimeSolids, Velocity};
+use super::screen::Trauma;
 
 /// Default jump impulse (shared with stomp bounce etc.).
 pub const JUMP_SPEED: f32 = 9.0;
@@ -627,26 +628,71 @@ fn plate_step(drift: &DriftPlate, vel: Option<&Velocity>, dt: f32) -> Vec3 {
     drift.carry
 }
 
-#[derive(Resource, Default)]
-pub struct Trauma(pub f32);
-
-impl Trauma {
-    pub fn add(&mut self, amount: f32) {
-        self.0 = (self.0 + amount).clamp(0.0, 1.0);
-    }
-}
-
 #[derive(Component)]
-pub struct SquashStretch;
+pub struct SquashStretch {
+    t: f32,
+    duration: f32,
+    amount: Vec2,
+    /// Scale captured on the first animated tick, so the pop multiplies
+    /// whatever base it started from instead of stacking on itself.
+    original: Option<Vec3>,
+}
 
 /// Squash/stretch overwrites any active effect and captures the mid-effect
 /// scale as the new base, so a jump pop overlapping a landing pop drifts the
 /// base scale taller every short hop (e.g. bonking under a low platform).
 /// Skip retriggers while one is active; the visual pop is expendable, a
 /// permanent height change is not.
-fn squash_guarded(has_active: bool, _amount: Vec2, _duration: f32) {
+fn squash_guarded(
+    commands: &mut Commands,
+    entity: Entity,
+    has_active: bool,
+    amount: Vec2,
+    duration: f32,
+) {
     if has_active {
         return;
+    }
+    commands.entity(entity).insert(SquashStretch {
+        t: 0.0,
+        duration,
+        amount,
+        original: None,
+    });
+}
+
+/// Advance every live squash & stretch. Runs in every mode so a pop that is
+/// mid-flight when play ends still eases back instead of freezing the scale.
+pub fn animate_squash(
+    time: Res<SimTime>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut PlayerTransform, &mut SquashStretch), Without<Player>>,
+) {
+    let dt = time.delta_secs;
+    if dt <= 0.0 {
+        return;
+    }
+    for (entity, mut transform, mut squash) in &mut q {
+        let original = *squash.original.get_or_insert(transform.scale);
+        squash.t += dt;
+        let t = (squash.t / squash.duration.max(f32::EPSILON)).min(1.0);
+        let amount = Vec3::new(squash.amount.x, squash.amount.y, 1.0);
+        transform.scale = if t < 0.5 {
+            let u = t / 0.5;
+            original
+                * Vec3::new(
+                    1.0 + (squash.amount.x - 1.0) * u,
+                    1.0 + (squash.amount.y - 1.0) * u,
+                    1.0,
+                )
+        } else {
+            let u = (t - 0.5) / 0.5;
+            original * (amount + (Vec3::ONE - amount) * u)
+        };
+        if t >= 1.0 {
+            transform.scale = original;
+            commands.entity(entity).remove::<SquashStretch>();
+        }
     }
 }
 
@@ -660,6 +706,7 @@ pub fn player_controller(
     solids: Res<RuntimeSolids>,
     tuning: Res<MoveTuning>,
     mut trauma: ResMut<Trauma>,
+    mut commands: Commands,
     plates: Query<(Entity, &Transform, &DriftPlate, Option<&Velocity>), Without<Player>>,
     onoff: Res<OnOffState>,
     squash_q: Query<Entity, With<SquashStretch>>,
@@ -987,7 +1034,7 @@ pub fn player_controller(
             player.plate_vel = Vec3::ZERO;
             player.jump_held = true;
             let squashing = squash_q.contains(entity);
-            squash_guarded(squashing, Vec2::new(0.72, 1.35), 0.10);
+            squash_guarded(&mut commands, entity, squashing, Vec2::new(0.72, 1.35), 0.10);
             trauma.add(0.04);
         }
 
@@ -1360,13 +1407,13 @@ pub fn player_controller(
             let squashing = squash_q.contains(entity);
             if player.slamming {
                 let amount = (impact / 40.0).clamp(0.15, 0.45);
-                squash_guarded(squashing, Vec2::new(1.45, 0.55), 0.16);
+                squash_guarded(&mut commands, entity, squashing, Vec2::new(1.45, 0.55), 0.16);
                 trauma.add(amount);
             } else if impact > tuning.land_squash_min_impact {
                 let t = ((impact - tuning.land_squash_min_impact) / 18.0).clamp(0.0, 1.0);
                 let sx = 1.0 + 0.28 * t;
                 let sy = 1.0 - 0.32 * t;
-                squash_guarded(squashing, Vec2::new(sx, sy), 0.08 + 0.06 * t);
+                squash_guarded(&mut commands, entity, squashing, Vec2::new(sx, sy), 0.08 + 0.06 * t);
                 if impact > 8.0 {
                     trauma.add(((impact - 8.0) / 40.0).clamp(0.04, 0.30));
                 }
@@ -1430,7 +1477,7 @@ pub fn player_controller(
         {
             player.velocity.y = tuning.jump_speed * 1.55;
             let squashing = squash_q.contains(entity);
-            squash_guarded(squashing, Vec2::new(0.65, 1.45), 0.12);
+            squash_guarded(&mut commands, entity, squashing, Vec2::new(0.65, 1.45), 0.12);
             trauma.add(0.08);
             player.on_ground = false;
             player.coyote = 0.0;

@@ -40,19 +40,23 @@ use maker::mode::{
 };
 use maker::online::LevelMeta;
 use maker::player::{
-    MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, Trauma,
+    MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, animate_squash,
     clear_pressed_latch, latch_play_presses, player_controller, spawn_player, sync_mode,
 };
+use maker::screen::{FlashWhite, ShakeRng, Trauma};
 use maker::props::RuntimeSolids;
 use maker::track::{ActiveTrack, TrackMode};
-use maker::{Paused, edit_ops, gizmos, interaction, not_paused, rapier, storage, win};
+use maker::{Paused, backdrop, edit_ops, gizmos, interaction, not_paused, rapier, storage, win};
 use repame_shell::{Sim, Staging};
-use repame_view3d::{BatchDesc, Frame3d, GeomHandle, OrbitCamera, View3dEvent, Viewport3d};
+use repame_view3d::{
+    Frame3d, GeomHandle, LightRig, OrbitCamera, SceneLight, View3dEvent, Viewport3d,
+};
 use repose_core::input::{
     Key, KeyEvent, KeyEventType, PhysicalKey, PointerButton, PointerEvent, PointerEventKind,
 };
 use repose_core::{
-    CursorIcon, FocusRequester, Modifier, RenderContext, Scheduler, View, remember, request_frame,
+    Color, CursorIcon, FocusRequester, Modifier, RenderContext, Scheduler, View, remember,
+    request_frame,
 };
 use repose_ui::{ViewExt, ZStack};
 use web_time::Instant;
@@ -67,6 +71,7 @@ struct App {
     sim: Rc<RefCell<Sim>>,
     cam: Rc<Cell<OrbitCamera>>,
     world: Rc<RefCell<LevelView>>,
+    characters: maker::characters::CharacterView,
     button: Rc<Cell<Option<PointerButton>>>,
     primary_held: Rc<Cell<bool>>,
     secondary_held: Rc<Cell<bool>>,
@@ -109,6 +114,8 @@ impl App {
         sim.world.insert_resource(RuntimeSolids::default());
         sim.world.insert_resource(OnOffState::default());
         sim.world.insert_resource(Trauma::default());
+        sim.world.insert_resource(FlashWhite::default());
+        sim.world.insert_resource(ShakeRng::default());
         sim.world.insert_resource(EntityEntities::default());
         sim.world.insert_resource(DropIdCounter::default());
         sim.world.insert_resource(CameraRig::default());
@@ -156,6 +163,7 @@ impl App {
                 carry_crate_riders,
                 rebuild_runtime_solids,
                 apply_fans,
+                animate_squash,
                 player_controller,
                 clear_pressed_latch,
             )
@@ -179,6 +187,7 @@ impl App {
                 fov_y_deg: 45.0,
             })),
             world,
+            characters: maker::characters::CharacterView::new(),
             button: Rc::new(Cell::new(None)),
             primary_held: Rc::new(Cell::new(false)),
             secondary_held: Rc::new(Cell::new(false)),
@@ -291,6 +300,7 @@ impl App {
         win::tick_play_timer(&mut sim.world, mode, dt_secs);
         win::detect_goal(&mut sim.world, mode);
         win::tick_status(&mut sim.world, dt_secs);
+        maker::screen::tick(&mut sim.world, dt_secs);
         maker::limits::update_level_stats(&mut sim.world);
         if mode == MakerMode::Play {
             self.cam.set(cam);
@@ -420,6 +430,7 @@ impl App {
         } else {
             Vec::new()
         };
+        let shake = maker::screen::shake_offset(&mut sim.world);
         let mut level = sim.world.resource_mut::<LevelDocument>();
         let mut world = self.world.borrow_mut();
         world.tick(&mut level, cam.target);
@@ -428,6 +439,12 @@ impl App {
             cam,
             ..Frame3d::default()
         };
+        frame.cam.target += shake;
+        frame.background = Some(backdrop::sky_color(&level));
+        frame.set_rig(theme_rig(level.data.theme));
+        // Face culling inside the push helpers must see the shaken eye, or a
+        // boundary wall can drop the face the camera is looking at.
+        let eye = frame.cam.eye();
         frame.push(ground());
         world.draw(
             &mut frame,
@@ -435,22 +452,39 @@ impl App {
             preview_cell.filter(|_| !paste_on),
             in_edit,
         );
+        for group in backdrop::groups(&level, in_edit, eye) {
+            frame.push(group);
+        }
         for group in gizmo_groups {
             frame.push(group);
         }
 
         drop(world);
         drop(level);
-        if mode == MakerMode::Play
-            && let (Some(p), Some(tf)) = (
-                sim.world.get::<Player>(self.player),
-                sim.world.get::<PlayerTransform>(self.player),
-            )
-            && tf.visible
+        // `visible` is the player root's gate (cleared for Edit), the same flag
+        // the original used to hide the model outside play.
+        let player_transform = sim.world.get::<PlayerTransform>(self.player);
+        let player_drawable =
+            mode == MakerMode::Play && player_transform.is_some_and(|tf| tf.visible);
+        let player_modelled = player_drawable
+            && self.characters.draw(
+                self.player,
+                &sim.world,
+                &mut self.world.borrow_mut().assets,
+                dt_secs,
+                &mut frame,
+            );
+        if !player_modelled
+            && player_drawable
+            && let (Some(p), Some(tf)) = (sim.world.get::<Player>(self.player), player_transform)
         {
             frame.push(player_box(p, tf));
         }
-        draw_props(&sim.world, &mut frame);
+        draw_props(&sim.world, &mut self.world.borrow_mut().assets, &mut frame);
+        // Pages can be imported by any of the three passes above, so the batch
+        // shape and its uploads are settled last.
+        frame.desc = self.world.borrow().assets.desc();
+        frame.uploads = self.world.borrow().assets.uploads();
         drop(sim);
 
         self.hotkeys(sched, &edges);
@@ -463,11 +497,12 @@ impl App {
         let ctrl_rc = self.ctrl.clone();
         let shift_rc = self.shift.clone();
         let looked_rc = self.looked.clone();
+        let desc = frame.desc;
         let viewport = Viewport3d(
             frame,
             GeomHandle::new(),
             "scene.main",
-            BatchDesc::default(),
+            desc,
             move |ev| {
                 let mut c = cam_rc.get();
                 let (play_live, in_edit, ui_wants_pointer, ctrl) = {
@@ -485,7 +520,14 @@ impl App {
                     )
                 };
                 match ev {
-                    View3dEvent::Orbit { dx, dy } => {
+                    // Look keys off the raw drag, not the derived Orbit
+                    // gesture: the viewport reports a non-primary or
+                    // shift-modified drag as Pan instead, which used to make
+                    // right-drag / shift-drag look dead in Play. One drag
+                    // event fires alongside Orbit/Pan, so this stays single
+                    // sourced.
+                    View3dEvent::Orbit { .. } | View3dEvent::Pan { .. } => {}
+                    View3dEvent::Drag { dx, dy, .. } => {
                         if play_live {
                             if dx * dx + dy * dy > 0.01 {
                                 let Ok(mut sim) = sim_rc.try_borrow_mut() else {
@@ -497,9 +539,11 @@ impl App {
                                     (rig.pitch + dy * rig.look_sensitivity).clamp(0.08, 1.25);
                                 looked_rc.set(true);
                             }
+                        } else if in_edit && !ui_wants_pointer && !ctrl && secondary_rc.get() {
+                            c.yaw += dx * 0.005;
+                            c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
                         }
                     }
-                    View3dEvent::Pan { .. } => {}
                     View3dEvent::Zoom { factor } => {
                         if play_live {
                             let scroll = (1.0 - factor) / 0.002;
@@ -521,12 +565,6 @@ impl App {
                         }
                     }
                     View3dEvent::Hover { .. } | View3dEvent::HoverMesh { .. } => {}
-                    View3dEvent::Drag { dx, dy, .. } => {
-                        if in_edit && !ui_wants_pointer && !ctrl && secondary_rc.get() {
-                            c.yaw += dx * 0.005;
-                            c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
-                        }
-                    }
                     click @ (View3dEvent::GroundClick { .. } | View3dEvent::MeshClick { .. }) => {
                         let button = button_rc.get();
                         let erase = matches!(button, Some(PointerButton::Secondary));
@@ -830,8 +868,25 @@ impl App {
             let mut layer: Vec<View> = Vec::new();
             if self.menus.phase == menus::AppState::InGame {
                 layer.push(viewport);
+                // Only now are the frame's texture uploads guaranteed to reach
+                // the renderer; frames built while the 3D view is unmounted are
+                // discarded, so their uploads stay queued.
+                self.world.borrow_mut().assets.confirm_uploads();
             }
             layer.push(menus::compose_root(&self.menus, self.menu_actions.clone()));
+            let flash = self
+                .sim
+                .try_borrow()
+                .map(|sim| sim.world.resource::<FlashWhite>().amount)
+                .unwrap_or(0.0);
+            if flash > 0.001 {
+                layer.push(ZStack(
+                    Modifier::new()
+                        .fill_max_size()
+                        .hit_passthrough()
+                        .background(Color(255, 255, 255, (flash * 255.0) as u8)),
+                ));
+            }
             layer
         })
     }
@@ -993,6 +1048,7 @@ impl App {
                         return Err(anyhow::anyhow!("view busy"));
                     };
                     view.release_stroke(&mut level);
+                    view.invalidate_models();
                     storage::apply_level_data(&mut level, &mut view.history, data);
                     level.data.name = meta.name.clone();
                     level.data.author = meta.author.clone();
@@ -1389,7 +1445,8 @@ impl App {
                                     return Err(anyhow::anyhow!("view busy"));
                                 };
                                 view.release_stroke(&mut level);
-                                storage::apply_level_data(&mut level, &mut view.history, data);
+                                view.invalidate_models();
+                    storage::apply_level_data(&mut level, &mut view.history, data);
                                 view.sync_source(&level);
                                 Ok(())
                             })
@@ -1656,7 +1713,8 @@ impl App {
                                     return Err(anyhow::anyhow!("view busy"));
                                 };
                                 view.release_stroke(&mut level);
-                                storage::apply_level_data(&mut level, &mut view.history, data);
+                                view.invalidate_models();
+                    storage::apply_level_data(&mut level, &mut view.history, data);
                                 view.sync_source(&level);
                                 *world.resource_mut::<maker::campaign::LevelSource>() =
                                     maker::campaign::LevelSource::Bundled(i as usize);
@@ -3362,6 +3420,25 @@ impl App {
     }
 }
 
+/// Sun direction toward the light, from the original's
+/// `DirectionalLight` rotation (`EulerRot::YXZ(-0.6, -0.9, 0.0)`, which
+/// shines along its local -Z). Shadows stay off, as in the original
+/// (`shadow_maps_enabled: false`).
+const SUN_DIR: [f32; 3] = [-0.351, 0.7833, 0.513];
+
+fn theme_rig(theme: rustbox_format::Theme) -> LightRig {
+    let ambient = maker::theme::theme_env(theme).ambient;
+    LightRig {
+        sun: SceneLight {
+            direction: SUN_DIR,
+            diffuse: 0.9,
+            ambient: [ambient, ambient, ambient],
+            ..SceneLight::default()
+        },
+        ..LightRig::default()
+    }
+}
+
 fn ground() -> repame_view3d::MeshGroup {
     let mut group = repame_view3d::MeshGroup {
         depth_test: true,
@@ -3469,5 +3546,21 @@ pub fn run() {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = repame_shell::run_web(move |sched, ctx| app.view(sched, ctx));
+    }
+}
+
+#[cfg(test)]
+mod schedule_smoke {
+    use super::*;
+
+    /// Bevy 0.19 reports intra-schedule query ambiguity (error[B0001]) at
+    /// schedule init, so building the app and stepping once is the only way
+    /// to catch a param-list mistake before it panics on a real frame.
+    #[test]
+    fn app_step_initializes_every_schedule() {
+        let mut app = App::new();
+        let mut sched = Scheduler::default();
+        let ctx = RenderContext::default();
+        let _ = app.view(&mut sched, &ctx);
     }
 }

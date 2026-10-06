@@ -18,8 +18,9 @@ use super::level::LevelDocument;
 use super::mode::MakerMode;
 use super::player::{
     ActionState, JUMP_SPEED, MoveState, PlayIntent, Player, PlayerMoveMode, PlayerTransform,
-    Trauma, respawn_player,
+    respawn_player,
 };
+use super::screen::{FlashWhite, Trauma};
 use super::props::{RuntimeSolids, Velocity};
 use super::win::MakerUi;
 
@@ -1526,6 +1527,7 @@ fn damage_player(world: &mut World, player_e: Entity, amount: u8) {
     world.resource_mut::<MakerUi>().deaths += 1;
     respawn(world, player_e);
     world.resource_mut::<Trauma>().add(0.35);
+    world.resource_mut::<FlashWhite>().flash(0.15);
     world.resource_mut::<MakerUi>().set_status("Ouch!");
 }
 

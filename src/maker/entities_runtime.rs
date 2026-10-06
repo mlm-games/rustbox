@@ -1,14 +1,15 @@
 use std::collections::HashMap;
 
 use bevy_ecs::prelude::*;
-use glam::{IVec3, Quat, Vec3};
+use glam::{IVec3, Mat4, Quat, Vec3};
 use repame_shell::SimTime;
 use repame_view3d::{Frame3d, MeshGroup};
 
 use super::Paused;
+use super::assets::{ModelAssets, push_instance, tint_instance};
 use super::collision::is_solid;
 use super::entity_data::{
-    ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId,
+    ContainedItem, EntityDataExt, EntityKind, EntityKindColor, LevelEntityId, link_color,
 };
 use super::interaction::{
     InteractionMemory, MAX_FAN_FORCE, cap_fan_force, contact_he, gateway_blocked, heal_allowed,
@@ -17,7 +18,8 @@ use super::interaction::{
 use super::level::LevelDocument;
 use super::level_view::srgb_to_linear;
 use super::mode::MakerMode;
-use super::player::{Player, PlayerTransform, Trauma};
+use super::player::{Player, PlayerTransform};
+use super::screen::Trauma;
 use super::props::{DriftPlate, RuntimeSolid, RuntimeSolids, SolidShape, Velocity};
 use super::rapier::crate_body;
 use super::track::{TrackDataExt, TrackId};
@@ -1782,12 +1784,16 @@ fn push_prop(group: &mut MeshGroup, kind: EntityKind, center: Vec3, rotation: Qu
     }
 }
 
-pub fn draw_props(world: &World, frame: &mut Frame3d) {
+pub fn draw_props(world: &World, assets: &mut ModelAssets, frame: &mut Frame3d) {
     let elapsed = world.resource::<SimTime>().elapsed_secs as f32;
+    let level = world.resource::<LevelDocument>();
     let mut group = MeshGroup {
         depth_test: true,
         ..MeshGroup::default()
     };
+    // Instances batch per model: one group per template group, filled as the
+    // matching entities are walked.
+    let mut by_template: Vec<(usize, Vec<MeshGroup>)> = Vec::new();
     let mut drew = false;
     for e in world.iter_entities() {
         let Some(tf) = e.get::<Transform>() else {
@@ -1832,17 +1838,74 @@ pub fn draw_props(world: &World, frame: &mut Frame3d) {
         }
         let mut center = tf.translation;
         let mut rotation = tf.rotation;
+        let scale = tf.scale;
         if let Some(anim) = e.get::<KitAnim>() {
             if anim.bob > 0.0 {
                 center.y += (elapsed * 3.0 + anim.seed).sin() * anim.bob;
             }
             rotation = rotation * Quat::from_rotation_y(anim.spin * elapsed);
         }
-        push_prop(&mut group, ent.kind, center, rotation);
-        drew = true;
+        match assets.entity(ent.kind) {
+            Some(template) => {
+                let key = std::rc::Rc::as_ptr(&template) as *const u8 as usize;
+                let slot = match by_template.iter().position(|(k, _)| *k == key) {
+                    Some(index) => index,
+                    None => {
+                        by_template.push((
+                            key,
+                            template
+                                .groups
+                                .iter()
+                                .map(|_| MeshGroup {
+                                    depth_test: true,
+                                    ..MeshGroup::default()
+                                })
+                                .collect(),
+                        ));
+                        by_template.len() - 1
+                    }
+                };
+                let pose = Mat4::from_scale_rotation_translation(scale, rotation, center);
+                let matrix = template.matrix_from(pose);
+                // `Kind` / `Link` manifest rows are force-tinted flat, as the
+                // original did, so channel colour still reads at a glance.
+                let flat = match template.tint {
+                    crate::maker::assets::TintMode::Model => None,
+                    crate::maker::assets::TintMode::Kind => {
+                        Some(srgb_to_linear(ent.kind.color()))
+                    }
+                    crate::maker::assets::TintMode::Link => level
+                        .entity_by_id(ent.id)
+                        .map(|data| srgb_to_linear(link_color(data.link))),
+                };
+                for (dst, src) in by_template[slot]
+                    .1
+                    .iter_mut()
+                    .zip(template.groups.iter())
+                {
+                    let from = dst.colors.len();
+                    push_instance(dst, src, matrix);
+                    if let Some(flat) = flat {
+                        tint_instance(dst, from, flat);
+                    }
+                }
+                drew = true;
+            }
+            None => {
+                push_prop(&mut group, ent.kind, center, rotation);
+                drew = true;
+            }
+        }
     }
     if drew {
         frame.push(group);
+    }
+    for (_, groups) in by_template {
+        for group in groups {
+            if !group.is_empty() {
+                frame.push(group);
+            }
+        }
     }
 }
 

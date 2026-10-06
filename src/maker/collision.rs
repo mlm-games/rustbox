@@ -487,10 +487,12 @@ fn resolve_axis(
                 } else {
                     (p[0], p[2])
                 };
-                // Outside the wedge footprint there is no material: skip the
-                // cell instead of treating it as a full-height box (phantom
-                // wall/top when rotated or at AABB corners).
-                let Some(top) = wedge_top_height(solid, sx, sz) else {
+                // Outside the solid's footprint there is no material: skip it
+                // instead of treating it as a full-height box (phantom
+                // wall/top at AABB corners). A wedge is tested in its own
+                // local frame; a box uses the same rotated-AABB footprint as
+                // the horizontal branch below, so the two stay consistent.
+                let Some(top) = solid_top_height(solid, sx, sz) else {
                     continue;
                 };
                 if feet <= top + 0.001 && start_feet >= top - 0.35 && start_head >= top - 0.001 {
@@ -2084,9 +2086,12 @@ mod tests {
                 waterlogged: false,
             }),
         );
-        let start = Vec3::new(0.5, 3.6, 0.5);
         let expected_top =
             surface_top_height(level.get_block(IVec3::new(0, 2, 0)).unwrap(), 0.5, 0.5);
+        // Start clear above the slab: landing on a one-way requires crossing
+        // its top from above, so a start inside the slab passes through by
+        // design.
+        let start = Vec3::new(0.5, expected_top + HE.y + 0.1, 0.5);
         let r = move_and_collide(start, HE, Vec3::new(0.0, -0.6, 0.0), &level, &[]);
         assert!(
             r.on_ground && (r.pos.y - HE.y - expected_top).abs() < 0.01,

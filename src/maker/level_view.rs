@@ -1,11 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use glam::{IVec3, Vec3};
+use rustbox_format::ALL_BLOCK_KINDS;
 use repame_view3d::{
     CHUNK_SIZE, Cell, ChunkCache, ChunkMeshInput, ChunkMeshOutput, ChunkStreamer, FaceKind,
     Frame3d, MeshGroup, OrbitCamera, Rgb, View3dEvent, VoxelShape, VoxelSource, build_chunk_mesh,
 };
 
+use super::assets::{ModelAssets, Template, TintMode, push_instance, tint_instance};
 use super::block::{BlockKind, BlockKindColor, BlockShape};
 use super::commands::{
     CommandHistory, EditCommand, apply_commands_immediate, build_block_data, detached_for,
@@ -18,6 +21,7 @@ use super::limits::LevelLimits;
 use super::mode::{
     BlockBrush, BlockPlaced, BoxFillStart, PlaceGhost, SelectedEntity, SelectionSet,
 };
+use super::block::ALL_BLOCK_SHAPES;
 use super::track::{ActiveTrack, TrackData, TrackMode};
 
 pub const DEFAULT_TRACK_SPEED: f32 = 2.0;
@@ -40,6 +44,12 @@ pub fn kind_of(id: u32) -> BlockKind {
         .get(id as usize)
         .copied()
         .unwrap_or(BlockKind::Grass)
+}
+
+/// Chunk a cell belongs to, matching the mesh cache's keying.
+fn chunk_key(cell: IVec3) -> [i32; 3] {
+    let chunk = super::chunk::chunk_of(cell);
+    [chunk.x, chunk.y, chunk.z]
 }
 
 fn voxel_shape(shape: BlockShape) -> VoxelShape {
@@ -109,18 +119,38 @@ pub struct LevelView {
     pub last_action: String,
     pub place_events: Vec<BlockPlaced>,
     pub ghosts: Vec<PlaceGhost>,
+    pub assets: ModelAssets,
     stroke: BoxFillStart,
     streamer: ChunkStreamer<LevelDocument, Classify, Solidity>,
     cache: ChunkCache,
     generation: u64,
+    /// Built pack-model geometry per chunk, rebuilt when the level marks that
+    /// chunk dirty.
+    block_models: HashMap<[i32; 3], Vec<MeshGroup>>,
+    pending_model_chunks: HashSet<[i32; 3]>,
+    /// Set until the first build, so a level that arrived already clean still
+    /// gets its models.
+    models_all_pending: bool,
 }
 
 impl LevelView {
     pub fn new(level: &LevelDocument) -> Self {
+        let assets = ModelAssets::new();
+        // Pairs the pack draws get their faces from the model instead of the
+        // voxel mesher, so a cell never renders its block twice.
+        let mut skip_overlay = HashSet::new();
+        for &kind in ALL_BLOCK_KINDS {
+            for &shape in ALL_BLOCK_SHAPES {
+                if assets.block_is_model(kind, shape) {
+                    skip_overlay.insert((kind_id(kind), voxel_shape(shape)));
+                }
+            }
+        }
         let input: ChunkMeshInput<Classify, Solidity> = ChunkMeshInput {
             classify,
             is_solid,
             kind_tint: kind_tints(),
+            skip_overlay,
             water_level: level.water_level(),
             lit: true,
             ..Default::default()
@@ -132,9 +162,13 @@ impl LevelView {
             last_action: String::new(),
             place_events: Vec::new(),
             ghosts: Vec::new(),
+            assets,
             stroke: BoxFillStart::default(),
             cache: ChunkCache::new(),
             generation: 0,
+            block_models: HashMap::new(),
+            pending_model_chunks: HashSet::new(),
+            models_all_pending: true,
         }
     }
 
@@ -148,6 +182,10 @@ impl LevelView {
             self.generation += 1;
             for (rank, chunk) in dirty.iter().enumerate() {
                 let key = [chunk.x, chunk.y, chunk.z];
+                // The same dirty signal invalidates the pack-model instances,
+                // so an idle frame rebuilds no block geometry.
+                self.block_models.remove(&key);
+                self.pending_model_chunks.insert(key);
                 if self.cache.is_stale(&key, self.generation) {
                     self.streamer.request(key, self.generation, rank as f32);
                 }
@@ -161,13 +199,16 @@ impl LevelView {
     }
 
     pub fn draw(
-        &self,
+        &mut self,
         frame: &mut Frame3d,
         level: &LevelDocument,
         preview: Option<IVec3>,
         in_edit: bool,
     ) {
         frame.extend_chunks(self.cache.draws());
+        for group in self.block_model_groups(level) {
+            frame.push(group);
+        }
         if !in_edit {
             return;
         }
@@ -194,6 +235,119 @@ impl LevelView {
 
     pub fn stroke_click_ready(&self) -> bool {
         self.stroke.last_paint.is_none() && self.stroke.last_erase.is_none()
+    }
+
+    /// Block models are cached per chunk and rebuilt only for chunks the level
+    /// marked dirty, keyed exactly like the mesh cache, so an idle frame does
+    /// no block geometry work. Within a chunk every cell drawn from the same
+    /// kind and shape batches into one set of groups, so the frame carries a
+    /// handful of draw groups instead of one per cell.
+    fn block_model_groups(&mut self, level: &LevelDocument) -> Vec<MeshGroup> {
+        if self.models_all_pending {
+            self.models_all_pending = false;
+            self.pending_model_chunks = level
+                .map
+                .keys()
+                .map(|cell| chunk_key(*cell))
+                .collect();
+        }
+        if !self.pending_model_chunks.is_empty() {
+            let pending = std::mem::take(&mut self.pending_model_chunks);
+            let mut by_chunk: HashMap<[i32; 3], Vec<(IVec3, BlockData)>> = HashMap::new();
+            for (cell, block) in &level.map {
+                let key = chunk_key(*cell);
+                if pending.contains(&key) {
+                    by_chunk.entry(key).or_default().push((*cell, block.clone()));
+                }
+            }
+            for (key, cells) in by_chunk {
+                let groups = self.build_chunk_models(level, cells);
+                self.block_models.insert(key, groups);
+            }
+        }
+        let mut keys: Vec<[i32; 3]> = self.block_models.keys().copied().collect();
+        keys.sort_unstable();
+        keys.into_iter()
+            .filter_map(|key| self.block_models.get(&key).cloned())
+            .flatten()
+            .filter(|group| !group.is_empty())
+            .collect()
+    }
+
+    /// Merge one chunk's model cells into per-template groups.
+    fn build_chunk_models(
+        &mut self,
+        level: &LevelDocument,
+        cells: Vec<(IVec3, BlockData)>,
+    ) -> Vec<MeshGroup> {
+        let mut templates: Vec<(Rc<Template>, Vec<MeshGroup>)> = Vec::new();
+        let mut fallback: Vec<(IVec3, BlockKind, BlockShape, u8)> = Vec::new();
+        for (cell, block) in cells {
+            if block.kind.is_pulse() && !level.pulse_on {
+                continue;
+            }
+            if !self.assets.block_is_model(block.kind, block.shape) {
+                continue;
+            }
+            let Some(template) = self.assets.block(block.kind, block.shape) else {
+                fallback.push((cell, block.kind, block.shape, block.rot));
+                continue;
+            };
+            let index = match templates
+                .iter()
+                .position(|(known, _)| Rc::ptr_eq(known, &template))
+            {
+                Some(index) => index,
+                None => {
+                    templates.push((
+                        Rc::clone(&template),
+                        template
+                            .groups
+                            .iter()
+                            .map(|_| MeshGroup {
+                                depth_test: true,
+                                // Terrain pick id, so a click on a pack-model
+                                // cell still resolves as a terrain hit now that
+                                // its voxel faces are skipped.
+                                pick_id: TERRAIN_PICK,
+                                ..MeshGroup::default()
+                            })
+                            .collect(),
+                    ));
+                    templates.len() - 1
+                }
+            };
+            let matrix = template.matrix(
+                cell.as_vec3() + Vec3::splat(0.5),
+                block.rot as f32 * std::f32::consts::FRAC_PI_2,
+            );
+            let flat = (template.tint != TintMode::Model)
+                .then(|| srgb_to_linear(block.kind.color()));
+            for (dst, src) in templates[index].1.iter_mut().zip(template.groups.iter()) {
+                let from = dst.colors.len();
+                push_instance(dst, src, matrix);
+                if let Some(flat) = flat {
+                    tint_instance(dst, from, flat);
+                }
+            }
+        }
+        let mut out: Vec<MeshGroup> = templates
+            .iter()
+            .flat_map(|(_, groups)| groups.iter().filter(|g| !g.is_empty()).cloned())
+            .collect();
+        // A cell whose model failed to import still needs geometry: the voxel
+        // faces were skipped for it, so draw the procedural shape here.
+        for (cell, kind, shape, rot) in fallback {
+            let data = BlockData {
+                position: cell.to_array(),
+                kind,
+                shape,
+                rot,
+                waterlogged: false,
+            };
+            out.push(shaped_group(&data, 1.0));
+        }
+        out
     }
 
     pub fn undo(&mut self, level: &mut LevelDocument) {
@@ -715,6 +869,15 @@ impl LevelView {
 
     pub fn sync_source(&mut self, level: &LevelDocument) {
         self.streamer.set_source(level.clone());
+    }
+
+    /// Drop every cached pack-model chunk. A replaced level can leave chunk
+    /// keys the new map never marks dirty, so their geometry would linger
+    /// forever without this.
+    pub fn invalidate_models(&mut self) {
+        self.block_models.clear();
+        self.pending_model_chunks.clear();
+        self.models_all_pending = true;
     }
 }
 

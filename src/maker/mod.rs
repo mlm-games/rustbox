@@ -1,8 +1,11 @@
 use bevy_ecs::prelude::{Res, Resource};
 
+pub mod assets;
+pub mod backdrop;
 pub mod block;
 pub mod camera;
 pub mod campaign;
+pub mod characters;
 pub mod catalog;
 pub mod chunk;
 pub mod collision;
@@ -24,7 +27,9 @@ pub mod palette;
 pub mod player;
 pub mod props;
 pub mod rapier;
+pub mod screen;
 pub mod storage;
+pub mod theme;
 pub mod thumbnail;
 pub mod track;
 pub mod win;

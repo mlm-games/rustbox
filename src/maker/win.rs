@@ -8,7 +8,8 @@ use super::entity_data::{ContainedItem, EntityKind};
 use super::interaction::contact_he;
 use super::level::{ClearCondition, LevelDocument};
 use super::mode::MakerMode;
-use super::player::{MoveState, PlayIntent, Player, PlayerTransform, Trauma};
+use super::player::{MoveState, PlayIntent, Player, PlayerTransform};
+use super::screen::{FlashWhite, Trauma};
 
 #[derive(Resource, Debug, Default)]
 pub struct MakerUi {
@@ -188,6 +189,7 @@ pub fn detect_goal(world: &mut World, mode: MakerMode) {
                 }
             });
             world.resource_mut::<Trauma>().add(0.45);
+            world.resource_mut::<FlashWhite>().flash(0.25);
             world.resource_mut::<super::Paused>().0 = true;
             world.resource_mut::<MakerUi>().clear_pending = true;
             world.resource_mut::<MakerUi>().set_status("Level clear!");
@@ -345,6 +347,7 @@ mod tests {
         sim.world.insert_resource(Paused(paused));
         sim.world.insert_resource(MakerUi::default());
         sim.world.insert_resource(Trauma::default());
+        sim.world.insert_resource(FlashWhite::default());
         sim.world.insert_resource(PlayIntent::default());
         sim.world.insert_resource(PressedLatch::default());
         sim.world.insert_resource(MoveTuning::default());

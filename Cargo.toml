@@ -45,6 +45,7 @@ serde_json = "1"
 ron = "0.12"
 directories = "6"
 anyhow = "1"
+log = "0.4"
 glam = "0.33"
 web-time = "1"
 rustbox-format = { path = "crates/rustbox-format" }

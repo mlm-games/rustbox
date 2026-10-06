@@ -2,7 +2,7 @@ use glam::{IVec3, Vec3};
 use repame_view3d::{MeshGroup, Rgb};
 
 use super::edit_ops::transformed_cell;
-use super::entity_data::{EntityDataExt, EntityKind};
+use super::entity_data::{EntityData, EntityDataExt, EntityKind, link_color};
 use super::level::LevelDocument;
 use super::level_view::srgb_to_linear;
 use super::mode::{BoxFillStart, BrushTab, PastePreview, SelectedEntity, SelectionSet};
@@ -337,6 +337,32 @@ fn track_groups(level: &LevelDocument, active: &ActiveTrack, eye: Vec3) -> Vec<M
     out
 }
 
+/// Edit-mode wires between same-channel linked entities, at the original's
+/// 1.2-cell hover height (`entities_runtime::draw_link_gizmos`).
+fn link_groups(level: &LevelDocument) -> Vec<MeshGroup> {
+    let linked: Vec<&EntityData> = level
+        .data
+        .entities
+        .iter()
+        .filter(|entity| entity.link != 0 && entity.kind.uses_link())
+        .collect();
+    let mut out = Vec::new();
+    for (index, a) in linked.iter().enumerate() {
+        for b in &linked[index + 1..] {
+            if a.link != b.link {
+                continue;
+            }
+            let color = srgb_to_linear(link_color(a.link));
+            let mut group = gizmo_group(0.8);
+            let pa = a.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
+            let pb = b.cell_i().as_vec3() + Vec3::new(0.5, 1.2, 0.5);
+            ribbon(&mut group, pa, pb, color, 0.03);
+            push_nonempty(&mut out, group);
+        }
+    }
+    out
+}
+
 pub fn edit_groups(
     level: &LevelDocument,
     cursor_place: Option<IVec3>,
@@ -358,5 +384,6 @@ pub fn edit_groups(
     out.extend(selection_groups(level, selection, selected, eye));
     out.extend(paste_groups(paste, eye));
     out.extend(track_groups(level, active, eye));
+    out.extend(link_groups(level));
     out
 }
