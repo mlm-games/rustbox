@@ -149,9 +149,12 @@ fn next_yaw(yaw: f32, dt: f32, wish: Option<Vec2>, velocity: Vec2) -> f32 {
     if face.length_squared() <= 1e-6 {
         return yaw;
     }
-    // Model forward is local -Z (pack convention).
+    // This model's forward is local +Z, not -Z. Measured from the file: the leg
+    // IK pole targets sit at world z = +0.96, nearly a metre ahead of the hips
+    // (z = -0.01), and knees bend toward their pole. The original assumed -Z
+    // and so turned the player around.
     let d = face.normalize();
-    let target = (-d.x).atan2(-d.y);
+    let target = d.x.atan2(d.y);
     let turn = (1.0 - (-TURN_RATE * dt).exp()).clamp(0.0, 1.0);
     yaw + shortest_angle(yaw, target) * turn
 }
