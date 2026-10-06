@@ -2,13 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use glam::{IVec3, Vec3};
-use rustbox_format::ALL_BLOCK_KINDS;
 use repame_view3d::{
     CHUNK_SIZE, Cell, ChunkCache, ChunkMeshInput, ChunkMeshOutput, ChunkStreamer, FaceKind,
     Frame3d, MeshGroup, OrbitCamera, Rgb, View3dEvent, VoxelShape, VoxelSource, build_chunk_mesh,
 };
+use rustbox_format::ALL_BLOCK_KINDS;
 
 use super::assets::{ModelAssets, Template, TintMode, push_instance, tint_instance};
+use super::block::ALL_BLOCK_SHAPES;
 use super::block::{BlockKind, BlockKindColor, BlockShape};
 use super::commands::{
     CommandHistory, EditCommand, apply_commands_immediate, build_block_data, detached_for,
@@ -21,7 +22,6 @@ use super::limits::LevelLimits;
 use super::mode::{
     BlockBrush, BlockPlaced, BoxFillStart, PlaceGhost, SelectedEntity, SelectionSet,
 };
-use super::block::ALL_BLOCK_SHAPES;
 use super::track::{ActiveTrack, TrackData, TrackMode};
 
 pub const DEFAULT_TRACK_SPEED: f32 = 2.0;
@@ -245,11 +245,7 @@ impl LevelView {
     fn block_model_groups(&mut self, level: &LevelDocument) -> Vec<MeshGroup> {
         if self.models_all_pending {
             self.models_all_pending = false;
-            self.pending_model_chunks = level
-                .map
-                .keys()
-                .map(|cell| chunk_key(*cell))
-                .collect();
+            self.pending_model_chunks = level.map.keys().map(|cell| chunk_key(*cell)).collect();
         }
         if !self.pending_model_chunks.is_empty() {
             let pending = std::mem::take(&mut self.pending_model_chunks);
@@ -257,7 +253,10 @@ impl LevelView {
             for (cell, block) in &level.map {
                 let key = chunk_key(*cell);
                 if pending.contains(&key) {
-                    by_chunk.entry(key).or_default().push((*cell, block.clone()));
+                    by_chunk
+                        .entry(key)
+                        .or_default()
+                        .push((*cell, block.clone()));
                 }
             }
             for (key, cells) in by_chunk {
@@ -321,8 +320,8 @@ impl LevelView {
                 cell.as_vec3() + Vec3::splat(0.5),
                 block.rot as f32 * std::f32::consts::FRAC_PI_2,
             );
-            let flat = (template.tint != TintMode::Model)
-                .then(|| srgb_to_linear(block.kind.color()));
+            let flat =
+                (template.tint != TintMode::Model).then(|| srgb_to_linear(block.kind.color()));
             for (dst, src) in templates[index].1.iter_mut().zip(template.groups.iter()) {
                 let from = dst.colors.len();
                 push_instance(dst, src, matrix);

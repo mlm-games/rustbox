@@ -19,9 +19,9 @@ use super::level::LevelDocument;
 use super::level_view::srgb_to_linear;
 use super::mode::MakerMode;
 use super::player::{Player, PlayerTransform};
-use super::screen::Trauma;
 use super::props::{DriftPlate, RuntimeSolid, RuntimeSolids, SolidShape, Velocity};
 use super::rapier::crate_body;
+use super::screen::Trauma;
 use super::track::{TrackDataExt, TrackId};
 use super::win::MakerUi;
 use repame_rapier3d::BodySnapshot3d;
@@ -1871,18 +1871,12 @@ pub fn draw_props(world: &World, assets: &mut ModelAssets, frame: &mut Frame3d) 
                 // original did, so channel colour still reads at a glance.
                 let flat = match template.tint {
                     crate::maker::assets::TintMode::Model => None,
-                    crate::maker::assets::TintMode::Kind => {
-                        Some(srgb_to_linear(ent.kind.color()))
-                    }
+                    crate::maker::assets::TintMode::Kind => Some(srgb_to_linear(ent.kind.color())),
                     crate::maker::assets::TintMode::Link => level
                         .entity_by_id(ent.id)
                         .map(|data| srgb_to_linear(link_color(data.link))),
                 };
-                for (dst, src) in by_template[slot]
-                    .1
-                    .iter_mut()
-                    .zip(template.groups.iter())
-                {
+                for (dst, src) in by_template[slot].1.iter_mut().zip(template.groups.iter()) {
                     let from = dst.colors.len();
                     push_instance(dst, src, matrix);
                     if let Some(flat) = flat {

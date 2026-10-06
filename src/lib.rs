@@ -40,14 +40,14 @@ use maker::mode::{
 };
 use maker::online::LevelMeta;
 use maker::player::{
-    MoveTuning, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch, animate_squash,
+    MoveTuning, PadInput, PlayIntent, PlayKeys, Player, PlayerTransform, PressedLatch,
     clear_pressed_latch, latch_play_presses, player_controller, spawn_player, sync_mode,
 };
-use maker::screen::{FlashWhite, ShakeRng, Trauma};
 use maker::props::RuntimeSolids;
+use maker::screen::{FlashWhite, ShakeRng, Trauma};
 use maker::track::{ActiveTrack, TrackMode};
 use maker::{Paused, backdrop, edit_ops, gizmos, interaction, not_paused, rapier, storage, win};
-use repame_shell::{Sim, Staging};
+use repame_shell::{GamepadPoller, PadBank, Sim, Staging};
 use repame_view3d::{
     Frame3d, GeomHandle, LightRig, OrbitCamera, SceneLight, View3dEvent, Viewport3d,
 };
@@ -79,6 +79,8 @@ struct App {
     ctrl: Rc<Cell<bool>>,
     shift: Rc<Cell<bool>>,
     staging: Rc<RefCell<Staging>>,
+    pad_poller: GamepadPoller,
+    pad_bank: PadBank,
     player: Entity,
     prev_mode: MakerMode,
     looked: Rc<Cell<bool>>,
@@ -109,6 +111,7 @@ impl App {
         sim.world.insert_resource(EditorCursor::default());
         sim.world.insert_resource(MirrorMode::default());
         sim.world.insert_resource(PlayIntent::default());
+        sim.world.insert_resource(PadInput::default());
         sim.world.insert_resource(PressedLatch::default());
         sim.world.insert_resource(MoveTuning::default());
         sim.world.insert_resource(RuntimeSolids::default());
@@ -163,7 +166,6 @@ impl App {
                 carry_crate_riders,
                 rebuild_runtime_solids,
                 apply_fans,
-                animate_squash,
                 player_controller,
                 clear_pressed_latch,
             )
@@ -195,6 +197,8 @@ impl App {
             ctrl: Rc::new(Cell::new(false)),
             shift: Rc::new(Cell::new(false)),
             staging: Staging::shared(),
+            pad_poller: GamepadPoller::new(),
+            pad_bank: PadBank::default(),
             player,
             prev_mode: MakerMode::Edit,
             looked: Rc::new(Cell::new(false)),
@@ -498,286 +502,275 @@ impl App {
         let shift_rc = self.shift.clone();
         let looked_rc = self.looked.clone();
         let desc = frame.desc;
-        let viewport = Viewport3d(
-            frame,
-            GeomHandle::new(),
-            "scene.main",
-            desc,
-            move |ev| {
-                let mut c = cam_rc.get();
-                let (play_live, in_edit, ui_wants_pointer, ctrl) = {
-                    let Ok(sim) = sim_rc.try_borrow() else {
-                        return;
-                    };
-                    let m = *sim.world.resource::<MakerMode>();
-                    let paused = sim.world.resource::<Paused>().0;
-                    let ui_wants_pointer = sim.world.resource::<InputCapture>().ui_wants_pointer;
-                    (
-                        m == MakerMode::Play && !paused,
-                        m == MakerMode::Edit,
-                        ui_wants_pointer,
-                        ctrl_rc.get(),
-                    )
+        let viewport = Viewport3d(frame, GeomHandle::new(), "scene.main", desc, move |ev| {
+            let mut c = cam_rc.get();
+            let (play_live, in_edit, ui_wants_pointer, ctrl) = {
+                let Ok(sim) = sim_rc.try_borrow() else {
+                    return;
                 };
-                match ev {
-                    // Look keys off the raw drag, not the derived Orbit
-                    // gesture: the viewport reports a non-primary or
-                    // shift-modified drag as Pan instead, which used to make
-                    // right-drag / shift-drag look dead in Play. One drag
-                    // event fires alongside Orbit/Pan, so this stays single
-                    // sourced.
-                    View3dEvent::Orbit { .. } | View3dEvent::Pan { .. } => {}
-                    View3dEvent::Drag { dx, dy, .. } => {
-                        if play_live {
-                            if dx * dx + dy * dy > 0.01 {
-                                let Ok(mut sim) = sim_rc.try_borrow_mut() else {
-                                    return;
-                                };
-                                let mut rig = sim.world.resource_mut::<CameraRig>();
-                                rig.yaw -= dx * rig.look_sensitivity;
-                                rig.pitch =
-                                    (rig.pitch + dy * rig.look_sensitivity).clamp(0.08, 1.25);
-                                looked_rc.set(true);
-                            }
-                        } else if in_edit && !ui_wants_pointer && !ctrl && secondary_rc.get() {
-                            c.yaw += dx * 0.005;
-                            c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
-                        }
-                    }
-                    View3dEvent::Zoom { factor } => {
-                        if play_live {
-                            let scroll = (1.0 - factor) / 0.002;
+                let m = *sim.world.resource::<MakerMode>();
+                let paused = sim.world.resource::<Paused>().0;
+                let ui_wants_pointer = sim.world.resource::<InputCapture>().ui_wants_pointer;
+                (
+                    m == MakerMode::Play && !paused,
+                    m == MakerMode::Edit,
+                    ui_wants_pointer,
+                    ctrl_rc.get(),
+                )
+            };
+            match ev {
+                // Look keys off the raw drag, not the derived Orbit
+                // gesture: the viewport reports a non-primary or
+                // shift-modified drag as Pan instead, which used to make
+                // right-drag / shift-drag look dead in Play. One drag
+                // event fires alongside Orbit/Pan, so this stays single
+                // sourced.
+                View3dEvent::Orbit { .. } | View3dEvent::Pan { .. } => {}
+                View3dEvent::Drag { dx, dy, .. } => {
+                    if play_live {
+                        if dx * dx + dy * dy > 0.01 {
                             let Ok(mut sim) = sim_rc.try_borrow_mut() else {
                                 return;
                             };
                             let mut rig = sim.world.resource_mut::<CameraRig>();
-                            rig.distance = (rig.distance - scroll * 0.9).clamp(5.0, 22.0);
-                        } else if in_edit && !ui_wants_pointer {
-                            let scroll = (1.0 - factor) / 0.002;
-                            c.dist = (c.dist - scroll * 1.5).clamp(4.0, 60.0);
+                            rig.yaw -= dx * rig.look_sensitivity;
+                            rig.pitch = (rig.pitch + dy * rig.look_sensitivity).clamp(0.08, 1.25);
+                            looked_rc.set(true);
+                        }
+                    } else if in_edit && !ui_wants_pointer && !ctrl && secondary_rc.get() {
+                        c.yaw += dx * 0.005;
+                        c.pitch = (c.pitch + dy * 0.005).clamp(0.05, 1.5);
+                    }
+                }
+                View3dEvent::Zoom { factor } => {
+                    if play_live {
+                        let scroll = (1.0 - factor) / 0.002;
+                        let Ok(mut sim) = sim_rc.try_borrow_mut() else {
+                            return;
+                        };
+                        let mut rig = sim.world.resource_mut::<CameraRig>();
+                        rig.distance = (rig.distance - scroll * 0.9).clamp(5.0, 22.0);
+                    } else if in_edit && !ui_wants_pointer {
+                        let scroll = (1.0 - factor) / 0.002;
+                        c.dist = (c.dist - scroll * 1.5).clamp(4.0, 60.0);
+                    }
+                }
+                View3dEvent::HoverRay { eye, dir } => {
+                    if in_edit {
+                        if let Ok(mut sim) = sim_rc.try_borrow_mut() {
+                            sim.world.resource_mut::<EditorCursor>().ray = Some((eye, dir));
                         }
                     }
-                    View3dEvent::HoverRay { eye, dir } => {
-                        if in_edit {
-                            if let Ok(mut sim) = sim_rc.try_borrow_mut() {
-                                sim.world.resource_mut::<EditorCursor>().ray = Some((eye, dir));
-                            }
-                        }
-                    }
-                    View3dEvent::Hover { .. } | View3dEvent::HoverMesh { .. } => {}
-                    click @ (View3dEvent::GroundClick { .. } | View3dEvent::MeshClick { .. }) => {
-                        let button = button_rc.get();
-                        let erase = matches!(button, Some(PointerButton::Secondary));
-                        let place = matches!(button, Some(PointerButton::Primary));
-                        let pick = matches!(button, Some(PointerButton::Tertiary));
-                        if in_edit && !ui_wants_pointer && (erase || place || pick) {
-                            let Ok(mut sim) = sim_rc.try_borrow_mut() else {
-                                return;
-                            };
-                            let paste_on = sim.world.resource::<PastePreview>().active;
-                            let tab = *sim.world.resource::<BrushTab>();
-                            let limits = *sim.world.resource::<LevelLimits>();
-                            let mirror = sim.world.resource::<MirrorMode>().0;
-                            let shift = shift_rc.get();
-                            let kb_ok = !sim.world.resource::<InputCapture>().ui_wants_keyboard;
-                            if paste_on {
-                                if place && kb_ok {
-                                    let (clipboard, pivot, yaw) = {
-                                        let pv = sim.world.resource::<PastePreview>();
-                                        (pv.clipboard.clone(), pv.current_pivot, pv.yaw)
-                                    };
-                                    let mut sel = sim.world.resource::<SelectionSet>().clone();
-                                    let mut sel_ent =
-                                        SelectedEntity(sim.world.resource::<SelectedEntity>().0);
-                                    let Ok(mut world) = world_rc.try_borrow_mut() else {
-                                        return;
-                                    };
-                                    let count = {
-                                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                                        world.paste_clipboard(
-                                            &mut level,
-                                            &mut sel,
-                                            &mut sel_ent,
-                                            &clipboard,
-                                            pivot,
-                                            yaw,
-                                            &limits,
-                                        )
-                                    };
-                                    *sim.world.resource_mut::<SelectionSet>() = sel;
-                                    sim.world.resource_mut::<SelectedEntity>().0 = sel_ent.0;
-                                    sim.world.resource_mut::<PastePreview>().active = false;
-                                    let msg = format!("Pasted {count} item(s)");
-                                    sim.world
-                                        .resource_mut::<win::MakerUi>()
-                                        .set_status(msg.clone());
-                                    world.last_action = msg;
-                                } else if erase && kb_ok {
-                                    sim.world.resource_mut::<PastePreview>().reset();
-                                    sim.world.resource_mut::<SelectionBoxStart>().start = None;
-                                    let msg = "Paste preview cancelled".to_string();
-                                    sim.world
-                                        .resource_mut::<win::MakerUi>()
-                                        .set_status(msg.clone());
-                                    if let Ok(mut world) = world_rc.try_borrow_mut() {
-                                        world.last_action = msg;
-                                    }
-                                }
-                            } else if ctrl {
-                                if place && kb_ok {
-                                    let resolved = {
-                                        let level = sim.world.resource::<LevelDocument>();
-                                        resolve_click(&level, &click, &c)
-                                    };
-                                    let Some((hit, _normal)) = resolved else {
-                                        return;
-                                    };
-                                    if !shift {
-                                        sim.world.resource_mut::<SelectionSet>().clear();
-                                        sim.world.resource_mut::<SelectedEntity>().0 = None;
-                                    }
-                                    let hit_entity = {
-                                        let level = sim.world.resource::<LevelDocument>();
-                                        level.top_entity_at_cell(hit).map(|e| e.id)
-                                    };
-                                    let has_block = {
-                                        let level = sim.world.resource::<LevelDocument>();
-                                        level.get_block(hit).is_some()
-                                    };
-                                    if let Some(id) = hit_entity {
-                                        sim.world.resource_mut::<SelectionSet>().toggle_entity(id);
-                                        sim.world.resource_mut::<SelectedEntity>().0 = Some(id);
-                                    } else if has_block {
-                                        sim.world.resource_mut::<SelectionSet>().toggle_block(hit);
-                                        sim.world.resource_mut::<SelectedEntity>().0 = None;
-                                    }
-                                    let count = sim.world.resource::<SelectionSet>().len();
-                                    let msg = format!("Selected {count} item(s)");
-                                    sim.world
-                                        .resource_mut::<win::MakerUi>()
-                                        .set_status(msg.clone());
-                                    if let Ok(mut world) = world_rc.try_borrow_mut() {
-                                        world.last_action = msg;
-                                    }
-                                }
-                            } else if pick {
-                                let resolved = {
-                                    let level = sim.world.resource::<LevelDocument>();
-                                    resolve_click(&level, &click, &c)
+                }
+                View3dEvent::Hover { .. } | View3dEvent::HoverMesh { .. } => {}
+                click @ (View3dEvent::GroundClick { .. } | View3dEvent::MeshClick { .. }) => {
+                    let button = button_rc.get();
+                    let erase = matches!(button, Some(PointerButton::Secondary));
+                    let place = matches!(button, Some(PointerButton::Primary));
+                    let pick = matches!(button, Some(PointerButton::Tertiary));
+                    if in_edit && !ui_wants_pointer && (erase || place || pick) {
+                        let Ok(mut sim) = sim_rc.try_borrow_mut() else {
+                            return;
+                        };
+                        let paste_on = sim.world.resource::<PastePreview>().active;
+                        let tab = *sim.world.resource::<BrushTab>();
+                        let limits = *sim.world.resource::<LevelLimits>();
+                        let mirror = sim.world.resource::<MirrorMode>().0;
+                        let shift = shift_rc.get();
+                        let kb_ok = !sim.world.resource::<InputCapture>().ui_wants_keyboard;
+                        if paste_on {
+                            if place && kb_ok {
+                                let (clipboard, pivot, yaw) = {
+                                    let pv = sim.world.resource::<PastePreview>();
+                                    (pv.clipboard.clone(), pv.current_pivot, pv.yaw)
                                 };
-                                let Some((hit, _)) = resolved else {
-                                    return;
-                                };
-                                let block = {
-                                    let level = sim.world.resource::<LevelDocument>();
-                                    level.get_block(hit).cloned()
-                                };
-                                let entity_kind = {
-                                    let level = sim.world.resource::<LevelDocument>();
-                                    level.top_entity_at_cell(hit).map(|e| e.kind)
-                                };
-                                if let Some(b) = block {
-                                    let Ok(mut world) = world_rc.try_borrow_mut() else {
-                                        return;
-                                    };
-                                    world.brush.kind = b.kind;
-                                    world.brush.shape = b.shape;
-                                    world.brush.rot = b.rot & 3;
-                                    world.brush.waterlogged = b.waterlogged;
-                                    *sim.world.resource_mut::<BrushTab>() = BrushTab::Blocks;
-                                    world.last_action = format!("pick {:?}", b.kind);
-                                } else if let Some(kind) = entity_kind {
-                                    sim.world.resource_mut::<SelectedEntityKind>().0 = kind;
-                                    *sim.world.resource_mut::<BrushTab>() = BrushTab::Entities;
-                                }
-                            } else {
-                                let resolved = {
-                                    let level = sim.world.resource::<LevelDocument>();
-                                    resolve_click(&level, &click, &c)
-                                };
-                                let Some((hit, normal)) = resolved else {
-                                    return;
-                                };
-                                let place_cell = hit + normal;
+                                let mut sel = sim.world.resource::<SelectionSet>().clone();
+                                let mut sel_ent =
+                                    SelectedEntity(sim.world.resource::<SelectedEntity>().0);
                                 let Ok(mut world) = world_rc.try_borrow_mut() else {
                                     return;
                                 };
-                                if place && tab == BrushTab::Blocks && shift {
-                                    let start = sim.world.resource::<BoxFillStart>().start;
-                                    match start {
-                                        None => {
-                                            sim.world.resource_mut::<BoxFillStart>().start =
-                                                Some(place_cell);
-                                        }
-                                        Some(a) => {
-                                            sim.world.resource_mut::<BoxFillStart>().start = None;
-                                            let count = {
-                                                let mut level =
-                                                    sim.world.resource_mut::<LevelDocument>();
-                                                world.box_fill(&mut level, a, place_cell, &limits)
-                                            };
-                                            if count == 0 {
-                                                world.last_action = "box fill skipped".to_string();
-                                            }
-                                        }
-                                    }
-                                } else if place && tab == BrushTab::Blocks {
-                                    if world.stroke_click_ready() {
-                                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                                        world.click_place(&mut level, mirror, place_cell, &limits);
-                                    }
-                                } else if place && tab == BrushTab::Entities {
-                                    let kind = sim.world.resource::<SelectedEntityKind>().0;
-                                    let yaw = sim.world.resource::<PlaceYaw>().0;
-                                    let channel = sim.world.resource::<ActiveLinkChannel>().0;
-                                    let placed = {
-                                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                                        world.place_entity(
-                                            &mut level, place_cell, kind, yaw, channel, &limits,
-                                        )
-                                    };
-                                    if !placed {
-                                        world.last_action = "can't place entity here".to_string();
-                                    }
-                                } else if place && tab == BrushTab::Tracks {
-                                    let mut active = *sim.world.resource::<ActiveTrack>();
-                                    {
-                                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                                        world.track_place_click(
-                                            &mut level,
-                                            place_cell,
-                                            &mut active,
-                                            &limits,
-                                        );
-                                    }
-                                    *sim.world.resource_mut::<ActiveTrack>() = active;
-                                } else if erase && tab == BrushTab::Tracks {
-                                    let mut active = *sim.world.resource::<ActiveTrack>();
-                                    {
-                                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                                        world.track_erase_click(
-                                            &mut level,
-                                            place_cell,
-                                            &mut active,
-                                        );
-                                    }
-                                    *sim.world.resource_mut::<ActiveTrack>() = active;
-                                } else if erase && world.stroke_click_ready() {
-                                    let mut sel_ent =
-                                        SelectedEntity(sim.world.resource::<SelectedEntity>().0);
-                                    {
-                                        let mut level = sim.world.resource_mut::<LevelDocument>();
-                                        world.erase_at(&mut level, mirror, hit, &mut sel_ent);
-                                    }
-                                    sim.world.resource_mut::<SelectedEntity>().0 = sel_ent.0;
+                                let count = {
+                                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                                    world.paste_clipboard(
+                                        &mut level,
+                                        &mut sel,
+                                        &mut sel_ent,
+                                        &clipboard,
+                                        pivot,
+                                        yaw,
+                                        &limits,
+                                    )
+                                };
+                                *sim.world.resource_mut::<SelectionSet>() = sel;
+                                sim.world.resource_mut::<SelectedEntity>().0 = sel_ent.0;
+                                sim.world.resource_mut::<PastePreview>().active = false;
+                                let msg = format!("Pasted {count} item(s)");
+                                sim.world
+                                    .resource_mut::<win::MakerUi>()
+                                    .set_status(msg.clone());
+                                world.last_action = msg;
+                            } else if erase && kb_ok {
+                                sim.world.resource_mut::<PastePreview>().reset();
+                                sim.world.resource_mut::<SelectionBoxStart>().start = None;
+                                let msg = "Paste preview cancelled".to_string();
+                                sim.world
+                                    .resource_mut::<win::MakerUi>()
+                                    .set_status(msg.clone());
+                                if let Ok(mut world) = world_rc.try_borrow_mut() {
+                                    world.last_action = msg;
                                 }
+                            }
+                        } else if ctrl {
+                            if place && kb_ok {
+                                let resolved = {
+                                    let level = sim.world.resource::<LevelDocument>();
+                                    resolve_click(&level, &click, &c)
+                                };
+                                let Some((hit, _normal)) = resolved else {
+                                    return;
+                                };
+                                if !shift {
+                                    sim.world.resource_mut::<SelectionSet>().clear();
+                                    sim.world.resource_mut::<SelectedEntity>().0 = None;
+                                }
+                                let hit_entity = {
+                                    let level = sim.world.resource::<LevelDocument>();
+                                    level.top_entity_at_cell(hit).map(|e| e.id)
+                                };
+                                let has_block = {
+                                    let level = sim.world.resource::<LevelDocument>();
+                                    level.get_block(hit).is_some()
+                                };
+                                if let Some(id) = hit_entity {
+                                    sim.world.resource_mut::<SelectionSet>().toggle_entity(id);
+                                    sim.world.resource_mut::<SelectedEntity>().0 = Some(id);
+                                } else if has_block {
+                                    sim.world.resource_mut::<SelectionSet>().toggle_block(hit);
+                                    sim.world.resource_mut::<SelectedEntity>().0 = None;
+                                }
+                                let count = sim.world.resource::<SelectionSet>().len();
+                                let msg = format!("Selected {count} item(s)");
+                                sim.world
+                                    .resource_mut::<win::MakerUi>()
+                                    .set_status(msg.clone());
+                                if let Ok(mut world) = world_rc.try_borrow_mut() {
+                                    world.last_action = msg;
+                                }
+                            }
+                        } else if pick {
+                            let resolved = {
+                                let level = sim.world.resource::<LevelDocument>();
+                                resolve_click(&level, &click, &c)
+                            };
+                            let Some((hit, _)) = resolved else {
+                                return;
+                            };
+                            let block = {
+                                let level = sim.world.resource::<LevelDocument>();
+                                level.get_block(hit).cloned()
+                            };
+                            let entity_kind = {
+                                let level = sim.world.resource::<LevelDocument>();
+                                level.top_entity_at_cell(hit).map(|e| e.kind)
+                            };
+                            if let Some(b) = block {
+                                let Ok(mut world) = world_rc.try_borrow_mut() else {
+                                    return;
+                                };
+                                world.brush.kind = b.kind;
+                                world.brush.shape = b.shape;
+                                world.brush.rot = b.rot & 3;
+                                world.brush.waterlogged = b.waterlogged;
+                                *sim.world.resource_mut::<BrushTab>() = BrushTab::Blocks;
+                                world.last_action = format!("pick {:?}", b.kind);
+                            } else if let Some(kind) = entity_kind {
+                                sim.world.resource_mut::<SelectedEntityKind>().0 = kind;
+                                *sim.world.resource_mut::<BrushTab>() = BrushTab::Entities;
+                            }
+                        } else {
+                            let resolved = {
+                                let level = sim.world.resource::<LevelDocument>();
+                                resolve_click(&level, &click, &c)
+                            };
+                            let Some((hit, normal)) = resolved else {
+                                return;
+                            };
+                            let place_cell = hit + normal;
+                            let Ok(mut world) = world_rc.try_borrow_mut() else {
+                                return;
+                            };
+                            if place && tab == BrushTab::Blocks && shift {
+                                let start = sim.world.resource::<BoxFillStart>().start;
+                                match start {
+                                    None => {
+                                        sim.world.resource_mut::<BoxFillStart>().start =
+                                            Some(place_cell);
+                                    }
+                                    Some(a) => {
+                                        sim.world.resource_mut::<BoxFillStart>().start = None;
+                                        let count = {
+                                            let mut level =
+                                                sim.world.resource_mut::<LevelDocument>();
+                                            world.box_fill(&mut level, a, place_cell, &limits)
+                                        };
+                                        if count == 0 {
+                                            world.last_action = "box fill skipped".to_string();
+                                        }
+                                    }
+                                }
+                            } else if place && tab == BrushTab::Blocks {
+                                if world.stroke_click_ready() {
+                                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                                    world.click_place(&mut level, mirror, place_cell, &limits);
+                                }
+                            } else if place && tab == BrushTab::Entities {
+                                let kind = sim.world.resource::<SelectedEntityKind>().0;
+                                let yaw = sim.world.resource::<PlaceYaw>().0;
+                                let channel = sim.world.resource::<ActiveLinkChannel>().0;
+                                let placed = {
+                                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                                    world.place_entity(
+                                        &mut level, place_cell, kind, yaw, channel, &limits,
+                                    )
+                                };
+                                if !placed {
+                                    world.last_action = "can't place entity here".to_string();
+                                }
+                            } else if place && tab == BrushTab::Tracks {
+                                let mut active = *sim.world.resource::<ActiveTrack>();
+                                {
+                                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                                    world.track_place_click(
+                                        &mut level,
+                                        place_cell,
+                                        &mut active,
+                                        &limits,
+                                    );
+                                }
+                                *sim.world.resource_mut::<ActiveTrack>() = active;
+                            } else if erase && tab == BrushTab::Tracks {
+                                let mut active = *sim.world.resource::<ActiveTrack>();
+                                {
+                                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                                    world.track_erase_click(&mut level, place_cell, &mut active);
+                                }
+                                *sim.world.resource_mut::<ActiveTrack>() = active;
+                            } else if erase && world.stroke_click_ready() {
+                                let mut sel_ent =
+                                    SelectedEntity(sim.world.resource::<SelectedEntity>().0);
+                                {
+                                    let mut level = sim.world.resource_mut::<LevelDocument>();
+                                    world.erase_at(&mut level, mirror, hit, &mut sel_ent);
+                                }
+                                sim.world.resource_mut::<SelectedEntity>().0 = sel_ent.0;
                             }
                         }
                     }
                 }
-                cam_rc.set(c);
-            },
-        );
+            }
+            cam_rc.set(c);
+        });
 
         let button = self.button.clone();
         let button_up = self.button.clone();
@@ -892,11 +885,16 @@ impl App {
     }
 
     fn sample_input(&mut self, sched: &Scheduler, edges: &[PhysicalKey]) {
+        let events = self.pad_poller.poll();
         let mut sim = self.sim.borrow_mut();
+        sim.world.resource_mut::<PadInput>().track(&events);
+        self.pad_bank.feed(events);
+        sim.world.resource_mut::<PadInput>().states = self.pad_bank.drain();
         let kb_ok = !sim.world.resource::<InputCapture>().ui_wants_keyboard;
         let keys = PlayKeys {
             held: &sched.held_keys,
             edges,
+            pads: &sim.world.resource::<PadInput>(),
             kb_ok,
         };
         let input = keys.read_play_input();
@@ -1446,7 +1444,7 @@ impl App {
                                 };
                                 view.release_stroke(&mut level);
                                 view.invalidate_models();
-                    storage::apply_level_data(&mut level, &mut view.history, data);
+                                storage::apply_level_data(&mut level, &mut view.history, data);
                                 view.sync_source(&level);
                                 Ok(())
                             })
@@ -1714,7 +1712,7 @@ impl App {
                                 };
                                 view.release_stroke(&mut level);
                                 view.invalidate_models();
-                    storage::apply_level_data(&mut level, &mut view.history, data);
+                                storage::apply_level_data(&mut level, &mut view.history, data);
                                 view.sync_source(&level);
                                 *world.resource_mut::<maker::campaign::LevelSource>() =
                                     maker::campaign::LevelSource::Bundled(i as usize);

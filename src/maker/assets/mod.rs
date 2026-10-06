@@ -110,11 +110,12 @@ impl Template {
 
     /// Model matrix from an explicit transform (already-rotated entity pose).
     pub fn matrix_from(&self, transform: Mat4) -> Mat4 {
-        transform * Mat4::from_scale_rotation_translation(
-            Vec3::splat(self.scale),
-            Quat::IDENTITY,
-            Vec3::Y * self.y_offset,
-        )
+        transform
+            * Mat4::from_scale_rotation_translation(
+                Vec3::splat(self.scale),
+                Quat::IDENTITY,
+                Vec3::Y * self.y_offset,
+            )
     }
 }
 
@@ -161,7 +162,10 @@ impl Pages {
         }
         self.by_hash.insert(hash, layer);
         self.live += 1;
-        let upload = SceneUpload { page: layer, ..upload };
+        let upload = SceneUpload {
+            page: layer,
+            ..upload
+        };
         self.pending.push(upload.clone());
         self.all.push(upload);
         Some(layer)
@@ -318,7 +322,11 @@ impl ModelAssets {
                     let page = placed
                         .and_then(|placed| textured.uploads.get(placed.page as usize))
                         .and_then(|upload| {
-                            self.pages.layer_for(path, placed.unwrap().page as usize, upload.clone())
+                            self.pages.layer_for(
+                                path,
+                                placed.unwrap().page as usize,
+                                upload.clone(),
+                            )
                         });
                     match page {
                         Some(page) => group.texture_page = page,
@@ -362,13 +370,12 @@ impl ModelAssets {
             let skinned = import_skinned(bytes)
                 .map_err(|err| log::error!("assets: {path} skin import failed: {err}"))
                 .ok()?;
-            let skeleton =
-                import_skeleton(bytes).map_err(|err| {
-                    log::error!("assets: {path} skeleton import failed: {err}")
-                }).ok()?;
-            let animations = import_animations(bytes).map_err(|err| {
-                log::error!("assets: {path} animation import failed: {err}")
-            }).ok()?;
+            let skeleton = import_skeleton(bytes)
+                .map_err(|err| log::error!("assets: {path} skeleton import failed: {err}"))
+                .ok()?;
+            let animations = import_animations(bytes)
+                .map_err(|err| log::error!("assets: {path} animation import failed: {err}"))
+                .ok()?;
             let pages = self.pages_for(path, bytes);
             let mut meshes = skinned;
             for mesh in &mut meshes {
@@ -393,8 +400,7 @@ impl ModelAssets {
                 source: path,
             }))
         });
-        self.characters
-            .insert(path.to_string(), character.clone());
+        self.characters.insert(path.to_string(), character.clone());
         character
     }
 
@@ -657,9 +663,11 @@ mod tests {
         );
         assert!(posed[0].positions.iter().all(|p| p[0].is_finite()));
         assert!(uploads.iter().all(|u| u.page < TEXTURE_LAYERS));
-        assert!(uploads
-            .iter()
-            .all(|u| u.rgba.len() == (u.w * u.h * 4) as usize));
+        assert!(
+            uploads
+                .iter()
+                .all(|u| u.rgba.len() == (u.w * u.h * 4) as usize)
+        );
         // Pages stay queued until a frame actually presented them, so a frame
         // built while the 3D view is unmounted cannot lose them.
         assert_eq!(assets.uploads().len(), 2);
@@ -682,7 +690,11 @@ mod tests {
             rgba: vec![byte; 4],
         };
         for index in 0..TEXTURE_LAYERS {
-            assert!(pages.layer_for("test", index as usize, image(index as u8)).is_some());
+            assert!(
+                pages
+                    .layer_for("test", index as usize, image(index as u8))
+                    .is_some()
+            );
         }
         assert!(
             pages.layer_for("test", 99, image(200)).is_none(),

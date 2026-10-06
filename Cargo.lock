@@ -4129,6 +4129,7 @@ dependencies = [
  "hex",
  "log",
  "rand",
+ "repame-input",
  "repame-rapier3d",
  "repame-shell",
  "repame-sim",

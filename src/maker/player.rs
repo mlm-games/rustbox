@@ -1,9 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy_ecs::prelude::*;
 use glam::{IVec3, Quat, Vec2, Vec3};
+use repame_input::GamepadState;
 use repame_shell::SimTime;
-use repose_core::input::PhysicalKey;
+use repose_core::input::{GamepadButton, GamepadEvent, GamepadId, PhysicalKey};
 
 use super::block::BlockKind;
 use super::camera::CameraRig;
@@ -526,9 +527,66 @@ pub struct PressedLatch {
     pub reset: bool,
 }
 
+#[derive(Default)]
+pub struct PadHeldBits {
+    pub south: bool,
+    pub east: bool,
+    pub west: bool,
+    pub dpad_up: bool,
+    pub dpad_down: bool,
+}
+
+/// Per-frame gamepad state: PadBank snapshots plus the held face/dpad bits
+/// and Select edge that the snapshot API omits.
+#[derive(Resource, Default)]
+pub struct PadInput {
+    pub states: Vec<GamepadState>,
+    pub held: HashMap<GamepadId, PadHeldBits>,
+    pub select_pressed: bool,
+}
+
+impl PadInput {
+    pub fn track(&mut self, events: &[GamepadEvent]) {
+        self.select_pressed = events.iter().any(|ev| {
+            matches!(
+                ev,
+                GamepadEvent::Button {
+                    button: GamepadButton::Select,
+                    pressed: true,
+                    ..
+                }
+            )
+        });
+        for ev in events {
+            match ev {
+                GamepadEvent::Disconnected { id } => {
+                    self.held.remove(id);
+                }
+                GamepadEvent::Button {
+                    id,
+                    button,
+                    pressed,
+                } => {
+                    let bits = self.held.entry(*id).or_default();
+                    match button {
+                        GamepadButton::South => bits.south = *pressed,
+                        GamepadButton::East => bits.east = *pressed,
+                        GamepadButton::West => bits.west = *pressed,
+                        GamepadButton::DPadUp => bits.dpad_up = *pressed,
+                        GamepadButton::DPadDown => bits.dpad_down = *pressed,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub struct PlayKeys<'a> {
     pub held: &'a HashSet<PhysicalKey>,
     pub edges: &'a [PhysicalKey],
+    pub pads: &'a PadInput,
     pub kb_ok: bool,
 }
 
@@ -558,6 +616,9 @@ impl PlayKeys<'_> {
                 wish.x += 1.0;
             }
         }
+        for pad in &self.pads.states {
+            wish += pad.left_stick;
+        }
         if wish.length_squared() > 1.0 {
             wish = wish.normalize();
         }
@@ -575,28 +636,42 @@ impl PlayKeys<'_> {
         let shift_pressed = self.keyboard_pressed(PhysicalKey::ShiftLeft)
             || self.keyboard_pressed(PhysicalKey::ShiftRight);
 
-        let up_down = wish.y > 0.5 || self.keyboard_down(PhysicalKey::KeyW);
+        let up_down = wish.y > 0.5
+            || self.keyboard_down(PhysicalKey::KeyW)
+            || self.pads.held.values().any(|h| h.dpad_up);
 
-        let down_down = wish.y < -0.5 || self.keyboard_down(PhysicalKey::KeyS);
+        let down_down = wish.y < -0.5
+            || self.keyboard_down(PhysicalKey::KeyS)
+            || self.pads.held.values().any(|h| h.dpad_down);
 
-        let crouch_down = shift_down;
+        let crouch_down = shift_down || self.pads.held.values().any(|h| h.east);
 
         PlayIntent {
             wish,
-            jump_pressed: self.keyboard_pressed(PhysicalKey::Space),
-            jump_down: self.keyboard_down(PhysicalKey::Space),
+            jump_pressed: self.keyboard_pressed(PhysicalKey::Space)
+                || self.pads.states.iter().any(|p| p.south_pressed),
+            jump_down: self.keyboard_down(PhysicalKey::Space)
+                || self.pads.held.values().any(|h| h.south),
             crouch_down,
-            crouch_pressed: shift_pressed,
-            hang_down: self.keyboard_down(PhysicalKey::KeyE),
-            interact_pressed: self.keyboard_pressed(PhysicalKey::KeyI),
-            throw_pressed: self.keyboard_pressed(PhysicalKey::KeyF),
-            reset_pressed: self.keyboard_pressed(PhysicalKey::KeyR),
+            crouch_pressed: shift_pressed || self.pads.states.iter().any(|p| p.east_pressed),
+            hang_down: self.keyboard_down(PhysicalKey::KeyE)
+                || self.pads.held.values().any(|h| h.west),
+            interact_pressed: self.keyboard_pressed(PhysicalKey::KeyI)
+                || self.pads.states.iter().any(|p| p.north_pressed),
+            throw_pressed: self.keyboard_pressed(PhysicalKey::KeyF)
+                || self.pads.states.iter().any(|p| p.right_trigger_pressed),
+            reset_pressed: self.keyboard_pressed(PhysicalKey::KeyR) || self.pads.select_pressed,
             up_down,
             down_down,
             drop_through: crouch_down && down_down,
             dismiss_pressed: self.edges.contains(&PhysicalKey::KeyI)
                 || self.edges.contains(&PhysicalKey::Space)
-                || self.edges.contains(&PhysicalKey::Escape),
+                || self.edges.contains(&PhysicalKey::Escape)
+                || self
+                    .pads
+                    .states
+                    .iter()
+                    .any(|p| p.north_pressed || p.south_pressed || p.east_pressed),
         }
     }
 }
@@ -661,39 +736,32 @@ fn squash_guarded(
     });
 }
 
-/// Advance every live squash & stretch. Runs in every mode so a pop that is
-/// mid-flight when play ends still eases back instead of freezing the scale.
-pub fn animate_squash(
-    time: Res<SimTime>,
-    mut commands: Commands,
-    mut q: Query<(Entity, &mut PlayerTransform, &mut SquashStretch), Without<Player>>,
-) {
-    let dt = time.delta_secs;
-    if dt <= 0.0 {
-        return;
+/// Advance a live squash & stretch. Kept as a helper so the trigger sites and
+/// the per-tick animation cannot disagree.
+fn advance_squash(squash: &mut SquashStretch, transform: &mut PlayerTransform, dt: f32) -> bool {
+    let original = *squash
+        .original
+        .get_or_insert_with(|| transform.scale);
+    squash.t += dt;
+    let t = (squash.t / squash.duration.max(f32::EPSILON)).min(1.0);
+    let amount = Vec3::new(squash.amount.x, squash.amount.y, 1.0);
+    transform.scale = if t < 0.5 {
+        let u = t / 0.5;
+        original
+            * Vec3::new(
+                1.0 + (squash.amount.x - 1.0) * u,
+                1.0 + (squash.amount.y - 1.0) * u,
+                1.0,
+            )
+    } else {
+        let u = (t - 0.5) / 0.5;
+        original * (amount + (Vec3::ONE - amount) * u)
+    };
+    if t >= 1.0 {
+        transform.scale = original;
+        return true;
     }
-    for (entity, mut transform, mut squash) in &mut q {
-        let original = *squash.original.get_or_insert(transform.scale);
-        squash.t += dt;
-        let t = (squash.t / squash.duration.max(f32::EPSILON)).min(1.0);
-        let amount = Vec3::new(squash.amount.x, squash.amount.y, 1.0);
-        transform.scale = if t < 0.5 {
-            let u = t / 0.5;
-            original
-                * Vec3::new(
-                    1.0 + (squash.amount.x - 1.0) * u,
-                    1.0 + (squash.amount.y - 1.0) * u,
-                    1.0,
-                )
-        } else {
-            let u = (t - 0.5) / 0.5;
-            original * (amount + (Vec3::ONE - amount) * u)
-        };
-        if t >= 1.0 {
-            transform.scale = original;
-            commands.entity(entity).remove::<SquashStretch>();
-        }
-    }
+    false
 }
 
 pub fn player_controller(
@@ -709,8 +777,13 @@ pub fn player_controller(
     mut commands: Commands,
     plates: Query<(Entity, &Transform, &DriftPlate, Option<&Velocity>), Without<Player>>,
     onoff: Res<OnOffState>,
-    squash_q: Query<Entity, With<SquashStretch>>,
-    mut q: Query<(Entity, &mut PlayerTransform, &mut Player, &mut MoveState)>,
+    mut q: Query<(
+        Entity,
+        &mut PlayerTransform,
+        &mut Player,
+        &mut MoveState,
+        Option<&mut SquashStretch>,
+    )>,
 ) {
     if *mode != MakerMode::Play {
         return;
@@ -721,8 +794,16 @@ pub fn player_controller(
     }
     let tuning = &*tuning;
 
-    for (entity, mut transform, mut player, mut move_state) in &mut q {
-        if !squash_q.contains(entity) && transform.scale != Vec3::ONE {
+    for (entity, mut transform, mut player, mut move_state, mut squash) in &mut q {
+        // Squash & stretch rides the same query as the controller so it is
+        // always advanced; a separate system could not touch the player
+        // without colliding with the `PlayerTransform` write here.
+        let finished = squash
+            .as_deref_mut()
+            .is_some_and(|active| advance_squash(active, &mut transform, dt));
+        if finished {
+            commands.entity(entity).remove::<SquashStretch>();
+        } else if squash.is_none() && transform.scale != Vec3::ONE {
             transform.scale = Vec3::ONE;
         }
         let mut input = *intent;
@@ -1033,8 +1114,14 @@ pub fn player_controller(
             player.ground_plate = None;
             player.plate_vel = Vec3::ZERO;
             player.jump_held = true;
-            let squashing = squash_q.contains(entity);
-            squash_guarded(&mut commands, entity, squashing, Vec2::new(0.72, 1.35), 0.10);
+            let squashing = squash.is_some();
+            squash_guarded(
+                &mut commands,
+                entity,
+                squashing,
+                Vec2::new(0.72, 1.35),
+                0.10,
+            );
             trauma.add(0.04);
         }
 
@@ -1404,16 +1491,28 @@ pub fn player_controller(
         let was_grounded = result.on_ground || on_plate || player.gripping;
         if was_grounded && !player.was_on_ground {
             let impact = (-player.fall_speed).max(0.0);
-            let squashing = squash_q.contains(entity);
+            let squashing = squash.is_some();
             if player.slamming {
                 let amount = (impact / 40.0).clamp(0.15, 0.45);
-                squash_guarded(&mut commands, entity, squashing, Vec2::new(1.45, 0.55), 0.16);
+                squash_guarded(
+                    &mut commands,
+                    entity,
+                    squashing,
+                    Vec2::new(1.45, 0.55),
+                    0.16,
+                );
                 trauma.add(amount);
             } else if impact > tuning.land_squash_min_impact {
                 let t = ((impact - tuning.land_squash_min_impact) / 18.0).clamp(0.0, 1.0);
                 let sx = 1.0 + 0.28 * t;
                 let sy = 1.0 - 0.32 * t;
-                squash_guarded(&mut commands, entity, squashing, Vec2::new(sx, sy), 0.08 + 0.06 * t);
+                squash_guarded(
+                    &mut commands,
+                    entity,
+                    squashing,
+                    Vec2::new(sx, sy),
+                    0.08 + 0.06 * t,
+                );
                 if impact > 8.0 {
                     trauma.add(((impact - 8.0) / 40.0).clamp(0.04, 0.30));
                 }
@@ -1476,8 +1575,14 @@ pub fn player_controller(
             )
         {
             player.velocity.y = tuning.jump_speed * 1.55;
-            let squashing = squash_q.contains(entity);
-            squash_guarded(&mut commands, entity, squashing, Vec2::new(0.65, 1.45), 0.12);
+            let squashing = squash.is_some();
+            squash_guarded(
+                &mut commands,
+                entity,
+                squashing,
+                Vec2::new(0.65, 1.45),
+                0.12,
+            );
             trauma.add(0.08);
             player.on_ground = false;
             player.coyote = 0.0;
@@ -1538,6 +1643,7 @@ mod tests {
         let keys = PlayKeys {
             held: &held,
             edges: &[],
+            pads: &PadInput::default(),
             kb_ok: true,
         };
         let wish = keys.read_move_wish();

@@ -8,187 +8,772 @@ pub static BLOCK_MANIFEST: &str = include_str!("../../../assets/models/blocks.ro
 
 /// Sorted by path so lookups can binary search.
 pub static PACK: &[(&str, &[u8])] = &[
-    ("models/cubeworld/Character_Male_2.gltf", include_bytes!("../../../assets/models/cubeworld/Character_Male_2.gltf")),
-    ("models/rbox/blocks/Bounce/Bounce_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Corner.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_DSlope.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Full.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Half.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_OuterCorner.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Slope.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Thin.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_TopHalf.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_VerticalSlab.glb")),
-    ("models/rbox/blocks/Bounce/Bounce_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_VerticalSlope.glb")),
-    ("models/rbox/blocks/Climb/Climb_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Corner.glb")),
-    ("models/rbox/blocks/Climb/Climb_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_DSlope.glb")),
-    ("models/rbox/blocks/Climb/Climb_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Full.glb")),
-    ("models/rbox/blocks/Climb/Climb_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Half.glb")),
-    ("models/rbox/blocks/Climb/Climb_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_OuterCorner.glb")),
-    ("models/rbox/blocks/Climb/Climb_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Slope.glb")),
-    ("models/rbox/blocks/Climb/Climb_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Thin.glb")),
-    ("models/rbox/blocks/Climb/Climb_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_TopHalf.glb")),
-    ("models/rbox/blocks/Climb/Climb_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_VerticalSlab.glb")),
-    ("models/rbox/blocks/Climb/Climb_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_VerticalSlope.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Corner.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_DSlope.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Full.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Half.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_OuterCorner.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Slope.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Thin.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_TopHalf.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_VerticalSlab.glb")),
-    ("models/rbox/blocks/Conveyor/Conveyor_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_VerticalSlope.glb")),
-    ("models/rbox/blocks/Goal/Goal_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Corner.glb")),
-    ("models/rbox/blocks/Goal/Goal_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_DSlope.glb")),
-    ("models/rbox/blocks/Goal/Goal_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Full.glb")),
-    ("models/rbox/blocks/Goal/Goal_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Half.glb")),
-    ("models/rbox/blocks/Goal/Goal_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_OuterCorner.glb")),
-    ("models/rbox/blocks/Goal/Goal_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Slope.glb")),
-    ("models/rbox/blocks/Goal/Goal_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Thin.glb")),
-    ("models/rbox/blocks/Goal/Goal_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_TopHalf.glb")),
-    ("models/rbox/blocks/Goal/Goal_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_VerticalSlab.glb")),
-    ("models/rbox/blocks/Goal/Goal_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_VerticalSlope.glb")),
-    ("models/rbox/blocks/Grass/Grass_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Corner.glb")),
-    ("models/rbox/blocks/Grass/Grass_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_DSlope.glb")),
-    ("models/rbox/blocks/Grass/Grass_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Full.glb")),
-    ("models/rbox/blocks/Grass/Grass_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Half.glb")),
-    ("models/rbox/blocks/Grass/Grass_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_OuterCorner.glb")),
-    ("models/rbox/blocks/Grass/Grass_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Slope.glb")),
-    ("models/rbox/blocks/Grass/Grass_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Thin.glb")),
-    ("models/rbox/blocks/Grass/Grass_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_TopHalf.glb")),
-    ("models/rbox/blocks/Grass/Grass_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_VerticalSlab.glb")),
-    ("models/rbox/blocks/Grass/Grass_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_VerticalSlope.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Corner.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_DSlope.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Full.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Half.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_OuterCorner.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Slope.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Thin.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_TopHalf.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_VerticalSlab.glb")),
-    ("models/rbox/blocks/HangRail/HangRail_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_VerticalSlope.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Corner.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_DSlope.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Full.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Half.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_OuterCorner.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Slope.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Thin.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_TopHalf.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_VerticalSlab.glb")),
-    ("models/rbox/blocks/Hazard/Hazard_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_VerticalSlope.glb")),
-    ("models/rbox/blocks/Ice/Ice_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Corner.glb")),
-    ("models/rbox/blocks/Ice/Ice_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_DSlope.glb")),
-    ("models/rbox/blocks/Ice/Ice_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Full.glb")),
-    ("models/rbox/blocks/Ice/Ice_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Half.glb")),
-    ("models/rbox/blocks/Ice/Ice_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_OuterCorner.glb")),
-    ("models/rbox/blocks/Ice/Ice_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Slope.glb")),
-    ("models/rbox/blocks/Ice/Ice_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Thin.glb")),
-    ("models/rbox/blocks/Ice/Ice_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_TopHalf.glb")),
-    ("models/rbox/blocks/Ice/Ice_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_VerticalSlab.glb")),
-    ("models/rbox/blocks/Ice/Ice_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_VerticalSlope.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Corner.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_DSlope.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Full.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Half.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_OuterCorner.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Slope.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Thin.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_TopHalf.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlab.glb")),
-    ("models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlope.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Corner.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_DSlope.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Full.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Half.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_OuterCorner.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Slope.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Thin.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_TopHalf.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlab.glb")),
-    ("models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlope.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Corner.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_DSlope.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Full.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Half.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_OuterCorner.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Slope.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Thin.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_TopHalf.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_VerticalSlab.glb")),
-    ("models/rbox/blocks/OneWay/OneWay_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_VerticalSlope.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Corner.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_DSlope.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Full.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Half.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_OuterCorner.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Slope.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Thin.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_TopHalf.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_VerticalSlab.glb")),
-    ("models/rbox/blocks/Spawn/Spawn_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_VerticalSlope.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Corner.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_DSlope.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Full.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Half.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_OuterCorner.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Slope.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Thin.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_TopHalf.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_VerticalSlab.glb")),
-    ("models/rbox/blocks/Spikes/Spikes_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_VerticalSlope.glb")),
-    ("models/rbox/blocks/Stone/Stone_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Corner.glb")),
-    ("models/rbox/blocks/Stone/Stone_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_DSlope.glb")),
-    ("models/rbox/blocks/Stone/Stone_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Full.glb")),
-    ("models/rbox/blocks/Stone/Stone_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Half.glb")),
-    ("models/rbox/blocks/Stone/Stone_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_OuterCorner.glb")),
-    ("models/rbox/blocks/Stone/Stone_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Slope.glb")),
-    ("models/rbox/blocks/Stone/Stone_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Thin.glb")),
-    ("models/rbox/blocks/Stone/Stone_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_TopHalf.glb")),
-    ("models/rbox/blocks/Stone/Stone_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_VerticalSlab.glb")),
-    ("models/rbox/blocks/Stone/Stone_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_VerticalSlope.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Corner.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_DSlope.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Full.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Half.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_OuterCorner.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Slope.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Thin.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_TopHalf.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlab.glb")),
-    ("models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlope.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_Corner.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Corner.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_DSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_DSlope.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_Full.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Full.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_Half.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Half.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_OuterCorner.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_OuterCorner.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_Slope.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Slope.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_Thin.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Thin.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_TopHalf.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_TopHalf.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlab.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlab.glb")),
-    ("models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlope.glb", include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlope.glb")),
-    ("models/rbox/entities/Bumper.glb", include_bytes!("../../../assets/models/rbox/entities/Bumper.glb")),
-    ("models/rbox/entities/Cannon.glb", include_bytes!("../../../assets/models/rbox/entities/Cannon.glb")),
-    ("models/rbox/entities/Checkpoint.glb", include_bytes!("../../../assets/models/rbox/entities/Checkpoint.glb")),
-    ("models/rbox/entities/Crate.glb", include_bytes!("../../../assets/models/rbox/entities/Crate.glb")),
-    ("models/rbox/entities/CrumblePlate.glb", include_bytes!("../../../assets/models/rbox/entities/CrumblePlate.glb")),
-    ("models/rbox/entities/DriftPlate.glb", include_bytes!("../../../assets/models/rbox/entities/DriftPlate.glb")),
-    ("models/rbox/entities/Fan.glb", include_bytes!("../../../assets/models/rbox/entities/Fan.glb")),
-    ("models/rbox/entities/Glimmer.glb", include_bytes!("../../../assets/models/rbox/entities/Glimmer.glb")),
-    ("models/rbox/entities/HealOrb.glb", include_bytes!("../../../assets/models/rbox/entities/HealOrb.glb")),
-    ("models/rbox/entities/Key.glb", include_bytes!("../../../assets/models/rbox/entities/Key.glb")),
-    ("models/rbox/entities/LaunchPad.glb", include_bytes!("../../../assets/models/rbox/entities/LaunchPad.glb")),
-    ("models/rbox/entities/LockGate.glb", include_bytes!("../../../assets/models/rbox/entities/LockGate.glb")),
-    ("models/rbox/entities/OnOffSwitch.glb", include_bytes!("../../../assets/models/rbox/entities/OnOffSwitch.glb")),
-    ("models/rbox/entities/Prowler.glb", include_bytes!("../../../assets/models/rbox/entities/Prowler.glb")),
-    ("models/rbox/entities/RelayGate.glb", include_bytes!("../../../assets/models/rbox/entities/RelayGate.glb")),
-    ("models/rbox/entities/Seal.glb", include_bytes!("../../../assets/models/rbox/entities/Seal.glb")),
-    ("models/rbox/entities/Sign.glb", include_bytes!("../../../assets/models/rbox/entities/Sign.glb")),
-    ("models/rbox/entities/SpeedRing.glb", include_bytes!("../../../assets/models/rbox/entities/SpeedRing.glb")),
-    ("models/rbox/entities/Teleporter.glb", include_bytes!("../../../assets/models/rbox/entities/Teleporter.glb")),
-    ("models/rbox/entities/TossCrate.glb", include_bytes!("../../../assets/models/rbox/entities/TossCrate.glb")),
-    ("models/rbox/entities/TriggerOrb.glb", include_bytes!("../../../assets/models/rbox/entities/TriggerOrb.glb")),
-    ("models/rbox/entities/Wedge.glb", include_bytes!("../../../assets/models/rbox/entities/Wedge.glb")),
+    (
+        "models/cubeworld/Character_Male_2.gltf",
+        include_bytes!("../../../assets/models/cubeworld/Character_Male_2.gltf"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Bounce/Bounce_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Bounce/Bounce_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Climb/Climb_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Climb/Climb_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Conveyor/Conveyor_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Conveyor/Conveyor_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Goal/Goal_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Goal/Goal_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Grass/Grass_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Grass/Grass_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/HangRail/HangRail_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/HangRail/HangRail_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Hazard/Hazard_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Hazard/Hazard_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Ice/Ice_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Ice/Ice_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Corner.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Corner.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_DSlope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_DSlope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_OuterCorner.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_OuterCorner.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Slope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Slope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_TopHalf.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_TopHalf.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlab.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlab.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorA/OnOffConveyorA_VerticalSlope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Corner.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Corner.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_DSlope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_DSlope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_OuterCorner.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_OuterCorner.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Slope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Slope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_TopHalf.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_TopHalf.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlab.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlab.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/OnOffConveyorB/OnOffConveyorB_VerticalSlope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/OneWay/OneWay_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/OneWay/OneWay_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spawn/Spawn_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spawn/Spawn_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Spikes/Spikes_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Spikes/Spikes_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/Stone/Stone_VerticalSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/Stone/Stone_VerticalSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_OuterCorner.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_OuterCorner.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlab.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlab.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/ThinConveyor/ThinConveyor_VerticalSlope.glb"
+        ),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_Corner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Corner.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_DSlope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_DSlope.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_Full.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Full.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_Half.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Half.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_OuterCorner.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_OuterCorner.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_Slope.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Slope.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_Thin.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_Thin.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_TopHalf.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_TopHalf.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlab.glb",
+        include_bytes!("../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlab.glb"),
+    ),
+    (
+        "models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlope.glb",
+        include_bytes!(
+            "../../../assets/models/rbox/blocks/TimedPulse/TimedPulse_VerticalSlope.glb"
+        ),
+    ),
+    (
+        "models/rbox/entities/Bumper.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Bumper.glb"),
+    ),
+    (
+        "models/rbox/entities/Cannon.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Cannon.glb"),
+    ),
+    (
+        "models/rbox/entities/Checkpoint.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Checkpoint.glb"),
+    ),
+    (
+        "models/rbox/entities/Crate.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Crate.glb"),
+    ),
+    (
+        "models/rbox/entities/CrumblePlate.glb",
+        include_bytes!("../../../assets/models/rbox/entities/CrumblePlate.glb"),
+    ),
+    (
+        "models/rbox/entities/DriftPlate.glb",
+        include_bytes!("../../../assets/models/rbox/entities/DriftPlate.glb"),
+    ),
+    (
+        "models/rbox/entities/Fan.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Fan.glb"),
+    ),
+    (
+        "models/rbox/entities/Glimmer.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Glimmer.glb"),
+    ),
+    (
+        "models/rbox/entities/HealOrb.glb",
+        include_bytes!("../../../assets/models/rbox/entities/HealOrb.glb"),
+    ),
+    (
+        "models/rbox/entities/Key.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Key.glb"),
+    ),
+    (
+        "models/rbox/entities/LaunchPad.glb",
+        include_bytes!("../../../assets/models/rbox/entities/LaunchPad.glb"),
+    ),
+    (
+        "models/rbox/entities/LockGate.glb",
+        include_bytes!("../../../assets/models/rbox/entities/LockGate.glb"),
+    ),
+    (
+        "models/rbox/entities/OnOffSwitch.glb",
+        include_bytes!("../../../assets/models/rbox/entities/OnOffSwitch.glb"),
+    ),
+    (
+        "models/rbox/entities/Prowler.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Prowler.glb"),
+    ),
+    (
+        "models/rbox/entities/RelayGate.glb",
+        include_bytes!("../../../assets/models/rbox/entities/RelayGate.glb"),
+    ),
+    (
+        "models/rbox/entities/Seal.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Seal.glb"),
+    ),
+    (
+        "models/rbox/entities/Sign.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Sign.glb"),
+    ),
+    (
+        "models/rbox/entities/SpeedRing.glb",
+        include_bytes!("../../../assets/models/rbox/entities/SpeedRing.glb"),
+    ),
+    (
+        "models/rbox/entities/Teleporter.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Teleporter.glb"),
+    ),
+    (
+        "models/rbox/entities/TossCrate.glb",
+        include_bytes!("../../../assets/models/rbox/entities/TossCrate.glb"),
+    ),
+    (
+        "models/rbox/entities/TriggerOrb.glb",
+        include_bytes!("../../../assets/models/rbox/entities/TriggerOrb.glb"),
+    ),
+    (
+        "models/rbox/entities/Wedge.glb",
+        include_bytes!("../../../assets/models/rbox/entities/Wedge.glb"),
+    ),
 ];

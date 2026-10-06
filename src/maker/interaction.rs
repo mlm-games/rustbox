@@ -20,8 +20,8 @@ use super::player::{
     ActionState, JUMP_SPEED, MoveState, PlayIntent, Player, PlayerMoveMode, PlayerTransform,
     respawn_player,
 };
-use super::screen::{FlashWhite, Trauma};
 use super::props::{RuntimeSolids, Velocity};
+use super::screen::{FlashWhite, Trauma};
 use super::win::MakerUi;
 
 /// Sentinel actor id used for the player in per-target contact tracking.

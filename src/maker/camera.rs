@@ -6,7 +6,7 @@ use super::Paused;
 use super::collision::collide_camera_eye;
 use super::level::LevelDocument;
 use super::mode::MakerMode;
-use super::player::{ActionState, MoveState, Player, PlayerTransform};
+use super::player::{ActionState, MoveState, PadInput, Player, PlayerTransform};
 use super::props::RuntimeSolids;
 
 #[derive(Resource)]
@@ -48,11 +48,20 @@ fn rig_eye(rig: &CameraRig) -> Vec3 {
     rig.focus + rot * Vec3::new(0.0, 0.0, rig.distance)
 }
 
-pub fn play_camera_follow(world: &mut World, dt: f32, looking: bool, cam: &mut OrbitCamera) {
+pub fn play_camera_follow(world: &mut World, dt: f32, mut looking: bool, cam: &mut OrbitCamera) {
     if *world.resource::<MakerMode>() != MakerMode::Play || world.resource::<Paused>().0 {
         return;
     }
     world.resource_scope(|world, mut rig: Mut<CameraRig>| {
+        // Sticks arrive pre-deadzoned (0.2) from the platform backend.
+        for pad in &world.resource::<PadInput>().states {
+            let r = pad.right_stick;
+            if r.length_squared() > 0.0 {
+                rig.yaw -= r.x * 2.4 * dt;
+                rig.pitch = (rig.pitch + r.y * 1.7 * dt).clamp(0.08, 1.25);
+                looking = true;
+            }
+        }
         if looking {
             rig.since_manual_look = 0.0;
         } else {
